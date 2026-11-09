@@ -29,6 +29,8 @@ const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 const HELP: &str = "/clear          start a new conversation
 /model [name]   show or change the model
 /rename [name]  name this session (resume with claude-jr -r NAME)
+/memory         show which instruction files are loaded
+#note           save a note to ./AGENTS.md (used from now on)
 /cost           tokens and cost so far
 /exit           quit
 
@@ -403,6 +405,9 @@ impl App {
         if let Some(cmd) = text.trim().strip_prefix('/') {
             return self.command(cmd);
         }
+        if let Some(note) = text.trim().strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
+            return self.remember(note);
+        }
         if self.busy.is_some() {
             self.queued = Some(text);
             return;
@@ -415,10 +420,32 @@ impl App {
         let _ = self.agent.commands.send(Command::Send(text));
     }
 
+    fn remember(&mut self, note: &str) {
+        match crate::prompt::remember(note) {
+            Ok(path) => {
+                let _ = self.agent.commands.send(Command::Remember(note.to_string()));
+                self.note(&format!("Saved to {}.", path.display()), DIM);
+            }
+            Err(e) => self.note(&format!("Could not save the note: {e}"), RED),
+        }
+    }
+
     fn command(&mut self, cmd: &str) {
         let (name, arg) = cmd.split_once(' ').map_or((cmd, ""), |(n, a)| (n, a.trim()));
         match name {
             "help" => self.note(HELP, ""),
+            "memory" => {
+                let files = crate::prompt::memory_files();
+                let mut msg = String::from("Instruction files (AGENTS.md / CLAUDE.md):\n");
+                for f in &files {
+                    msg.push_str(&format!("  {}\n", f.display()));
+                }
+                if files.is_empty() {
+                    msg.push_str("  none yet\n");
+                }
+                msg.push_str("Start a message with # to add a note to ./AGENTS.md.");
+                self.note(&msg, "");
+            }
             "exit" | "quit" => self.quit = true,
             "cost" => {
                 let msg = format!("${:.4} so far · {} tokens in context", self.cost, self.context);

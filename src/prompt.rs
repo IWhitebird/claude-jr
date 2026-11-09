@@ -5,7 +5,7 @@
 // so it holds nothing that changes, like the model name.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,15 +46,22 @@ pub fn system() -> String {
     s
 }
 
-/// AGENTS.md / CLAUDE.md from the config dir, then from the outermost parent
-/// directory down to the working directory, so the nearest file comes last.
-fn instructions(cwd: &Path) -> Vec<(std::path::PathBuf, String)> {
-    let mut dirs: Vec<&Path> = cwd.ancestors().collect();
-    dirs.reverse();
-    let global = crate::config::config_dir();
-    std::iter::once(global.as_path())
-        .chain(dirs)
-        .flat_map(|d| INSTRUCTION_FILES.iter().map(move |f| d.join(f)))
+/// Where instruction files are looked for: the config dir, then every parent
+/// directory from the outermost down to `cwd`, so the nearest file comes last.
+fn candidates(cwd: &Path) -> impl Iterator<Item = PathBuf> {
+    let mut dirs: Vec<PathBuf> = cwd.ancestors().map(Path::to_path_buf).collect();
+    dirs.push(crate::config::config_dir());
+    dirs.into_iter().rev().flat_map(|d| INSTRUCTION_FILES.map(|f| d.join(f)))
+}
+
+/// Instruction files that exist right now.
+pub fn memory_files() -> Vec<PathBuf> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    candidates(&cwd).filter(|p| p.is_file()).collect()
+}
+
+fn instructions(cwd: &Path) -> Vec<(PathBuf, String)> {
+    candidates(cwd)
         .filter_map(|p| {
             let mut text = std::fs::read_to_string(&p).ok()?;
             if text.len() > MAX_FILE {
@@ -64,6 +71,22 @@ fn instructions(cwd: &Path) -> Vec<(std::path::PathBuf, String)> {
             Some((p, text))
         })
         .collect()
+}
+
+/// Appends a note to the project's instruction file: ./AGENTS.md, or
+/// ./CLAUDE.md if that's the one the project already has.
+pub fn remember(note: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    let path = if !Path::new("AGENTS.md").exists() && Path::new("CLAUDE.md").exists() {
+        PathBuf::from("CLAUDE.md")
+    } else {
+        PathBuf::from("AGENTS.md")
+    };
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let sep = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    writeln!(f, "{sep}- {}", note.trim())?;
+    Ok(path)
 }
 
 fn git_status(cwd: &Path) -> Option<String> {

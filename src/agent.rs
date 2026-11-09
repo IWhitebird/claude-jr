@@ -67,6 +67,8 @@ pub enum Command {
     Clear,
     Model(String),
     Rename(String),
+    /// A note the user just saved to memory; the model sees it with the next message.
+    Remember(String),
 }
 
 pub enum Answer {
@@ -197,6 +199,10 @@ impl Agent {
                 }
                 Command::Model(m) => self.model = m,
                 Command::Rename(name) => self.session.rename(&self.system, &name),
+                Command::Remember(note) => {
+                    let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
+                    self.push_user(json!({ "type": "text", "text": text }));
+                }
             }
         }
     }
