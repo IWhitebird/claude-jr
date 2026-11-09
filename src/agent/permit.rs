@@ -32,6 +32,13 @@ pub enum Mode {
 impl Mode {
     const ALL: [Mode; 5] = [Mode::Default, Mode::AcceptEdits, Mode::Plan, Mode::Auto, Mode::Bypass];
 
+    /// The names used in the config file.
+    pub const NAMES: [&str; 5] = ["normal", "accept-edits", "plan", "auto", "skip-permissions"];
+
+    pub fn parse(name: &str) -> Option<Mode> {
+        Mode::NAMES.iter().position(|n| *n == name).map(|i| Mode::ALL[i])
+    }
+
     pub fn next(self) -> Mode {
         Mode::ALL[(self as usize + 1) % Mode::ALL.len()]
     }

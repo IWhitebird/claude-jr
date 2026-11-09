@@ -45,6 +45,7 @@ const HELP: &str = "/clear          start a new conversation
 /skills         available skills (run one with /name)
 /mcp            connected MCP servers
 /stats          memory and CPU used by claude-jr and what it started
+/settings       layout, default model, effort, mode, web tools, sandbox
 /login          add or change your API key; /logout removes it
 /cost           tokens and cost so far
 /exit           quit
@@ -61,7 +62,8 @@ enum Msg {
     Term(TermEvent),
 }
 
-pub fn run(cfg: agent::Config) -> io::Result<()> {
+/// `bottom`: keep the input on the last rows of the screen.
+pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
     term::restore_on_panic();
     let model = cfg.model.clone();
     let effort = cfg.effort.clone();
@@ -71,7 +73,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
         let _ = to_ui.send(Msg::Agent(e));
     });
 
-    let mut term = Term::new()?;
+    let mut term = Term::new(bottom)?;
     crate::signals::watch(agent.tools.clone(), true);
     let _ = thread::Builder::new().name("keys".into()).spawn(move || {
         while let Ok(e) = ct::read() {
@@ -111,7 +113,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
         let mut key = false;
         for m in msg.into_iter().chain(rx.try_iter()) {
             match m {
-                Msg::Term(TermEvent::Resize(..)) => term.invalidate(),
+                Msg::Term(TermEvent::Resize(_, rows)) => term.resize(rows as usize),
                 Msg::Term(_) => key = true,
                 Msg::Agent(_) => {}
             }
@@ -184,6 +186,8 @@ enum Prompt {
     Resume(Vec<(String, String)>),
     /// /model with no name: the catalogue.
     Model,
+    /// /settings.
+    Settings,
 }
 
 /// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
@@ -648,6 +652,16 @@ impl App {
                 }
                 return;
             }
+            Some(Prompt::Settings) => {
+                match k.code {
+                    KeyCode::Char(c @ '1'..='9') => self.change_setting(c as usize - '1' as usize),
+                    KeyCode::Esc => {
+                        self.prompts.pop_front();
+                    }
+                    _ => {}
+                }
+                return;
+            }
             Some(Prompt::Key) => match k.code {
                 KeyCode::Enter => return self.save_key(),
                 KeyCode::Esc => {
@@ -733,6 +747,27 @@ impl App {
     fn answer(&mut self, text: String) {
         if let Some(Prompt::Question { reply, .. }) = self.prompts.pop_front() {
             let _ = reply.send(text);
+        }
+    }
+
+    /// Moves a setting to its next value and saves it.
+    fn change_setting(&mut self, i: usize) {
+        let Some(setting) = SETTINGS.get(i) else { return };
+        let now = current_setting(setting);
+        let at = setting.choices.iter().position(|c| *c == now).map_or(0, |p| p + 1);
+        let next = setting.choices[at % setting.choices.len()];
+        let value = match next {
+            // The model's own default: no value in the file.
+            "default" => serde_json::Value::Null,
+            "on" => serde_json::Value::Bool(true),
+            "off" => serde_json::Value::Bool(false),
+            v => serde_json::Value::String(v.to_string()),
+        };
+        if let Err(e) = crate::config::set_user_setting(setting.key, value) {
+            return self.note(&format!("Couldn't save the setting: {e}"), RED);
+        }
+        if setting.key == "effort" {
+            self.set_effort(next);
         }
     }
 
@@ -938,6 +973,7 @@ impl App {
             "model" if arg.is_empty() => self.prompts.push_front(Prompt::Model),
             "model" => self.set_model(arg),
             "effort" => self.set_effort(arg),
+            "settings" => self.prompts.push_front(Prompt::Settings),
             "jobs" => {
                 let jobs = self.agent.tools.get().map(|t| t.jobs()).unwrap_or_default();
                 let msg = if jobs.is_empty() {
@@ -1058,6 +1094,14 @@ impl App {
                 view::picker("Choose a model", &items, hint, cols, &mut out);
                 None
             }
+            Some(Prompt::Settings) => {
+                let items: Vec<String> =
+                    SETTINGS.iter().map(|s| format!("{}: {}", s.label, current_setting(s))).collect();
+                let hint =
+                    "press a number to change it · effort applies now, the rest from the next start · esc to close";
+                view::picker("Settings (~/.config/claude-jr/config.json)", &items, hint, cols, &mut out);
+                None
+            }
             Some(Prompt::Key) => {
                 view::key_prompt(cols, &mut out);
                 Some(view::input_box(&self.input.masked(), "sk-ant-…", cols, &mut out))
@@ -1146,6 +1190,40 @@ impl App {
 
 fn size(bytes: usize) -> String {
     if bytes < 1024 { format!("{bytes} B") } else { format!("{:.1} KB", bytes as f64 / 1024.0) }
+}
+
+/// One line of /settings: the config key, and the values it cycles through
+/// (the first is the default).
+struct Setting {
+    label: &'static str,
+    key: &'static str,
+    choices: &'static [&'static str],
+}
+
+const SETTINGS: [Setting; 6] = [
+    Setting { label: "Input at the bottom of the screen", key: "layout", choices: &["bottom", "inline"] },
+    Setting {
+        label: "Model for new sessions",
+        key: "model",
+        choices: &["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
+    },
+    Setting { label: "Effort", key: "effort", choices: &["default", "low", "medium", "high", "xhigh", "max"] },
+    Setting { label: "Start in mode", key: "mode", choices: &crate::agent::Mode::NAMES },
+    Setting { label: "Web search and fetch", key: "web_tools", choices: &["on", "off"] },
+    Setting { label: "Sandbox (writes only in the project)", key: "sandbox.enabled", choices: &["off", "on"] },
+];
+
+/// A setting's value in the user's config file, or its default.
+fn current_setting(s: &Setting) -> &'static str {
+    let root = crate::config::user_settings();
+    let value = s.key.split('.').fold(&root, |node, part| &node[part]);
+    let text = match value {
+        serde_json::Value::Bool(true) => "on",
+        serde_json::Value::Bool(false) => "off",
+        serde_json::Value::String(v) => v.as_str(),
+        _ => s.choices[0],
+    };
+    s.choices.iter().find(|c| **c == text).copied().unwrap_or(s.choices[0])
 }
 
 /// 90 -> "1 min ago", 7200 -> "2 h ago".

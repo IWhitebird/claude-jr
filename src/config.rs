@@ -24,6 +24,11 @@ pub struct Config {
     pub allow: Vec<String>,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// "bottom" (the default) keeps the input on the last rows of the screen;
+    /// "inline" puts it right after the conversation.
+    pub layout: Option<String>,
+    /// The mode to start in: normal, accept-edits, plan, auto, skip-permissions.
+    pub mode: Option<String>,
     /// Set to false to turn off Anthropic's web search and fetch tools.
     pub web_tools: Option<bool>,
     /// MCP servers, in the same shape as .mcp.json's "mcpServers".
@@ -55,6 +60,8 @@ impl Config {
             cfg.effort = file.effort.or(cfg.effort);
             cfg.auto_model = file.auto_model.or(cfg.auto_model);
             cfg.web_tools = file.web_tools.or(cfg.web_tools);
+            cfg.layout = file.layout.or(cfg.layout);
+            cfg.mode = file.mode.or(cfg.mode);
             cfg.mcp_servers.extend(file.mcp_servers);
             cfg.allow.extend(file.allow);
             cfg.sandbox.enabled |= file.sandbox.enabled;
@@ -78,6 +85,35 @@ pub fn data_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local/share"))
         .join("claude-jr")
+}
+
+/// The user's config file, as JSON (empty if there isn't one).
+pub fn user_settings() -> serde_json::Value {
+    std::fs::read_to_string(config_dir().join("config.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Sets one value in the user's config file, keeping everything else in it.
+/// `key` can be nested with dots: "sandbox.enabled".
+pub fn set_user_setting(key: &str, value: serde_json::Value) -> std::io::Result<()> {
+    let mut root = user_settings();
+    let mut node = &mut root;
+    let mut parts = key.split('.').peekable();
+    while let Some(part) = parts.next() {
+        if !node.is_object() {
+            *node = serde_json::json!({});
+        }
+        if parts.peek().is_none() {
+            node[part] = value;
+            break;
+        }
+        node = &mut node[part];
+    }
+    std::fs::create_dir_all(config_dir())?;
+    let text = serde_json::to_string_pretty(&root).map_err(std::io::Error::other)?;
+    std::fs::write(config_dir().join("config.json"), text + "\n")
 }
 
 /// Where /login keeps the API key.

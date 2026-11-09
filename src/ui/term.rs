@@ -1,6 +1,11 @@
 // Inline terminal drawing. Finished lines are written once into the normal
-// scrollback. Only the "live" area at the bottom (streaming text, status,
-// input box) is redrawn, inside synchronized output so it doesn't flicker.
+// scrollback. Only the "live" area (streaming text, status, input box) is
+// redrawn, inside synchronized output so it doesn't flicker.
+//
+// Two layouts. Inline: the live area follows the last line written. Bottom:
+// the live area sits on the last rows of the screen and finished lines scroll
+// up above it, like a full-screen app, while history stays in the terminal's
+// own scrollback (so scrolling, selecting and copying work as usual).
 
 use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::terminal;
@@ -10,20 +15,43 @@ use std::io::{self, Write};
 /// The live area's lines and cursor position.
 type Frame = (Vec<String>, Option<(usize, usize)>);
 
+/// For the bottom layout: the screen height, the row where the next finished
+/// line goes (content flows down from the top), and the row where the live
+/// area starts (it ends on the last row).
+#[derive(Clone, Copy)]
+struct Anchor {
+    rows: usize,
+    next: usize,
+    top: usize,
+}
+
 pub struct Term {
     out: io::Stdout,
     buf: String,
     /// Cursor row inside the live area, counted from its top.
     row: usize,
+    /// Set for the bottom layout.
+    anchor: Option<Anchor>,
     enhanced_keys: bool,
     /// The live area as last drawn, to skip frames that wouldn't change anything.
     last: Option<Frame>,
 }
 
 impl Term {
-    pub fn new() -> io::Result<Term> {
+    /// `bottom` keeps the input on the last rows of the screen. It needs the
+    /// cursor's position, so it falls back to inline if the terminal doesn't
+    /// answer.
+    pub fn new(bottom: bool) -> io::Result<Term> {
         terminal::enable_raw_mode()?;
         let mut out = io::stdout();
+        let anchor = if bottom {
+            crossterm::cursor::position().ok().map(|(_, row)| {
+                let row = row as usize;
+                Anchor { rows: Term::size().1, next: row, top: row }
+            })
+        } else {
+            None
+        };
         // Lets Shift+Enter be told apart from Enter, where the terminal supports it.
         let enhanced_keys = terminal::supports_keyboard_enhancement().unwrap_or(false);
         if enhanced_keys {
@@ -34,17 +62,27 @@ impl Term {
         }
         out.write_all(b"\x1b[?2004h")?; // bracketed paste
         out.flush()?;
-        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, enhanced_keys, last: None })
+        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, anchor, enhanced_keys, last: None })
     }
 
     pub fn size() -> (usize, usize) {
         terminal::size().map_or((80, 24), |(w, h)| (w as usize, h as usize))
     }
 
-    /// Forgets the last frame, so the next draw happens even if nothing changed
-    /// (after a resize, for example).
+    /// Forgets the last frame, so the next draw happens even if nothing changed.
     pub fn invalidate(&mut self) {
         self.last = None;
+    }
+
+    /// After a resize: the bottom layout re-anchors to the new height.
+    pub fn resize(&mut self, rows: usize) {
+        let height = self.last.as_ref().map_or(0, |(l, _)| l.len());
+        if let Some(a) = &mut self.anchor {
+            a.rows = rows;
+            a.top = rows.saturating_sub(height);
+            a.next = a.next.min(a.top);
+        }
+        self.invalidate();
     }
 
     /// Writes `commits` above the live area, then redraws the live area.
@@ -89,9 +127,27 @@ impl Term {
     fn redraw(&mut self, commits: &mut Vec<String>, live: &[String]) {
         self.move_to(0);
         self.buf.push_str("\r\x1b[J");
+        let mut next = 0;
+        if let Some(a) = self.anchor {
+            // Finished lines continue from where the last ones ended.
+            let _ = write!(self.buf, "\x1b[{};1H", a.next + 1);
+            next = a.next;
+        }
         for line in commits.drain(..) {
             self.buf.push_str(&line);
             self.buf.push_str("\x1b[0m\r\n");
+            next += 1;
+        }
+        if let Some(a) = &mut self.anchor {
+            // A newline on the last row scrolls the screen and the cursor stays.
+            let next = next.min(a.rows - 1);
+            let top = a.rows.saturating_sub(live.len());
+            if next > top {
+                // The live area doesn't fit below the new lines: scroll them up.
+                let _ = write!(self.buf, "\x1b[{};1H{}", a.rows, "\n".repeat(next - top));
+            }
+            let _ = write!(self.buf, "\x1b[{};1H", top + 1);
+            (a.next, a.top) = (next.min(top), top);
         }
         for (i, line) in live.iter().enumerate() {
             if i > 0 {

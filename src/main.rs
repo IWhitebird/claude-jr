@@ -121,7 +121,7 @@ fn run() -> Result<ExitCode, String> {
             .or(file.model)
             .unwrap_or_else(|| "claude-opus-5-5".into()),
         effort: args.effort.or(file.effort),
-        mode: if args.yes { Mode::Bypass } else { Mode::Default },
+        mode: if args.yes { Mode::Bypass } else { file.mode.as_deref().and_then(Mode::parse).unwrap_or(Mode::Default) },
         allow: file.allow,
         resume: args.resume,
         auto_model: file.auto_model.unwrap_or_else(|| "claude-haiku-5-5".into()),
@@ -133,7 +133,8 @@ fn run() -> Result<ExitCode, String> {
     match args.prompt {
         Some(prompt) => Ok(if print::run(cfg, prompt) { ExitCode::SUCCESS } else { ExitCode::FAILURE }),
         None => {
-            ui::run(cfg).map_err(|e| format!("terminal error: {e}"))?;
+            let bottom = file.layout.as_deref() != Some("inline");
+            ui::run(cfg, bottom).map_err(|e| format!("terminal error: {e}"))?;
             Ok(ExitCode::SUCCESS)
         }
     }
