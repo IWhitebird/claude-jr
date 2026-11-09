@@ -262,49 +262,53 @@ impl Agent {
 
     fn run(mut self, commands: Receiver<Command>) {
         for cmd in commands {
-            match cmd {
-                Command::Send(text) => self.send(text),
-                Command::Skill { name, args } => match self.tools.skills().iter().find(|s| s.name == name) {
-                    Some(s) => match skill::body(s) {
-                        Ok(body) => self.send(format!("<skill name=\"{name}\">\n{body}\n</skill>\n\n{args}")),
-                        Err(e) => (self.core.emit)(Event::Error(e)),
-                    },
-                    None => (self.core.emit)(Event::Error(format!("no skill named {name}"))),
+            self.handle(cmd);
+        }
+    }
+
+    fn handle(&mut self, cmd: Command) {
+        match cmd {
+            Command::Send(text) => self.send(text),
+            Command::Skill { name, args } => match self.tools.skills().iter().find(|s| s.name == name) {
+                Some(s) => match skill::body(s) {
+                    Ok(body) => self.send(format!("<skill name=\"{name}\">\n{body}\n</skill>\n\n{args}")),
+                    Err(e) => (self.core.emit)(Event::Error(e)),
                 },
-                Command::Shell(cmd) => self.shell(&cmd),
-                Command::Clear => {
-                    // A new Vec, not clear(): that would keep the old capacity.
-                    self.messages = Vec::new();
-                    self.session = Session::new();
-                    self.tools.checkpoints.open(self.session.checkpoint_dir());
-                    self.system = crate::prompt::system();
-                    self.told_plan = false;
-                }
-                Command::Model(m) => self.set_model(m),
-                Command::Effort(e) => *self.core.effort.lock().unwrap() = e,
-                Command::Rename(name) => self.session.rename(&self.system, &name),
-                Command::SetKey(key) => self.core.client.set_key(key),
-                Command::Rewind(None) => {
-                    let points: Vec<(usize, String)> = self
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .filter_map(|(i, m)| m.prompt().map(|p| (i, p)))
-                        .take(9)
-                        .collect();
-                    (self.core.emit)(Event::RewindPoints(points));
-                }
-                Command::Rewind(Some(turn)) => self.rewind(turn),
-                Command::Resume(pick) => self.resume(&pick),
-                Command::Compact(focus) => {
-                    let end = self.compact(&focus);
-                    (self.core.emit)(end);
-                }
-                Command::Remember(note) => {
-                    let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
-                    self.push_user(json!({ "type": "text", "text": text }));
-                }
+                None => (self.core.emit)(Event::Error(format!("no skill named {name}"))),
+            },
+            Command::Shell(cmd) => self.shell(&cmd),
+            Command::Clear => {
+                // A new Vec, not clear(): that would keep the old capacity.
+                self.messages = Vec::new();
+                self.session = Session::new();
+                self.tools.checkpoints.open(self.session.checkpoint_dir());
+                self.system = crate::prompt::system();
+                self.told_plan = false;
+            }
+            Command::Model(m) => self.set_model(m),
+            Command::Effort(e) => *self.core.effort.lock().unwrap() = e,
+            Command::Rename(name) => self.session.rename(&self.system, &name),
+            Command::SetKey(key) => self.core.client.set_key(key),
+            Command::Rewind(None) => {
+                let points: Vec<(usize, String)> = self
+                    .messages
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter_map(|(i, m)| m.prompt().map(|p| (i, p)))
+                    .take(9)
+                    .collect();
+                (self.core.emit)(Event::RewindPoints(points));
+            }
+            Command::Rewind(Some(turn)) => self.rewind(turn),
+            Command::Resume(pick) => self.resume(&pick),
+            Command::Compact(focus) => {
+                let end = self.compact(&focus);
+                (self.core.emit)(end);
+            }
+            Command::Remember(note) => {
+                let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
+                self.push_user(json!({ "type": "text", "text": text }));
             }
         }
     }
@@ -518,14 +522,32 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
+    use std::path::PathBuf;
     use std::time::Duration;
 
-    /// A fake Messages API: answers each request with the next reply, as SSE.
-    fn fake_api(replies: Vec<String>) -> String {
+    /// One canned HTTP answer from the fake API.
+    pub(crate) struct Response {
+        pub status: u16,
+        pub body: String,
+    }
+
+    pub(crate) fn ok(body: String) -> Response {
+        Response { status: 200, body }
+    }
+
+    /// The request bodies the fake API has received, in order.
+    pub(crate) type Log = Arc<Mutex<Vec<String>>>;
+
+    /// A fake Messages API: answers each request with the next response (SSE
+    /// for status 200), and records the request bodies.
+    pub(crate) fn fake_http(replies: Vec<Response>) -> (String, Log) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
+        let log: Log = Arc::default();
+        let seen = log.clone();
         thread::spawn(move || {
             let mut replies = replies.into_iter();
             for stream in listener.incoming().flatten() {
@@ -549,58 +571,188 @@ mod tests {
                     }
                     let mut body = vec![0; len];
                     let _ = reader.read_exact(&mut body);
-                    let Some(sse) = replies.next() else { return };
+                    seen.lock().unwrap().push(String::from_utf8_lossy(&body).into_owned());
+                    let Some(r) = replies.next() else { return };
+                    let kind = if r.status == 200 { "text/event-stream" } else { "application/json" };
                     let head = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
-                        sse.len()
+                        "HTTP/1.1 {} X\r\ncontent-type: {kind}\r\ncontent-length: {}\r\n\r\n",
+                        r.status,
+                        r.body.len()
                     );
-                    let _ = out.write_all(head.as_bytes()).and_then(|_| out.write_all(sse.as_bytes()));
+                    let _ = out.write_all(head.as_bytes()).and_then(|_| out.write_all(r.body.as_bytes()));
                 }
             }
         });
-        url
+        (url, log)
     }
 
-    fn sse(events: &[serde_json::Value]) -> String {
+    fn fake_api(replies: Vec<String>) -> String {
+        fake_http(replies.into_iter().map(ok).collect()).0
+    }
+
+    pub(crate) fn sse(events: &[serde_json::Value]) -> String {
         events.iter().map(|e| format!("data: {e}\n\n")).collect()
     }
 
-    #[test]
-    fn a_turn_runs_a_tool_and_finishes() {
-        crate::tools::test_home();
-        let tool_call = sse(&[
-            json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
-            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}}),
-            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"command\": \"echo hi\"}"}}),
-            json!({"type": "content_block_stop", "index": 0}),
-            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 5}}),
-            json!({"type": "message_stop"}),
-        ]);
-        let answer = sse(&[
-            json!({"type": "message_start", "message": {"usage": {"input_tokens": 20}}}),
-            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
-            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "It printed hi."}}),
-            json!({"type": "content_block_stop", "index": 0}),
-            json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}}),
-            json!({"type": "message_stop"}),
-        ]);
-        let url = fake_api(vec![tool_call, answer]);
+    /// A reply made of finished blocks (each streamed whole) that stops for `stop`.
+    pub(crate) fn blocks_reply(blocks: &[Value], stop: &str) -> String {
+        let mut events = vec![json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}})];
+        for (i, b) in blocks.iter().enumerate() {
+            let mut start = b.clone();
+            let input = start.get("input").cloned();
+            if input.is_some() {
+                start["input"] = json!({});
+            }
+            if start["type"] == "text" {
+                start["text"] = json!("");
+            }
+            events.push(json!({"type": "content_block_start", "index": i, "content_block": start}));
+            if let Some(input) = input {
+                let delta = json!({"type": "input_json_delta", "partial_json": input.to_string()});
+                events.push(json!({"type": "content_block_delta", "index": i, "delta": delta}));
+            } else if b["type"] == "text" {
+                let delta = json!({"type": "text_delta", "text": b["text"]});
+                events.push(json!({"type": "content_block_delta", "index": i, "delta": delta}));
+            }
+            events.push(json!({"type": "content_block_stop", "index": i}));
+        }
+        events.push(json!({"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 5}}));
+        events.push(json!({"type": "message_stop"}));
+        sse(&events)
+    }
 
-        let (tx, rx) = mpsc::channel();
-        let cfg = Config {
+    pub(crate) fn text_reply(text: &str) -> String {
+        blocks_reply(&[json!({"type": "text", "text": text})], "end_turn")
+    }
+
+    pub(crate) fn tool_use(id: &str, name: &str, input: Value) -> Value {
+        json!({"type": "tool_use", "id": id, "name": name, "input": input})
+    }
+
+    pub(crate) fn tools_reply(calls: &[Value]) -> String {
+        blocks_reply(calls, "tool_use")
+    }
+
+    /// Spaces out session ids (they are millisecond timestamps) between tests.
+    pub(crate) fn tick() {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _held = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        thread::sleep(Duration::from_millis(3));
+    }
+
+    /// An agent driven from the test's own thread, with its events collected.
+    pub(crate) struct Rig {
+        pub agent: Agent,
+        pub rx: Receiver<Event>,
+        pub dir: PathBuf,
+        pub log: Log,
+        /// What startup emitted (Ready, notices).
+        pub started: Vec<Event>,
+        /// Answers to approvals, used one per `Ask`; none left means "no".
+        pub answers: Arc<Mutex<VecDeque<Answer>>>,
+        /// Answers to `ask_user`, used one per question; none left means an empty answer.
+        pub replies: Arc<Mutex<VecDeque<String>>>,
+    }
+
+    pub(crate) fn config(url: Option<String>, mode: Mode) -> Config {
+        Config {
             key: "test".into(),
-            base_url: Some(url),
+            base_url: url,
             model: "claude-opus-5-5".into(),
             effort: None,
             auto_model: "claude-haiku-5-5".into(),
-            mode: Mode::Bypass,
+            mode,
             allow: Vec::new(),
             resume: None,
             mcp: BTreeMap::new(),
             web: false,
             interactive: false,
-        };
-        let agent = spawn(cfg, move |e| {
+        }
+    }
+
+    impl Rig {
+        pub fn new(name: &str, mode: Mode, replies: Vec<Response>) -> Rig {
+            let (url, log) = fake_http(replies);
+            let mut rig = Rig::with(name, config(Some(url), mode));
+            rig.log = log;
+            rig
+        }
+
+        /// Starts an agent for `cfg`, with its tools rooted in a fresh folder.
+        pub fn with(name: &str, cfg: Config) -> Rig {
+            crate::tools::test_home();
+            tick();
+            let dir = crate::tools::test_dir(name);
+            let (tx, rx) = mpsc::channel();
+            let answers: Arc<Mutex<VecDeque<Answer>>> = Arc::default();
+            let replies: Arc<Mutex<VecDeque<String>>> = Arc::default();
+            let (a, r) = (answers.clone(), replies.clone());
+            let emit: Emit = Arc::new(move |e: Event| {
+                match &e {
+                    Event::Ask { reply, .. } => {
+                        let answer = a.lock().unwrap().pop_front().unwrap_or(Answer::No);
+                        let _ = reply.send(answer);
+                    }
+                    Event::Question { reply, .. } => {
+                        let answer = r.lock().unwrap().pop_front().unwrap_or_default();
+                        let _ = reply.send(answer);
+                    }
+                    _ => {}
+                }
+                let _ = tx.send(e);
+            });
+            let mode = Arc::new(permit::SharedMode(AtomicU8::new(cfg.mode as u8)));
+            let mut agent =
+                Agent::start(cfg, Arc::new(AtomicBool::new(false)), mode, Arc::new(OnceLock::new()), emit.clone());
+            agent.tools = Arc::new(Tools::new(dir.clone(), Vec::new(), mcp::Servers::default()));
+            agent.tools.checkpoints.open(agent.session.checkpoint_dir());
+            agent.tools.on_job_finished(Box::new(move |msg| emit(Event::Notice(msg))));
+            let started = rx.try_iter().collect();
+            Rig { agent, rx, dir, log: Arc::default(), started, answers, replies }
+        }
+
+        /// Every event since the last call.
+        pub fn events(&self) -> Vec<Event> {
+            self.rx.try_iter().collect()
+        }
+
+        /// Runs `commands` as the agent's command loop would; returns the events.
+        pub fn run(&mut self, commands: Vec<Command>) -> Vec<Event> {
+            for c in commands {
+                self.agent.handle(c);
+            }
+            self.events()
+        }
+
+        pub fn bodies(&self) -> Vec<String> {
+            self.log.lock().unwrap().clone()
+        }
+    }
+
+    pub(crate) fn text_of(events: &[Event]) -> String {
+        events.iter().filter_map(|e| if let Event::Text(t) = e { Some(t.as_str()) } else { None }).collect()
+    }
+
+    pub(crate) fn errors_of(events: &[Event]) -> Vec<String> {
+        events.iter().filter_map(|e| if let Event::Error(t) = e { Some(t.clone()) } else { None }).collect()
+    }
+
+    pub(crate) fn notices_of(events: &[Event]) -> Vec<String> {
+        events.iter().filter_map(|e| if let Event::Notice(t) = e { Some(t.clone()) } else { None }).collect()
+    }
+
+    pub(crate) fn last_is_done(events: &[Event]) -> bool {
+        matches!(events.last(), Some(Event::Done))
+    }
+
+    #[test]
+    fn a_turn_runs_a_tool_and_finishes() {
+        crate::tools::test_home();
+        let tool_call = tools_reply(&[tool_use("t1", "bash", json!({"command": "echo hi"}))]);
+        let url = fake_api(vec![tool_call, text_reply("It printed hi.")]);
+
+        let (tx, rx) = mpsc::channel();
+        let agent = spawn(config(Some(url), Mode::Bypass), move |e| {
             let _ = tx.send(e);
         });
         agent.commands.send(Command::Send("say hi".into())).unwrap();
@@ -619,5 +771,342 @@ mod tests {
         assert_eq!(tools, ["Bash(echo hi)"]);
         assert_eq!(results, [(true, "hi".to_string())]);
         assert_eq!(text, "It printed hi.");
+        assert!(agent.tools.get().is_some(), "the tools are shared with the UI once started");
+    }
+
+    #[test]
+    fn startup_reports_the_key_and_what_was_loaded() {
+        let rig = Rig::with("agent-ready", Config { key: String::new(), ..config(None, Mode::Default) });
+        let ready = &rig.started;
+        let Some(Event::Ready { resumed, name, has_key, .. }) = ready.iter().find(|e| matches!(e, Event::Ready { .. }))
+        else {
+            panic!("no Ready event");
+        };
+        assert_eq!((*resumed, name.clone(), *has_key), (0, None, false));
+    }
+
+    #[test]
+    fn a_missing_named_session_starts_fresh_with_a_notice() {
+        let mut cfg = config(None, Mode::Default);
+        cfg.resume = Some(Pick::Named("no-such-session-anywhere".into()));
+        let rig = Rig::with("agent-missing-session", cfg);
+        let events = &rig.started;
+        assert_eq!(
+            notices_of(events),
+            ["No saved session named \"no-such-session-anywhere\" here; starting a new one."]
+        );
+        assert!(rig.agent.messages.is_empty());
+    }
+
+    #[test]
+    fn a_resumed_session_answers_calls_the_last_run_left_open() {
+        crate::tools::test_home();
+        tick();
+        let name = "unit-open-calls";
+        let mut s = Session::new();
+        let msgs = vec![
+            Msg::new("user", json!([{ "type": "text", "text": "run it" }])),
+            Msg::new("assistant", json!([tool_use("t9", "bash", json!({"command": "x"}))])),
+        ];
+        s.rename("SYS", name);
+        s.save("SYS", &msgs);
+
+        let mut cfg = config(None, Mode::Default);
+        cfg.resume = Some(Pick::Named(name.into()));
+        let rig = Rig::with("agent-open-calls", cfg);
+        let events = &rig.started;
+        let Some(Event::Ready { resumed, name: n, .. }) = events.iter().find(|e| matches!(e, Event::Ready { .. }))
+        else {
+            panic!("no Ready event");
+        };
+        assert_eq!((*resumed, n.as_deref()), (3, Some(name)));
+        assert_eq!(rig.agent.system, "SYS");
+        let last = rig.agent.messages.last().unwrap();
+        assert!(last.user && last.has_results());
+        assert!(last.json.get().contains("Not run: the session ended."));
+    }
+
+    #[test]
+    fn resume_switches_conversation_and_recaps_it() {
+        let mut rig = Rig::new("agent-resume", Mode::Default, vec![ok(text_reply("pong"))]);
+        rig.run(vec![Command::Send("ping".into()), Command::Rename("unit-resume-me".into())]);
+        assert_eq!(rig.agent.session.name.as_deref(), Some("unit-resume-me"));
+
+        // Start something else, then come back.
+        tick();
+        rig.run(vec![Command::Clear]);
+        assert!(rig.agent.messages.is_empty());
+        let events = rig.run(vec![Command::Resume(Pick::Named("unit-resume-me".into()))]);
+        let Some(Event::Resumed { name, messages, recap }) =
+            events.into_iter().find(|e| matches!(e, Event::Resumed { .. }))
+        else {
+            panic!("no Resumed event");
+        };
+        assert_eq!(name.as_deref(), Some("unit-resume-me"));
+        assert_eq!(messages, 2);
+        assert_eq!(recap, Some(("ping".to_string(), "pong".to_string())));
+
+        let events = rig.run(vec![Command::Resume(Pick::Named("unit-never-saved".into()))]);
+        assert_eq!(errors_of(&events), ["couldn't load that conversation"]);
+        assert_eq!(rig.agent.messages.len(), 2, "a failed resume changes nothing");
+    }
+
+    #[test]
+    fn rewind_restores_files_and_cuts_the_conversation() {
+        let write = tool_use("w1", "write", json!({"path": "a.txt", "content": "hi\n"}));
+        let mut rig =
+            Rig::new("agent-rewind", Mode::Bypass, vec![ok(tools_reply(&[write])), ok(text_reply("Wrote it."))]);
+        let events = rig.run(vec![Command::Send("make a.txt".into())]);
+        assert!(last_is_done(&events));
+        assert_eq!(std::fs::read_to_string(rig.dir.join("a.txt")).unwrap(), "hi\n");
+        assert_eq!(rig.agent.messages.len(), 4);
+
+        let events = rig.run(vec![Command::Rewind(None)]);
+        let Some(Event::RewindPoints(points)) = events.into_iter().next() else { panic!("no points") };
+        assert_eq!(points, [(0, "make a.txt".to_string())]);
+
+        let events = rig.run(vec![Command::Rewind(Some(3))]);
+        assert_eq!(errors_of(&events), ["nothing to rewind to there"]);
+        assert_eq!(rig.agent.messages.len(), 4);
+
+        let events = rig.run(vec![Command::Rewind(Some(0))]);
+        let Some(Event::Rewound { prompt, files }) = events.into_iter().next() else { panic!("no Rewound") };
+        assert_eq!((prompt.as_str(), files), ("make a.txt", 1));
+        assert!(!rig.dir.join("a.txt").exists(), "the file the turn created is gone");
+        assert!(rig.agent.messages.is_empty());
+    }
+
+    #[test]
+    fn compact_replaces_the_conversation_with_a_summary() {
+        let mut rig = Rig::new(
+            "agent-compact",
+            Mode::Default,
+            vec![ok(text_reply("hello")), ok(text_reply("They fixed bugs in main.rs today."))],
+        );
+        assert_eq!(errors_of(&rig.run(vec![Command::Compact(String::new())])), ["nothing to compact yet"]);
+        rig.run(vec![Command::Send("hi".into())]);
+
+        let events = rig.run(vec![Command::Compact("the tests".into())]);
+        assert!(last_is_done(&events));
+        assert_eq!(
+            notices_of(&events),
+            ["Compacted 2 messages into a 6-word summary. /rewind can't go back past this point."]
+        );
+        let asked = rig.bodies().pop().unwrap();
+        assert!(asked.contains("Pay particular attention to: the tests"));
+        assert_eq!(rig.agent.messages.len(), 2);
+        assert!(rig.agent.messages[0].json.get().contains("They fixed bugs in main.rs today."));
+        assert!(rig.agent.messages[0].json.get().contains("<compacted>"));
+        assert!(!rig.agent.messages[1].user);
+        assert!(events.iter().any(|e| matches!(e, Event::Activity(a) if a == "summarizing the conversation")));
+        assert!(events.iter().any(|e| matches!(e, Event::Usage { main: false, .. })));
+    }
+
+    #[test]
+    fn compact_joins_a_waiting_user_message_and_survives_bad_summaries() {
+        let mut rig = Rig::new(
+            "agent-compact-edge",
+            Mode::Default,
+            vec![
+                ok(text_reply("   ")),
+                Response { status: 400, body: r#"{"error":{"message":"bad request"}}"#.into() },
+                ok(text_reply("fine")),
+            ],
+        );
+        // The last message is a user message nobody has answered.
+        rig.run(vec![Command::Remember("uses pnpm".into())]);
+        let events = rig.run(vec![Command::Compact(String::new())]);
+        assert_eq!(errors_of(&events), ["the summary came back empty; nothing was changed"]);
+        let asked = rig.bodies().pop().unwrap();
+        let parsed: Value = serde_json::from_str(&asked).unwrap();
+        let msgs = parsed["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1, "the ask joined the user message: {asked}");
+        assert_eq!(msgs[0]["content"].as_array().unwrap().len(), 2);
+        assert!(!asked.contains("Pay particular attention"));
+        assert_eq!(rig.agent.messages.len(), 1);
+
+        let events = rig.run(vec![Command::Compact(String::new())]);
+        assert_eq!(errors_of(&events), ["couldn't compact: API error 400: bad request"]);
+        let events = rig.run(vec![Command::Compact(String::new())]);
+        assert!(last_is_done(&events));
+    }
+
+    #[test]
+    fn switching_model_rebuilds_tools_only_when_web_support_changes() {
+        let mut cfg = config(None, Mode::Default);
+        cfg.web = true;
+        let mut rig = Rig::with("agent-model", cfg);
+        let has_web = |rig: &Rig| rig.agent.defs.get().contains("web_search");
+        assert!(has_web(&rig), "opus has the web tools");
+        rig.run(vec![Command::Model("claude-haiku-5-5".into())]);
+        assert_eq!(*rig.agent.core.model.lock().unwrap(), "claude-haiku-5-5");
+        assert!(!has_web(&rig), "haiku does not, so they are dropped");
+        rig.run(vec![Command::Model("claude-opus-5-5".into())]);
+        assert!(has_web(&rig));
+        // Between two models with them: nothing to rebuild.
+        rig.run(vec![Command::Model("claude-sonnet-5-5".into())]);
+        assert!(has_web(&rig));
+        assert!(rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch"));
+        rig.run(vec![Command::Model("claude-haiku-5-5".into())]);
+        assert!(!has_web(&rig));
+        assert!(!rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch"));
+    }
+
+    #[test]
+    fn effort_key_and_name_commands_apply_at_once() {
+        let mut rig = Rig::with("agent-settings", config(None, Mode::Default));
+        rig.run(vec![Command::Effort(Some("high".into()))]);
+        assert_eq!(rig.agent.core.effort.lock().unwrap().as_deref(), Some("high"));
+        rig.run(vec![Command::Effort(None)]);
+        assert_eq!(*rig.agent.core.effort.lock().unwrap(), None);
+        rig.run(vec![Command::SetKey(String::new())]);
+        assert!(!rig.agent.core.client.has_key());
+        rig.run(vec![Command::SetKey("sk-new".into())]);
+        assert!(rig.agent.core.client.has_key());
+    }
+
+    #[test]
+    fn the_effort_goes_to_the_api() {
+        let mut rig = Rig::new("agent-effort", Mode::Default, vec![ok(text_reply("ok"))]);
+        rig.run(vec![Command::Effort(Some("max".into())), Command::Send("go".into())]);
+        assert!(rig.bodies()[0].contains(r#""output_config":{"effort":"max"}"#));
+    }
+
+    #[test]
+    fn shell_commands_run_show_and_tell_the_model() {
+        let mut rig = Rig::new("agent-shell", Mode::Default, vec![ok(text_reply("ok"))]);
+        let events = rig.run(vec![Command::Shell("echo from-user; exit 3".into())]);
+        assert!(matches!(&events[0], Event::Tool { label, .. } if label == "! echo from-user; exit 3"));
+        assert!(matches!(&events[1], Event::ToolResult { ok: false, summary } if summary.contains("from-user")));
+        assert!(last_is_done(&events));
+        let note = rig.agent.messages.last().unwrap().json.get().to_string();
+        assert!(note.contains("<user-shell>\\n$ echo from-user; exit 3\\nfrom-user"), "{note}");
+
+        // The model sees it with the next message, as part of the same turn.
+        rig.run(vec![Command::Send("what did I run?".into())]);
+        let body = rig.bodies().pop().unwrap();
+        assert!(body.contains("user-shell") && body.contains("what did I run?"));
+        assert_eq!(rig.agent.messages.len(), 2, "the note and the question are one user message");
+    }
+
+    #[test]
+    fn clear_starts_a_new_conversation() {
+        let mut rig = Rig::new("agent-clear", Mode::Default, vec![ok(text_reply("a"))]);
+        rig.run(vec![Command::Send("one".into()), Command::Rename("unit-cleared".into())]);
+        assert_eq!(rig.agent.messages.len(), 2);
+        tick();
+        rig.run(vec![Command::Clear]);
+        assert!(rig.agent.messages.is_empty());
+        assert_eq!(rig.agent.session.name, None);
+        assert!(!rig.agent.told_plan);
+    }
+
+    #[test]
+    fn plan_mode_is_announced_once_and_retracted_once() {
+        let mut rig = Rig::new(
+            "agent-plan",
+            Mode::Plan,
+            vec![ok(text_reply("a")), ok(text_reply("b")), ok(text_reply("c")), ok(text_reply("d"))],
+        );
+        let on = "Plan mode is on.";
+        let off = "Plan mode is off.";
+        rig.run(vec![Command::Send("one".into())]);
+        rig.run(vec![Command::Send("two".into())]);
+        rig.agent.core.mode.set(Mode::Default);
+        rig.run(vec![Command::Send("three".into())]);
+        rig.run(vec![Command::Send("four".into())]);
+        let bodies = rig.bodies();
+        assert_eq!(bodies[0].matches(on).count(), 1);
+        assert_eq!(bodies[1].matches(on).count(), 1, "not repeated: the history already has it");
+        assert_eq!(bodies[2].matches(off).count(), 1);
+        assert_eq!(bodies[3].matches(off).count(), 1);
+        assert!(!bodies[0].contains(off));
+    }
+
+    #[test]
+    fn image_paths_in_a_message_are_attached() {
+        let mut rig = Rig::new("agent-images", Mode::Default, vec![ok(text_reply("nice"))]);
+        let shot = rig.dir.join("shot.png");
+        std::fs::write(&shot, b"abc").unwrap();
+        let huge = rig.dir.join("huge.png");
+        std::fs::File::create(&huge).unwrap().set_len(6 * 1024 * 1024).unwrap();
+
+        let events = rig.run(vec![Command::Send(format!("look at {} and {}", shot.display(), huge.display()))]);
+        let notices = notices_of(&events);
+        assert_eq!(notices[0], format!("Attached {} (0 KB)", shot.display()));
+        assert!(notices[1].contains("images can be at most 5 MB"), "{notices:?}");
+        let body = rig.bodies().pop().unwrap();
+        assert!(body.contains(r#""media_type":"image/png""#));
+        assert!(body.contains(r#""data":"YWJj""#), "the file's bytes are sent as base64: {body}");
+        // The image comes before the text in one message.
+        let first = rig.agent.messages[0].content();
+        assert_eq!((first[0]["type"].as_str(), first[1]["type"].as_str()), (Some("image"), Some("text")));
+    }
+
+    #[test]
+    fn a_failed_request_leaves_the_message_to_be_joined_by_the_next() {
+        let mut rig = Rig::new(
+            "agent-failed",
+            Mode::Default,
+            vec![Response { status: 400, body: r#"{"error":{"message":"nope"}}"#.into() }, ok(text_reply("ok"))],
+        );
+        let events = rig.run(vec![Command::Send("first".into())]);
+        assert_eq!(errors_of(&events), ["API error 400: nope"]);
+        assert_eq!(rig.agent.messages.len(), 1);
+        let events = rig.run(vec![Command::Send("second".into())]);
+        assert!(last_is_done(&events));
+        assert_eq!(rig.agent.messages.len(), 2, "both prompts are in one user message");
+        assert_eq!(rig.agent.messages[0].content().len(), 2);
+    }
+
+    #[test]
+    fn remembered_notes_reach_the_model_with_the_next_message() {
+        let mut rig = Rig::new("agent-remember", Mode::Default, vec![ok(text_reply("ok"))]);
+        rig.run(vec![Command::Remember("uses pnpm".into()), Command::Send("hi".into())]);
+        let body = rig.bodies().pop().unwrap();
+        assert!(body.contains("The user saved this to memory: uses pnpm"));
+        assert_eq!(rig.agent.messages.len(), 2);
+    }
+
+    #[test]
+    fn finished_background_jobs_are_reported_to_the_model() {
+        let mut rig = Rig::new("agent-jobs", Mode::Default, vec![ok(text_reply("ok"))]);
+        let no = AtomicBool::new(false);
+        rig.agent.tools.run("bash", &json!({"command": "exit 2", "background": true}), &no).unwrap();
+        let mut notices = Vec::new();
+        for _ in 0..100 {
+            thread::sleep(Duration::from_millis(50));
+            notices.extend(notices_of(&rig.events()));
+            if !notices.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(notices, ["Background job 1 finished (exit 2): exit 2"]);
+        thread::sleep(Duration::from_millis(200));
+        rig.run(vec![Command::Send("anything new?".into())]);
+        let body = rig.bodies().pop().unwrap();
+        assert!(body.contains("Background job 1 (`exit 2`) finished: exit 2."), "{body}");
+    }
+
+    #[test]
+    fn skills_run_as_a_message_with_their_instructions() {
+        crate::tools::test_home();
+        let skill = crate::config::config_dir().join("skills/unit-agent-skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: unit-agent-skill\ndescription: d\n---\nStep one.\n")
+            .unwrap();
+        let mut rig = Rig::new("agent-skill", Mode::Default, vec![ok(text_reply("ok"))]);
+        // The test rig's tools have no skills; the agent's own tools found this one.
+        let skills = skill::discover();
+        assert!(skills.iter().any(|s| s.name == "unit-agent-skill"));
+        rig.agent.tools = Arc::new(Tools::new(rig.dir.clone(), skills, mcp::Servers::default()));
+
+        let events = rig.run(vec![Command::Skill { name: "nope".into(), args: String::new() }]);
+        assert_eq!(errors_of(&events), ["no skill named nope"]);
+        let events = rig.run(vec![Command::Skill { name: "unit-agent-skill".into(), args: "for src/".into() }]);
+        assert!(last_is_done(&events));
+        let body = rig.bodies().pop().unwrap();
+        assert!(body.contains(r#"<skill name=\"unit-agent-skill\">"#) && body.contains("Step one."));
+        assert!(body.contains("for src/"));
     }
 }

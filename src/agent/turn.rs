@@ -357,4 +357,334 @@ mod tests {
         assert_eq!(server_result(&other), Some(Err("code_execution failed: timeout".into())));
         assert!(server_result(&json!({"type":"text"})).is_none());
     }
+
+    use crate::agent::Command;
+    use crate::agent::permit::Mode;
+    use crate::agent::tests::{
+        Response, Rig, blocks_reply, errors_of, ok, sse, text_of, text_reply, tool_use, tools_reply,
+    };
+    use std::time::Duration;
+
+    fn read_call(id: &str, path: &str) -> Value {
+        tool_use(id, "read", json!({ "path": path }))
+    }
+
+    /// (label, ok, summary) for each tool shown, in order.
+    fn shown(events: &[Event]) -> (Vec<String>, Vec<(bool, String)>) {
+        let mut labels = Vec::new();
+        let mut results = Vec::new();
+        for e in events {
+            match e {
+                Event::Tool { label, .. } => labels.push(label.clone()),
+                Event::ToolResult { ok, summary } => results.push((*ok, summary.clone())),
+                _ => {}
+            }
+        }
+        (labels, results)
+    }
+
+    /// The tool results of message `i`: (tool_use_id, is_error, content text).
+    fn results_of(rig: &Rig, i: usize) -> Vec<(String, bool, String)> {
+        rig.agent.messages[i]
+            .content()
+            .iter()
+            .filter(|b| b["type"] == "tool_result")
+            .map(|b| {
+                (
+                    b["tool_use_id"].as_str().unwrap().to_string(),
+                    b["is_error"] == true,
+                    b["content"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn send(rig: &mut Rig, text: &str) -> Vec<Event> {
+        rig.run(vec![Command::Send(text.into())])
+    }
+
+    #[test]
+    fn neighbouring_reads_run_together_and_report_in_order() {
+        let calls = [read_call("r1", "a.txt"), read_call("r2", "b.txt"), read_call("r3", "missing.txt")];
+        let mut rig =
+            Rig::new("turn-group", Mode::Default, vec![ok(tools_reply(&calls)), ok(text_reply("Read them."))]);
+        std::fs::write(rig.dir.join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(rig.dir.join("b.txt"), "beta\ngamma\n").unwrap();
+        let events = send(&mut rig, "read all");
+
+        assert!(events.iter().any(|e| matches!(e, Event::Activity(a) if a == "running 3 tools at once")));
+        let (labels, results) = shown(&events);
+        assert_eq!(labels, ["Read(a.txt)", "Read(b.txt)", "Read(missing.txt)"]);
+        assert_eq!(results.iter().map(|r| r.0).collect::<Vec<_>>(), [true, true, false]);
+        assert_eq!(results[0].1, "Read 1 line");
+        assert_eq!(results[1].1, "Read 2 lines");
+
+        let r = results_of(&rig, 2);
+        assert_eq!(
+            r.iter().map(|x| (x.0.as_str(), x.1)).collect::<Vec<_>>(),
+            [("r1", false), ("r2", false), ("r3", true)]
+        );
+        assert!(r[0].2.contains("alpha"));
+        assert!(r[2].2.contains("No such file"), "{}", r[2].2);
+        assert_eq!(text_of(&events), "Read them.");
+    }
+
+    #[test]
+    fn a_call_between_reads_splits_the_groups_and_can_be_refused() {
+        let calls = [
+            read_call("r1", "a.txt"),
+            tool_use("b1", "bash", json!({"command": "echo no"})),
+            read_call("r2", "a.txt"),
+            read_call("r3", "a.txt"),
+        ];
+        let mut rig = Rig::new("turn-split", Mode::Default, vec![ok(tools_reply(&calls)), ok(text_reply("ok"))]);
+        std::fs::write(rig.dir.join("a.txt"), "alpha\n").unwrap();
+        let events = send(&mut rig, "go");
+        let activity: Vec<_> =
+            events.iter().filter_map(|e| if let Event::Activity(a) = e { Some(a.as_str()) } else { None }).collect();
+        assert_eq!(activity, ["running 2 tools at once"], "only the last two reads overlap");
+        let (labels, _) = shown(&events);
+        assert_eq!(labels, ["Read(a.txt)", "Bash(echo no)", "Read(a.txt)", "Read(a.txt)"]);
+        let r = results_of(&rig, 2);
+        assert_eq!(r.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["r1", "b1", "r2", "r3"]);
+        assert!(r[1].1 && r[1].2.starts_with("Not allowed"), "{:?}", r[1]);
+    }
+
+    #[test]
+    fn tools_that_fail_are_reported_and_the_turn_goes_on() {
+        let calls =
+            [tool_use("b1", "bash", json!({"command": "echo oops; exit 4"})), tool_use("u1", "frobnicate", json!({}))];
+        let mut rig = Rig::new("turn-errors", Mode::Bypass, vec![ok(tools_reply(&calls)), ok(text_reply("I see."))]);
+        let events = send(&mut rig, "go");
+        assert!(matches!(events.last(), Some(Event::Done)));
+        let (_, results) = shown(&events);
+        assert!(!results[0].0 && results[0].1.contains("oops") && results[0].1.contains("Exit code 4"));
+        assert_eq!(results[1], (false, "unknown tool: frobnicate".to_string()));
+        let r = results_of(&rig, 2);
+        assert!(r[0].1 && r[1].1);
+        // The model's next request carried both results.
+        assert!(rig.bodies()[1].contains("unknown tool: frobnicate"));
+    }
+
+    #[test]
+    fn invalid_tool_input_is_sent_back_for_a_retry() {
+        let rig = Rig::new("turn-badjson", Mode::Bypass, vec![]);
+        let call = Call { id: json!("x1"), name: "bash".into(), input: json!({"_invalid_json": "EOF while parsing"}) };
+        let emit = rig.agent.core.emit.clone();
+        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let out = rig.agent.core.call_one(&ctx, &call);
+        assert_eq!(out["is_error"], true);
+        assert_eq!(out["tool_use_id"], "x1");
+        assert_eq!(out["content"], "The tool input was not valid JSON (\"EOF while parsing\"). Try again.");
+    }
+
+    #[test]
+    fn ask_user_reaches_the_user_or_assumes() {
+        let ask = tool_use("q1", "ask_user", json!({"question": "Which colour?", "options": ["red", "blue"]}));
+        // Nobody there: the model is told to choose.
+        let mut rig =
+            Rig::new("turn-ask-none", Mode::Default, vec![ok(tools_reply(&[ask.clone()])), ok(text_reply("ok"))]);
+        send(&mut rig, "paint");
+        assert!(results_of(&rig, 2)[0].2.starts_with("The user isn't available."));
+        assert!(!results_of(&rig, 2)[0].1);
+
+        // Someone there.
+        let (url, _) = crate::agent::tests::fake_http(vec![ok(tools_reply(&[ask.clone()])), ok(text_reply("ok"))]);
+        let mut cfg = crate::agent::tests::config(Some(url), Mode::Default);
+        cfg.interactive = true;
+        let mut rig = Rig::with("turn-ask-user", cfg);
+        rig.replies.lock().unwrap().push_back("blue".into());
+        let events = send(&mut rig, "paint");
+        let question = events.iter().find_map(|e| match e {
+            Event::Question { question, options, .. } => Some((question.clone(), options.clone())),
+            _ => None,
+        });
+        assert_eq!(question, Some(("Which colour?".to_string(), vec!["red".to_string(), "blue".to_string()])));
+        assert_eq!(results_of(&rig, 2)[0].2, "The user answered: blue");
+        let (_, results) = shown(&events);
+        assert_eq!(results[0], (true, "blue".to_string()), "the summary drops the lead-in");
+
+        // An empty answer is no answer.
+        let (url, _) = crate::agent::tests::fake_http(vec![ok(tools_reply(&[ask])), ok(text_reply("ok"))]);
+        let mut cfg = crate::agent::tests::config(Some(url), Mode::Default);
+        cfg.interactive = true;
+        let mut rig = Rig::with("turn-ask-empty", cfg);
+        send(&mut rig, "paint");
+        let r = results_of(&rig, 2);
+        assert!(r[0].1 && r[0].2 == "The user didn't answer.");
+    }
+
+    #[test]
+    fn cancelling_during_a_tool_ends_the_turn_cleanly() {
+        let call = tool_use("b1", "bash", json!({"command": "sleep 5"}));
+        let mut rig = Rig::new("turn-cancel", Mode::Bypass, vec![ok(tools_reply(&[call]))]);
+        let cancel = rig.agent.core.cancel.clone();
+        let stopper = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            cancel.store(true, Ordering::Relaxed);
+        });
+        let started = std::time::Instant::now();
+        let events = send(&mut rig, "slow");
+        stopper.join().unwrap();
+        assert!(matches!(events.last(), Some(Event::Cancelled)));
+        assert!(started.elapsed() < Duration::from_secs(4));
+        let r = results_of(&rig, 2);
+        assert!(r[0].1 && r[0].2.contains("Cancelled by the user"), "{:?}", r[0]);
+    }
+
+    #[test]
+    fn a_turn_cancelled_before_the_reply_ends_with_cancelled() {
+        let mut rig = Rig::new("turn-cancel-early", Mode::Bypass, vec![ok(text_reply("never read"))]);
+        rig.agent.core.cancel.store(true, Ordering::Relaxed);
+        let emit = rig.agent.core.emit.clone();
+        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let mut messages = vec![Msg::new("user", json!([{ "type": "text", "text": "hi" }]))];
+        let end = rig.agent.core.turn(&ctx, &mut messages);
+        assert!(matches!(end, Event::Cancelled));
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn calls_after_a_cancel_are_not_run() {
+        let rig = Rig::new("turn-cancel-check", Mode::Bypass, vec![]);
+        rig.agent.core.cancel.store(true, Ordering::Relaxed);
+        let call = Call { id: json!("c"), name: "bash".into(), input: json!({"command": "touch ran.txt"}) };
+        let emit = rig.agent.core.emit.clone();
+        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let out = rig.agent.core.call_one(&ctx, &call);
+        assert_eq!(out["content"], "Cancelled by the user.");
+        assert!(!rig.dir.join("ran.txt").exists());
+    }
+
+    #[test]
+    fn replies_that_end_the_turn_badly_say_why() {
+        let text = [json!({"type": "text", "text": "partial"})];
+        let cases: Vec<(Response, String)> = vec![
+            (
+                Response { status: 400, body: r#"{"error":{"message":"prompt is too long: 9 tokens"}}"#.into() },
+                TOO_LONG.into(),
+            ),
+            (ok(blocks_reply(&text, "model_context_window_exceeded")), TOO_LONG.into()),
+            (ok(blocks_reply(&text, "refusal")), "the model declined this request".into()),
+            (ok(blocks_reply(&text, "max_tokens")), "the reply hit the max_tokens limit".into()),
+            (ok(blocks_reply(&[], "end_turn")), "empty reply (stop reason: end_turn)".into()),
+            (
+                Response { status: 400, body: r#"{"error":{"message":"bad things"}}"#.into() },
+                "API error 400: bad things".into(),
+            ),
+        ];
+        for (i, (response, expected)) in cases.into_iter().enumerate() {
+            let mut rig = Rig::new(&format!("turn-bad-{i}"), Mode::Default, vec![response]);
+            let events = send(&mut rig, "hi");
+            assert_eq!(errors_of(&events), [expected], "case {i}");
+            assert!(matches!(events.last(), Some(Event::Error(_))));
+        }
+    }
+
+    #[test]
+    fn open_tool_calls_are_closed_when_the_reply_stops_short() {
+        let calls =
+            [tool_use("t1", "bash", json!({"command": "ls"})), tool_use("t2", "bash", json!({"command": "pwd"}))];
+        let mut rig = Rig::new("turn-open", Mode::Bypass, vec![ok(blocks_reply(&calls, "max_tokens"))]);
+        let events = send(&mut rig, "hi");
+        assert_eq!(errors_of(&events), ["the reply hit the max_tokens limit"]);
+        let r = results_of(&rig, 2);
+        assert_eq!(
+            r.iter().map(|x| (x.0.as_str(), x.1, x.2.as_str())).collect::<Vec<_>>(),
+            [("t1", true, "Not run."), ("t2", true, "Not run.")]
+        );
+    }
+
+    #[test]
+    fn a_paused_turn_is_continued() {
+        let mut rig = Rig::new(
+            "turn-pause",
+            Mode::Default,
+            vec![
+                ok(blocks_reply(&[json!({"type": "text", "text": "part one, "})], "pause_turn")),
+                ok(text_reply("part two")),
+            ],
+        );
+        let events = send(&mut rig, "long");
+        assert_eq!(text_of(&events), "part one, part two");
+        assert!(matches!(events.last(), Some(Event::Done)));
+        // Two assistant messages in a row: the second request just continues the first.
+        assert_eq!(rig.agent.messages.iter().map(|m| m.user).collect::<Vec<_>>(), [true, false, false]);
+    }
+
+    #[test]
+    fn server_side_tools_and_thinking_are_shown_as_they_stream() {
+        let thinking = sse(&[
+            json!({"type": "message_start", "message": {"usage": {"input_tokens": 3}}}),
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "hmm"}}),
+            json!({"type": "content_block_stop", "index": 0}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "pause_turn"}, "usage": {"output_tokens": 1}}),
+            json!({"type": "message_stop"}),
+        ]);
+        let blocks = [
+            json!({"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "rust lifetimes"}}),
+            json!({"type": "web_search_tool_result", "tool_use_id": "s1", "content": [{"u": 1}, {"u": 2}]}),
+            json!({"type": "text", "text": "Found it."}),
+        ];
+        let mut rig = Rig::new("turn-server", Mode::Default, vec![ok(thinking), ok(blocks_reply(&blocks, "end_turn"))]);
+        let events = send(&mut rig, "search");
+        assert!(events.iter().any(|e| matches!(e, Event::Thinking(t) if t == "hmm")));
+        assert!(events.iter().any(|e| matches!(e, Event::ToolStart(n) if n == "web_search")));
+        let (labels, results) = shown(&events);
+        assert_eq!(labels, ["Search(rust lifetimes)"]);
+        assert_eq!(results, [(true, "2 results".to_string())]);
+        assert_eq!(text_of(&events), "Found it.");
+        // Server-side blocks are kept exactly, for the next request.
+        let content = rig.agent.messages.last().unwrap().content();
+        assert_eq!(content[0]["input"]["query"], "rust lifetimes");
+        assert_eq!(content[1]["type"], "web_search_tool_result");
+    }
+
+    #[test]
+    fn usage_is_reported_with_its_cost() {
+        let mut rig = Rig::new("turn-usage", Mode::Default, vec![ok(text_reply("hi"))]);
+        let events = send(&mut rig, "hi");
+        let usage = events.iter().find_map(|e| match e {
+            Event::Usage { usage, cost, main } => Some((usage.input_tokens, usage.output_tokens, *cost, *main)),
+            _ => None,
+        });
+        let (input, output, cost, main) = usage.expect("usage event");
+        assert_eq!((input, output, main), (10, 5, true));
+        let expected = (10.0 * 4.0 + 5.0 * 20.0) / 1e6;
+        assert!((cost.unwrap() - expected).abs() < 1e-12, "{cost:?}");
+    }
+
+    #[test]
+    fn finished_jobs_ride_along_with_tool_results() {
+        // The job finishes while the second command sleeps, so it is reported
+        // with this reply's results rather than with the next message.
+        let calls = [
+            tool_use("b1", "bash", json!({"command": "true", "background": true})),
+            tool_use("b2", "bash", json!({"command": "sleep 0.6"})),
+        ];
+        let mut rig = Rig::new("turn-jobs", Mode::Bypass, vec![ok(tools_reply(&calls)), ok(text_reply("ok"))]);
+        send(&mut rig, "go");
+        let last = rig.agent.messages[2].content();
+        let note = last.last().unwrap()["text"].as_str().unwrap();
+        assert_eq!(
+            note,
+            "<system-reminder>Background job 1 (`true`) finished: exit 0. Use the jobs tool to read their output.</system-reminder>"
+        );
+        assert!(job_notes(&rig.agent.tools).is_none(), "each finished job is reported once");
+    }
+
+    #[test]
+    fn unanswered_calls_get_a_result_each() {
+        let user = Msg::new("user", json!([{ "type": "text", "text": "hi" }]));
+        assert!(unanswered(&user, "x").is_none());
+        let plain = Msg::new("assistant", json!([{ "type": "text", "text": "hi" }]));
+        assert!(unanswered(&plain, "x").is_none());
+        let calls = Msg::new("assistant", json!([tool_use("a", "bash", json!({})), tool_use("b", "read", json!({}))]));
+        let results = unanswered(&calls, "Not run.").unwrap();
+        assert!(results.user);
+        let c = results.content();
+        assert_eq!((c[0]["tool_use_id"].as_str(), c[1]["tool_use_id"].as_str()), (Some("a"), Some("b")));
+        assert!(c.iter().all(|b| b["is_error"] == true && b["content"] == "Not run."));
+    }
 }

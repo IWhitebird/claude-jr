@@ -199,4 +199,173 @@ mod tests {
         let order: Vec<Mode> = std::iter::successors(Some(Mode::Default), |m| Some(m.next())).take(6).collect();
         assert_eq!(order, [Mode::Default, Mode::AcceptEdits, Mode::Plan, Mode::Auto, Mode::Bypass, Mode::Default]);
     }
+
+    use crate::agent::tests::{Response, Rig, config, fake_http, notices_of, ok, text_reply};
+
+    fn check(rig: &Rig, name: &str, input: Value) -> Result<(), String> {
+        let emit = rig.agent.core.emit.clone();
+        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        rig.agent.core.permit(&ctx, name, &input, &format!("{name}(label)"))
+    }
+
+    fn bash(c: &str) -> Value {
+        json!({ "command": c })
+    }
+
+    fn file(p: &str) -> Value {
+        json!({ "path": p, "content": "x" })
+    }
+
+    fn rig(name: &str, mode: Mode, interactive: bool, allow: &[&str], replies: Vec<Response>) -> Rig {
+        let (url, log) = fake_http(replies);
+        let mut cfg = config(Some(url), mode);
+        cfg.interactive = interactive;
+        cfg.allow = allow.iter().map(|s| s.to_string()).collect();
+        let mut rig = Rig::with(name, cfg);
+        rig.log = log;
+        rig
+    }
+
+    fn asks(r: &Rig) -> Vec<String> {
+        r.events()
+            .into_iter()
+            .filter_map(|e| if let Event::Ask { label, .. } = e { Some(label) } else { None })
+            .collect()
+    }
+
+    const NOBODY: &str = "Not allowed: nobody is here to approve it.";
+    const DENIED: &str = "The user did not allow this tool call.";
+
+    #[test]
+    fn every_mode_and_access_level() {
+        let outcomes = |mode: Mode| {
+            let r = rig(&format!("permit-{mode:?}").to_lowercase(), mode, false, &[], vec![]);
+            [
+                check(&r, "read", json!({"path": "a"})),
+                check(&r, "todo", json!({})),
+                check(&r, "write", file("a.txt")),
+                check(&r, "memory", json!({"action": "add", "note": "n"})),
+                check(&r, "bash", bash("ls")),
+                check(&r, "mcp__srv__tool", json!({})),
+            ]
+        };
+        let nobody = || Err(NOBODY.to_string());
+        let plan = || Err("Plan mode is on: don't change files. Put the change in your plan.".to_string());
+        // read, todo, write, memory, bash, mcp
+        assert_eq!(outcomes(Mode::Default), [Ok(()), Ok(()), nobody(), nobody(), nobody(), nobody()]);
+        assert_eq!(outcomes(Mode::AcceptEdits), [Ok(()), Ok(()), Ok(()), nobody(), nobody(), nobody()]);
+        assert_eq!(outcomes(Mode::Plan), [Ok(()), Ok(()), plan(), plan(), nobody(), nobody()]);
+        assert_eq!(outcomes(Mode::Bypass), [Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(())]);
+    }
+
+    #[test]
+    fn edits_outside_the_project_or_to_sensitive_files_still_ask() {
+        let r = rig("permit-edits", Mode::AcceptEdits, false, &[], vec![]);
+        assert_eq!(check(&r, "write", file("src/new.rs")), Ok(()));
+        assert_eq!(check(&r, "edit", file(".git/hooks/pre-commit")), Err(NOBODY.into()));
+        assert_eq!(check(&r, "write", file("/etc/passwd")), Err(NOBODY.into()));
+        assert_eq!(check(&r, "write", file("../elsewhere")), Err(NOBODY.into()));
+        assert_eq!(check(&r, "write", file(".mcp.json")), Err(NOBODY.into()));
+    }
+
+    #[test]
+    fn allow_rules_let_matching_calls_through() {
+        let r = rig("permit-rules", Mode::Default, false, &["bash:echo *", "write:docs/*"], vec![]);
+        assert_eq!(check(&r, "bash", bash("echo hi")), Ok(()));
+        assert_eq!(check(&r, "bash", bash("rm -rf x")), Err(NOBODY.into()));
+        assert_eq!(check(&r, "write", file("docs/a.md")), Ok(()));
+        assert_eq!(check(&r, "write", file("src/a.rs")), Err(NOBODY.into()));
+        // Plan mode wins over a rule for edits.
+        r.agent.core.mode.set(Mode::Plan);
+        assert!(check(&r, "write", file("docs/a.md")).unwrap_err().starts_with("Plan mode is on"));
+        assert_eq!(check(&r, "bash", bash("echo hi")), Ok(()));
+    }
+
+    #[test]
+    fn the_user_can_allow_deny_or_always_allow() {
+        let r = rig("permit-ask", Mode::Default, true, &[], vec![]);
+        r.answers.lock().unwrap().extend([Answer::Yes, Answer::No, Answer::Always]);
+        assert_eq!(check(&r, "bash", bash("make")), Ok(()));
+        assert_eq!(check(&r, "bash", bash("make")), Err(DENIED.into()));
+        assert_eq!(check(&r, "bash", bash("make test")), Ok(()));
+        assert_eq!(asks(&r), ["bash(label)", "bash(label)", "bash(label)"]);
+        // "Always" added a rule for that command: no more questions (and no answers left).
+        assert_eq!(check(&r, "bash", bash("make test")), Ok(()));
+        assert!(asks(&r).is_empty());
+        // With no answer queued the rig says no.
+        assert_eq!(check(&r, "bash", bash("make other")), Err(DENIED.into()));
+    }
+
+    #[test]
+    fn auto_mode_lets_the_reviewer_allow() {
+        let r = rig("permit-auto-allow", Mode::Auto, false, &[], vec![ok(text_reply("ALLOW"))]);
+        *r.agent.core.request.lock().unwrap() = "run the tests please".into();
+        assert_eq!(check(&r, "bash", bash("cargo test")), Ok(()));
+        let events = r.events();
+        assert!(events.iter().any(|e| matches!(e, Event::Activity(a) if a == "reviewing bash(label)")));
+        assert!(events.iter().any(|e| matches!(e, Event::Usage { main: false, .. })));
+        let body = r.bodies().pop().unwrap();
+        assert!(body.contains("run the tests please") && body.contains("cargo test"));
+        assert!(body.contains("claude-haiku-5-5") && body.contains(r#""tools":[]"#));
+        // Edits inside the project never reach the reviewer.
+        assert_eq!(check(&r, "write", file("a.txt")), Ok(()));
+        assert_eq!(r.bodies().len(), 1);
+    }
+
+    #[test]
+    fn auto_mode_block_reason_goes_back_or_to_the_user() {
+        let block = || ok(text_reply("BLOCK: pushes to a remote"));
+        let r = rig("permit-auto-block", Mode::Auto, false, &[], vec![block()]);
+        assert_eq!(
+            check(&r, "bash", bash("git push")),
+            Err("Not allowed: nobody is here to approve it (pushes to a remote).".into())
+        );
+
+        let r = rig("permit-auto-block-ask", Mode::Auto, true, &[], vec![block(), block()]);
+        r.answers.lock().unwrap().push_back(Answer::Yes);
+        assert_eq!(check(&r, "bash", bash("git push")), Ok(()), "the user can overrule the reviewer");
+        assert_eq!(asks(&r), ["bash(label) \u{2014} flagged: pushes to a remote"]);
+        assert_eq!(check(&r, "bash", bash("git push")), Err(DENIED.into()));
+    }
+
+    #[test]
+    fn auto_mode_falls_back_to_asking_when_the_reviewer_is_no_help() {
+        let garbage = ok(text_reply("Hmm, hard to say."));
+        let refused = Response { status: 400, body: r#"{"error":{"message":"no"}}"#.into() };
+        let r = rig("permit-auto-unsure", Mode::Auto, false, &[], vec![garbage, refused]);
+        assert_eq!(check(&r, "bash", bash("ls")), Err(NOBODY.into()));
+        assert_eq!(check(&r, "bash", bash("ls")), Err(NOBODY.into()));
+
+        // With someone there, they are asked, with no "flagged" note.
+        let r = rig("permit-auto-unsure-ask", Mode::Auto, true, &[], vec![ok(text_reply("maybe"))]);
+        r.answers.lock().unwrap().push_back(Answer::Yes);
+        assert_eq!(check(&r, "bash", bash("ls")), Ok(()));
+        assert_eq!(asks(&r), ["bash(label)"]);
+    }
+
+    #[test]
+    fn auto_mode_with_an_unreachable_reviewer_asks_instead() {
+        // Nothing listens here; a cancelled request gives up at once instead of retrying.
+        let mut cfg = config(Some("http://127.0.0.1:9".into()), Mode::Auto);
+        cfg.interactive = true;
+        let r = Rig::with("permit-unreachable", cfg);
+        r.agent.core.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        r.answers.lock().unwrap().push_back(Answer::No);
+        assert_eq!(check(&r, "bash", bash("ls")), Err(DENIED.into()));
+        assert!(notices_of(&r.events()).is_empty());
+    }
+
+    #[test]
+    fn shared_mode_and_names() {
+        let m = SharedMode(AtomicU8::new(Mode::Plan as u8));
+        assert_eq!(m.get(), Mode::Plan);
+        m.set(Mode::Auto);
+        assert_eq!(m.get(), Mode::Auto);
+        assert_eq!(Mode::parse("skip-permissions"), Some(Mode::Bypass));
+        assert_eq!(Mode::parse("accept-edits"), Some(Mode::AcceptEdits));
+        assert_eq!(Mode::parse("bypass"), None);
+        assert!(matches!(parse_verdict("BLOCK"), Verdict::Block(r) if r.is_empty()));
+        assert!(matches!(parse_verdict("ALLOW: fine\nsecond line"), Verdict::Allow));
+        assert!(matches!(parse_verdict(""), Verdict::Unsure));
+    }
 }
