@@ -28,6 +28,7 @@ const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
 const HELP: &str = "/clear          start a new conversation
 /model [name]   show or change the model
+/rename [name]  name this session (resume with claude-jr -r NAME)
 /cost           tokens and cost so far
 /exit           quit
 
@@ -106,6 +107,8 @@ struct App {
     queued: Option<String>,
     cost: f64,
     context: u64,
+    /// The session's name, set with /rename.
+    name: Option<String>,
     quit_armed: Option<Instant>,
     quit: bool,
     cols: usize,
@@ -131,6 +134,7 @@ impl App {
             queued: None,
             cost: 0.0,
             context: 0,
+            name: None,
             quit_armed: None,
             quit: false,
             cols,
@@ -240,10 +244,14 @@ impl App {
 
     fn on_agent(&mut self, e: Event) {
         match e {
-            Event::Ready { resumed } if resumed > 0 => {
-                self.note(&format!("Resumed the last session ({resumed} messages)."), DIM);
+            Event::Ready { resumed, name } => {
+                if resumed > 0 {
+                    let which = name.as_deref().map_or("the last session".to_string(), |n| format!("\"{n}\""));
+                    self.note(&format!("Resumed {which} ({resumed} messages)."), DIM);
+                }
+                self.name = name;
             }
-            Event::Ready { .. } => {}
+            Event::Notice(msg) => self.note(&msg, DIM),
             Event::Text(t) => {
                 self.activity = "Writing".into();
                 self.text.push_str(&t);
@@ -417,6 +425,18 @@ impl App {
                 self.note(&msg, "");
             }
             "model" if arg.is_empty() => self.note(&format!("Model: {}", self.model), ""),
+            "rename" if arg.is_empty() => {
+                let msg = match &self.name {
+                    Some(n) => format!("This session is \"{n}\". /rename NAME to change it."),
+                    None => "This session has no name yet. /rename NAME to set one.".to_string(),
+                };
+                self.note(&msg, "");
+            }
+            "rename" => {
+                let _ = self.agent.commands.send(Command::Rename(arg.to_string()));
+                self.name = Some(arg.to_string());
+                self.note(&format!("Renamed to \"{arg}\". Resume it later with: claude-jr -r \"{arg}\""), DIM);
+            }
             "model" => {
                 self.model = arg.to_string();
                 let _ = self.agent.commands.send(Command::Model(self.model.clone()));
@@ -426,6 +446,7 @@ impl App {
             "clear" => {
                 let _ = self.agent.commands.send(Command::Clear);
                 self.context = 0;
+                self.name = None;
                 self.note("Started a new conversation.", DIM);
             }
             _ => self.note(&format!("Unknown command /{name}. Try /help."), RED),
@@ -478,7 +499,8 @@ impl App {
                 Mode::Bypass => span("⏵⏵ skip permissions on (shift+tab to cycle)", RED),
             }
         };
-        let right = format!("{} · {}k tokens · ${:.2}", self.model, self.context / 1000, self.cost);
+        let name = self.name.as_deref().map(|n| format!("{n} · ")).unwrap_or_default();
+        let right = format!("{name}{} · {}k tokens · ${:.2}", self.model, self.context / 1000, self.cost);
         out.push(view::footer(left, &right, cols));
 
         // Never taller than the screen, or the cursor math breaks.

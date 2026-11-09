@@ -9,6 +9,7 @@ mod tools;
 mod ui;
 
 use agent::Mode;
+use session::{Pick, Session};
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
@@ -16,6 +17,8 @@ const USAGE: &str = "usage: claude-jr [options] [-p PROMPT]
 
   -p, --print PROMPT   run one prompt, print the reply, exit
   -c, --continue       continue the last conversation in this directory
+  -r, --resume NAME    continue a conversation by name (see /rename) or id
+      --sessions       list saved conversations for this directory
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
@@ -36,13 +39,14 @@ struct Args {
     model: Option<String>,
     effort: Option<String>,
     yes: bool,
-    resume: bool,
+    resume: Option<Pick>,
 }
 
 enum Cli {
     Run(Args),
     /// --help or --version: print this and exit successfully.
     Show(String),
+    Sessions,
 }
 
 fn parse_args() -> Result<Cli, String> {
@@ -55,7 +59,9 @@ fn parse_args() -> Result<Cli, String> {
             "-m" | "--model" => args.model = Some(value()?),
             "-e" | "--effort" => args.effort = Some(value()?),
             "-y" | "--yes" | "--dangerously-skip-permissions" => args.yes = true,
-            "-c" | "--continue" => args.resume = true,
+            "-c" | "--continue" => args.resume = Some(Pick::Latest),
+            "-r" | "--resume" => args.resume = Some(Pick::Named(value()?)),
+            "--sessions" => return Ok(Cli::Sessions),
             "-h" | "--help" => return Ok(Cli::Show(USAGE.into())),
             "-V" | "--version" => return Ok(Cli::Show(format!("claude-jr {}", env!("CARGO_PKG_VERSION")))),
             _ => return Err(format!("unknown argument: {a}\n\n{USAGE}")),
@@ -79,6 +85,10 @@ fn run() -> Result<ExitCode, String> {
         Cli::Run(args) => args,
         Cli::Show(text) => {
             println!("{text}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Sessions => {
+            print_sessions();
             return Ok(ExitCode::SUCCESS);
         }
     };
@@ -110,4 +120,18 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn print_sessions() {
+    let sessions = Session::list();
+    if sessions.is_empty() {
+        println!("No saved conversations in this directory.");
+        return;
+    }
+    for s in sessions.iter().rev() {
+        let name = s.name.as_deref().unwrap_or("-");
+        let prompt: String = s.first_prompt.lines().next().unwrap_or("").chars().take(60).collect();
+        println!("{:<14} {:<20} {:>4} msgs  {prompt}", s.id, name, s.messages);
+    }
+    println!("\nResume with: claude-jr -r NAME_OR_ID   (or -c for the newest)");
 }

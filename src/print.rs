@@ -43,6 +43,7 @@ pub fn run(cfg: agent::Config, prompt: String) -> bool {
                     eprintln!("  {} {line}", if i == 0 { mark } else { " " });
                 }
             }
+            Event::Notice(msg) => eprintln!("{msg}"),
             Event::Ask { reply, .. } => {
                 let _ = reply.send(agent::Answer::No);
             }

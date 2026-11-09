@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One message, kept as the JSON text that goes over the wire.
@@ -54,31 +54,85 @@ struct Header {
     system: String,
 }
 
+/// Which saved session to open.
+pub enum Pick {
+    Latest,
+    /// By name (set with /rename) or by id (the file name without .jsonl).
+    Named(String),
+}
+
+/// A loaded session: where to keep saving, plus what it held.
+pub struct Loaded {
+    pub session: Session,
+    pub system: String,
+    pub messages: Vec<Msg>,
+}
+
+/// One line of `--sessions`.
+pub struct Summary {
+    pub id: String,
+    pub name: Option<String>,
+    pub messages: usize,
+    pub first_prompt: String,
+}
+
 pub struct Session {
     path: PathBuf,
     file: Option<File>,
     /// How many messages are already in the file.
     saved: usize,
+    pub name: Option<String>,
+}
+
+/// Lines starting with this hold session metadata, not messages.
+const META: &str = "{\"meta\":";
+
+#[derive(Serialize, Deserialize)]
+struct Meta {
+    meta: MetaFields,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MetaFields {
+    name: String,
 }
 
 impl Session {
     pub fn new() -> Session {
         let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-        Session { path: dir().join(format!("{ms}.jsonl")), file: None, saved: 0 }
+        Session { path: dir().join(format!("{ms}.jsonl")), file: None, saved: 0, name: None }
     }
 
-    /// The newest session for this directory: its system prompt and messages.
-    pub fn latest() -> Option<(Session, String, Vec<Msg>)> {
-        let path = fs::read_dir(dir())
-            .ok()?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
-            .max()?;
-        let mut lines = BufReader::new(File::open(&path).ok()?).lines().map_while(Result::ok);
-        let header: Header = serde_json::from_str(&lines.next()?).ok()?;
-        let messages: Vec<Msg> = lines.filter_map(|l| Msg::parse(&l)).collect();
+    pub fn load(pick: &Pick) -> Option<Loaded> {
+        let mut files = files();
+        let path = match pick {
+            Pick::Latest => files.pop()?,
+            Pick::Named(want) => files
+                .into_iter()
+                .rev()
+                .find(|p| stem(p) == *want || read(p).is_some_and(|(_, name, _)| name.as_deref() == Some(want)))?,
+        };
+        let (system, name, lines) = read(&path)?;
+        let messages: Vec<Msg> = lines.iter().filter_map(|l| Msg::parse(l)).collect();
         let saved = messages.len();
-        Some((Session { path, file: None, saved }, header.system, messages))
+        Some(Loaded { session: Session { path, file: None, saved, name }, system, messages })
+    }
+
+    /// Saved sessions for this directory, oldest first.
+    pub fn list() -> Vec<Summary> {
+        files()
+            .iter()
+            .filter_map(|p| {
+                let (_, name, lines) = read(p)?;
+                let messages: Vec<&String> = lines.iter().filter(|l| !l.starts_with(META)).collect();
+                let first_prompt = messages
+                    .first()
+                    .and_then(|l| Msg::parse(l))
+                    .and_then(|m| m.content().into_iter().find_map(|b| b["text"].as_str().map(String::from)))
+                    .unwrap_or_default();
+                Some(Summary { id: stem(p), name, messages: messages.len(), first_prompt })
+            })
+            .collect()
     }
 
     /// Appends finished messages. A trailing user message is held back because
@@ -91,18 +145,31 @@ impl Session {
         if end <= self.saved {
             return;
         }
-        if self.file.is_none() {
-            self.file = self.open(system);
-        }
-        let Some(file) = &mut self.file else { return };
         let mut buf = Vec::new();
         for m in &messages[self.saved..end] {
             buf.extend_from_slice(m.json.get().as_bytes());
             buf.push(b'\n');
         }
-        if file.write_all(&buf).is_ok() {
+        if self.append(system, &buf) {
             self.saved = end;
         }
+    }
+
+    /// Names the session; the newest name wins when it's loaded again.
+    pub fn rename(&mut self, system: &str, name: &str) {
+        let meta = Meta { meta: MetaFields { name: name.to_string() } };
+        let Ok(mut line) = serde_json::to_vec(&meta) else { return };
+        line.push(b'\n');
+        if self.append(system, &line) {
+            self.name = Some(name.to_string());
+        }
+    }
+
+    fn append(&mut self, system: &str, bytes: &[u8]) -> bool {
+        if self.file.is_none() {
+            self.file = self.open(system);
+        }
+        self.file.as_mut().is_some_and(|f| f.write_all(bytes).is_ok())
     }
 
     fn open(&self, system: &str) -> Option<File> {
@@ -116,6 +183,35 @@ impl Session {
         }
         Some(f)
     }
+}
+
+/// Session files for this directory, oldest first (names are millisecond timestamps).
+fn files() -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir()) else { return Vec::new() };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// A session file's system prompt, latest name, and remaining lines.
+fn read(path: &Path) -> Option<(String, Option<String>, Vec<String>)> {
+    let mut lines = BufReader::new(File::open(path).ok()?).lines().map_while(Result::ok);
+    let header: Header = serde_json::from_str(&lines.next()?).ok()?;
+    let rest: Vec<String> = lines.collect();
+    let name = rest
+        .iter()
+        .filter(|l| l.starts_with(META))
+        .filter_map(|l| serde_json::from_str::<Meta>(l).ok())
+        .map(|m| m.meta.name)
+        .next_back();
+    Some((header.system, name, rest))
+}
+
+fn stem(p: &Path) -> String {
+    p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// Sessions are grouped by working directory.

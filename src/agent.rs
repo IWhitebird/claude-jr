@@ -3,7 +3,7 @@
 
 use crate::api::{self, Chunk, Client, Usage};
 use crate::permission::Rules;
-use crate::session::{Msg, Session};
+use crate::session::{Loaded, Msg, Pick, Session};
 use crate::tools::{self, Diff, Tools};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
@@ -58,7 +58,7 @@ pub struct Config {
     pub effort: Option<String>,
     pub mode: Mode,
     pub allow: Vec<String>,
-    pub resume: bool,
+    pub resume: Option<Pick>,
 }
 
 pub enum Command {
@@ -66,6 +66,7 @@ pub enum Command {
     /// Start a new conversation.
     Clear,
     Model(String),
+    Rename(String),
 }
 
 pub enum Answer {
@@ -75,10 +76,13 @@ pub enum Answer {
 }
 
 pub enum Event {
-    /// Startup finished; `resumed` messages were loaded from the last session.
+    /// Startup finished. `resumed` messages were loaded from a saved session.
     Ready {
         resumed: usize,
+        name: Option<String>,
     },
+    /// Something worth telling the user that isn't an error.
+    Notice(String),
     Text(String),
     /// Progress notes the model writes between tool calls.
     Thinking(String),
@@ -140,10 +144,15 @@ struct Agent {
 impl Agent {
     fn start(cfg: Config, cancel: Arc<AtomicBool>, mode: Arc<SharedMode>, emit: Box<dyn Fn(Event) + Send>) -> Agent {
         let root = std::env::current_dir().unwrap_or_else(|_| ".".into());
-        let (session, system, messages) = match cfg.resume.then(Session::latest).flatten() {
-            Some((session, system, messages)) => (session, system, messages),
-            None => (Session::new(), crate::prompt::system(), Vec::new()),
-        };
+        let loaded = cfg.resume.as_ref().and_then(Session::load);
+        if let (Some(Pick::Named(name)), None) = (&cfg.resume, &loaded) {
+            emit(Event::Notice(format!("No saved session named \"{name}\" here; starting a new one.")));
+        }
+        let Loaded { session, system, messages } = loaded.unwrap_or_else(|| Loaded {
+            session: Session::new(),
+            system: crate::prompt::system(),
+            messages: Vec::new(),
+        });
         let mut agent = Agent {
             client: Client::new(cfg.key, cfg.base_url),
             model: cfg.model,
@@ -160,7 +169,7 @@ impl Agent {
             emit,
         };
         agent.close_open_calls("Not run: the session ended.");
-        (agent.emit)(Event::Ready { resumed: agent.messages.len() });
+        (agent.emit)(Event::Ready { resumed: agent.messages.len(), name: agent.session.name.clone() });
         agent
     }
 
@@ -187,6 +196,7 @@ impl Agent {
                     self.told_plan = false;
                 }
                 Command::Model(m) => self.model = m,
+                Command::Rename(name) => self.session.rename(&self.system, &name),
             }
         }
     }
