@@ -8,6 +8,7 @@
 mod input;
 mod md;
 mod stats;
+mod table;
 mod term;
 mod text;
 mod view;
@@ -132,6 +133,8 @@ struct Stream {
     text: String,
     thinking: String,
     md: Markdown,
+    /// Rows of a table still coming in; drawn when the table ends.
+    table: Vec<String>,
     /// The next line starts a new block and gets the ● marker.
     block_start: bool,
 }
@@ -237,6 +240,8 @@ impl App {
         };
         let version = env!("CARGO_PKG_VERSION");
         let [m0, m1, m2, m3] = view::mascot();
+        // A blank line between the shell prompt and the mascot.
+        self.commits.push(String::new());
         let sandbox = if crate::sandbox::active() {
             format!("{ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}")
         } else {
@@ -281,6 +286,10 @@ impl App {
     }
 
     fn commit_text_line(&mut self, line: &str) {
+        if !self.stream.md.in_code() && table::is_row(line) {
+            return self.stream.table.push(line.to_string());
+        }
+        self.commit_table();
         let lead = self.lead();
         let mut md = self.stream.md;
         self.emit(|cols, out| md.line(&text::clean(line), cols, lead, out));
@@ -340,6 +349,24 @@ impl App {
         self.stream.text = rest;
     }
 
+    /// Draws a finished table into scrollback (as plain lines if it can't fit).
+    fn commit_table(&mut self) {
+        if self.stream.table.is_empty() {
+            return;
+        }
+        let rows = std::mem::take(&mut self.stream.table);
+        let lead = self.lead();
+        let mut md = self.stream.md;
+        self.emit(|cols, out| {
+            if !table::render(&rows, cols, lead, out) {
+                for (i, row) in rows.iter().enumerate() {
+                    let l = if i == 0 { lead } else { span("  ", "") };
+                    md.line(&text::clean(row), cols, l, out);
+                }
+            }
+        });
+    }
+
     /// Commits any partial line still being streamed.
     fn flush(&mut self) {
         let thinking = std::mem::take(&mut self.stream.thinking);
@@ -350,6 +377,7 @@ impl App {
         if !text.is_empty() {
             self.commit_text_line(&text);
         }
+        self.commit_table();
     }
 
     fn note(&mut self, msg: &str, style: &'static str) {
@@ -778,8 +806,16 @@ impl App {
         if !self.stream.thinking.is_empty() {
             view::thinking(&text::clean(&self.stream.thinking), cols, &mut out);
         }
-        if !self.stream.text.is_empty() {
+        if !self.stream.table.is_empty() {
             let lead = if self.stream.block_start { span("● ", ORANGE) } else { span("  ", "") };
+            table::render(&self.stream.table, cols, lead, &mut out);
+        }
+        if !self.stream.text.is_empty() {
+            let lead = if self.stream.block_start && self.stream.table.is_empty() {
+                span("● ", ORANGE)
+            } else {
+                span("  ", "")
+            };
             let mut md = self.stream.md;
             md.line(&text::clean(&self.stream.text), cols, lead, &mut out);
         }

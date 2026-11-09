@@ -23,7 +23,12 @@ impl Markdown {
             && !matches!(t, "---" | "***" | "___")
             && heading(t).is_none()
             && !t.starts_with('>')
+            && !t.starts_with('|')
             && list_item(t).is_none()
+    }
+
+    pub fn in_code(&self) -> bool {
+        self.in_code
     }
 
     pub fn reset(&mut self) {

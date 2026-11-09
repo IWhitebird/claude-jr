@@ -63,6 +63,7 @@ def tool_round(n, usage):
 def final(usage):
     text = ("Done. Here's what happened:\n\n"
             "- wrote `demo.txt`\n- changed **two** to **TWO**\n\n"
+            "| file | change | lines |\n|---|---|---:|\n| `demo.txt` | two → **TWO** | 1 |\n| notes.md | none | 0 |\n\n"
             "```sh\ncat demo.txt\n```\n")
     return reply([({"type": "text", "text": ""}, [{"type": "text_delta", "text": text[i:i + 20]}
                                                   for i in range(0, len(text), 20)])], "end_turn", usage)
