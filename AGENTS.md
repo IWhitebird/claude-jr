@@ -8,8 +8,8 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 - `src/tools`: tool implementations
 - `src/ui`: terminal UI and input handling
 - `src/api.rs`: API client
-- `bench/`: memory and pty benchmark scripts
-- `evals/`: evaluation tasks (not present in every checkout)
+- `bench/`: resource benchmarks (memory, CPU, idle, pty UI tests) and a fake API
+- `bench/evals/`: coding evals (run.py; --dry-run uses the fake API in bench/mock.py)
 
 ## Verify
 - `cargo test --release`
