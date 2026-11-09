@@ -104,7 +104,7 @@ UI, and nothing more.
     from that repo, so it waits for a go-ahead). Done.
 
 Resource cost of 11 and 12: binary 2.8 -> 3.0 MB, idle 1.7 -> 1.9 MB, busy
-unchanged. Tests: 37, line coverage 53% (the UI loop and terminal drawing
+unchanged. Tests: 43, line coverage 53% (the UI loop and terminal drawing
 are covered by the pty scripts in bench/ rather than by cargo test).
 
 ## Next: benchmarking (needs an API key)
