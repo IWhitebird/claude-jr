@@ -35,6 +35,9 @@ pub struct Term {
     enhanced_keys: bool,
     /// The live area as last drawn, to skip frames that wouldn't change anything.
     last: Option<Frame>,
+    /// A wipe asked for by `clear`, done at the start of the next frame;
+    /// true wipes the terminal's history too.
+    wipe: Option<bool>,
 }
 
 impl Term {
@@ -62,7 +65,7 @@ impl Term {
         }
         out.write_all(b"\x1b[?2004h")?; // bracketed paste
         out.flush()?;
-        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, anchor, enhanced_keys, last: None })
+        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, anchor, enhanced_keys, last: None, wipe: None })
     }
 
     pub fn size() -> (usize, usize) {
@@ -75,19 +78,15 @@ impl Term {
     }
 
     /// Wipes the screen, and with `scrollback` the terminal's history too
-    /// (/clear). The next draw starts from the top-left corner.
-    pub fn clear(&mut self, scrollback: bool) -> io::Result<()> {
-        let codes: &[u8] = if scrollback { b"\x1b[2J\x1b[3J\x1b[H" } else { b"\x1b[2J\x1b[H" };
-        self.out.write_all(b"\x1b[?2026h")?;
-        self.out.write_all(codes)?;
-        self.out.write_all(b"\x1b[?2026l")?;
-        self.out.flush()?;
+    /// (/clear, a resize). The next draw starts from the top-left corner. The
+    /// wipe goes out in that draw's frame, so the screen is never seen empty.
+    pub fn clear(&mut self, scrollback: bool) {
+        self.wipe = Some(scrollback || self.wipe == Some(true));
         self.row = 0;
         if let Some(a) = &mut self.anchor {
             (a.next, a.top) = (0, 0);
         }
         self.invalidate();
-        Ok(())
     }
 
     /// After a resize: the bottom layout re-anchors to the new height.
@@ -119,6 +118,9 @@ impl Term {
         }
         self.buf.clear();
         self.buf.push_str("\x1b[?2026h\x1b[?25l");
+        if let Some(scrollback) = self.wipe.take() {
+            self.buf.push_str(if scrollback { "\x1b[2J\x1b[3J\x1b[H" } else { "\x1b[2J\x1b[H" });
+        }
         if same_shape {
             self.update_lines(&live);
         } else {

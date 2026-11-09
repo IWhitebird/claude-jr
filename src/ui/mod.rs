@@ -43,6 +43,9 @@ fn armed(since: Instant, now: Instant) -> bool {
 }
 /// Lines of history kept to redraw after a resize.
 const HISTORY_LINES: usize = 1000;
+/// A resize is drawn once the size has stopped changing for this long:
+/// dragging a window edge or zooming sends a burst of them.
+const RESIZE_SETTLE: Duration = Duration::from_millis(60);
 
 const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /model [name]   pick a model from the list, or set one by id
@@ -100,12 +103,20 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
     // As if the last frame were long ago, so the first one draws at once.
     let mut last_draw = Instant::now().checked_sub(FRAME).unwrap_or_else(Instant::now);
     let mut pending = false;
+    // When the terminal last changed size, until that has been drawn.
+    let mut resized_at: Option<Instant> = None;
     loop {
         // With a frame held back, sleep until it's due and take everything
         // that arrived meanwhile in one go: streamed text then costs ~30
         // wakeups a second, however small the pieces. Otherwise block until
         // something happens, waking for the status dot while working.
-        let msg = if pending {
+        let msg = if let Some(at) = resized_at {
+            match rx.recv_timeout(RESIZE_SETTLE.saturating_sub(at.elapsed())) {
+                Ok(m) => Some(m),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else if pending {
             thread::sleep(FRAME.saturating_sub(last_draw.elapsed()));
             None
         } else {
@@ -124,7 +135,10 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
         let mut key = false;
         for m in msg.into_iter().chain(rx.try_iter()) {
             match m {
-                Msg::Term(TermEvent::Resize(_, rows)) => term.resize(rows as usize),
+                Msg::Term(TermEvent::Resize(_, rows)) => {
+                    term.resize(rows as usize);
+                    resized_at = Some(Instant::now());
+                }
                 Msg::Term(_) => key = true,
                 Msg::Agent(_) => {}
             }
@@ -133,17 +147,22 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
         if app.quit {
             break;
         }
-        if !key && last_draw.elapsed() < FRAME {
+        // Nothing is drawn while the size is still changing: every frame
+        // would be rewrapped by the terminal a moment later.
+        if resized_at.is_some_and(|at| at.elapsed() < RESIZE_SETTLE) {
+            continue;
+        }
+        if !key && resized_at.is_none() && last_draw.elapsed() < FRAME {
             pending = true;
             continue;
         }
         if std::mem::take(&mut app.clear_screen) {
-            term.clear(true)?;
+            term.clear(true);
             app.history.clear();
-        } else if std::mem::take(&mut app.resized) {
+        } else if resized_at.take().is_some() {
             // The terminal keeps an old-width copy in its scrollback; wipe
             // that too and draw the kept history again at the new width.
-            term.clear(true)?;
+            term.clear(true);
             app.redraw_history();
         }
         let (live, cursor) = app.live();
@@ -224,8 +243,6 @@ struct App {
     commits: Vec<String>,
     /// The last screens' worth of what was written, to redraw after a resize.
     history: History,
-    /// The terminal was resized: redraw the screen at the new width.
-    resized: bool,
     /// Whether the last line written to scrollback was blank.
     last_blank: bool,
     work: Option<Work>,
@@ -265,7 +282,6 @@ impl App {
             stream: Stream { block_start: true, ..Stream::default() },
             commits: Vec::new(),
             history: History::default(),
-            resized: false,
             last_blank: true,
             work: None,
             prompts: VecDeque::new(),
@@ -360,7 +376,7 @@ impl App {
         let md = self.stream.md;
         let line = text::clean(line);
         self.stream.md = md.after(&line);
-        self.add(Block::Text { line, lead, md });
+        self.add(Block::Text { line, lead, md, more: false });
     }
 
     fn commit_thinking_line(&mut self, line: &str) {
@@ -376,6 +392,15 @@ impl App {
     /// The terminal changed size: the screen is cleared and the kept history
     /// drawn again at the new width.
     fn redraw_history(&mut self) {
+        // The rows of a streaming paragraph that were already written out
+        // were cut for the old width: lay the paragraph out again whole.
+        if !self.stream.text.is_empty()
+            && let Some((line, lead, md)) = self.history.take_partial()
+        {
+            self.stream.text = format!("{line} {}", self.stream.text);
+            self.stream.block_start |= lead;
+            self.stream.md = md;
+        }
         self.commits = self.history.render(self.cols);
         self.last_blank = self.commits.last().is_none_or(|l| text::is_blank(l));
     }
@@ -420,7 +445,7 @@ impl App {
         let (head, rest) = (head.to_string(), text[cut..].trim_start().to_string());
         let md = self.stream.md;
         let lead = self.take_lead(); // the blank line and ● marker, as for any committed line
-        self.add(Block::Text { line: text::clean(&head), lead, md });
+        self.add(Block::Text { line: text::clean(&head), lead, md, more: true });
         self.stream.text = rest;
     }
 
@@ -477,7 +502,6 @@ impl App {
             }
             Msg::Term(TermEvent::Resize(c, r)) => {
                 (self.cols, self.rows) = (c as usize, r as usize);
-                self.resized = true;
             }
             Msg::Term(_) => {}
         }
