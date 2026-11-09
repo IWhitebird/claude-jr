@@ -105,6 +105,20 @@ pub fn question(question: &str, options: &[String], cols: usize, out: &mut Vec<S
     boxed(&rows, cols, out);
 }
 
+pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
+    let path = crate::config::config_dir().join("credentials");
+    let where_ = format!("It's saved to {}, readable only by you.", path.display());
+    boxed(
+        &[
+            ("Paste your Anthropic API key", BOLD),
+            (&where_, DIM),
+            ("Get one at console.anthropic.com · esc to skip", DIM),
+        ],
+        cols,
+        out,
+    );
+}
+
 /// Text in an orange box, each entry word-wrapped to fit.
 fn boxed(rows: &[(&str, &'static str)], cols: usize, out: &mut Vec<String>) {
     let inner = cols.saturating_sub(4).max(4);

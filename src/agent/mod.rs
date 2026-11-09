@@ -56,6 +56,8 @@ pub enum Command {
     Rename(String),
     /// A note the user just saved to memory; the model sees it with the next message.
     Remember(String),
+    /// Use this API key from now on ("" to forget it).
+    SetKey(String),
 }
 
 pub enum Answer {
@@ -71,6 +73,8 @@ pub enum Event {
         name: Option<String>,
         skills: Vec<String>,
         mcp: Vec<String>,
+        /// Whether an API key is set; if not, the UI asks for one.
+        has_key: bool,
     },
     /// Something worth telling the user that isn't an error.
     Notice(String),
@@ -132,7 +136,10 @@ pub fn spawn(cfg: Config, emit: impl Fn(Event) + Send + Sync + 'static) -> Handl
     let mode = Arc::new(permit::SharedMode(AtomicU8::new(cfg.mode as u8)));
     let tools = Arc::new(OnceLock::new());
     let handle = Handle { commands: tx, cancel: cancel.clone(), mode: mode.clone(), tools: tools.clone() };
-    thread::spawn(move || Agent::start(cfg, cancel, mode, tools, Arc::new(emit)).run(rx));
+    thread::Builder::new()
+        .name("agent".into())
+        .spawn(move || Agent::start(cfg, cancel, mode, tools, Arc::new(emit)).run(rx))
+        .expect("can start the agent thread");
     handle
 }
 
@@ -205,6 +212,7 @@ impl Agent {
             name: agent.session.name.clone(),
             skills: agent.tools.skills().iter().map(|s| s.name.clone()).collect(),
             mcp: agent.tools.mcp.describe(),
+            has_key: agent.core.client.has_key(),
         });
         agent
     }
@@ -229,6 +237,7 @@ impl Agent {
                 }
                 Command::Model(m) => *self.core.model.lock().unwrap() = m,
                 Command::Rename(name) => self.session.rename(&self.system, &name),
+                Command::SetKey(key) => self.core.client.set_key(key),
                 Command::Remember(note) => {
                     let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
                     self.push_user(json!({ "type": "text", "text": text }));

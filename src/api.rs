@@ -164,7 +164,8 @@ impl std::error::Error for Cancelled {}
 pub struct Client {
     http: ureq::Agent,
     url: String,
-    key: String,
+    /// Empty until the user logs in. Behind a lock so /login applies at once.
+    key: std::sync::RwLock<String>,
 }
 
 impl Client {
@@ -175,7 +176,15 @@ impl Client {
             .build()
             .into();
         let base = base.unwrap_or_else(|| "https://api.anthropic.com".into());
-        Client { http, url: format!("{}/v1/messages", base.trim_end_matches('/')), key }
+        Client { http, url: format!("{}/v1/messages", base.trim_end_matches('/')), key: std::sync::RwLock::new(key) }
+    }
+
+    pub fn set_key(&self, key: String) {
+        *self.key.write().unwrap() = key;
+    }
+
+    pub fn has_key(&self) -> bool {
+        !self.key.read().unwrap().is_empty()
     }
 
     /// Sends a request and streams the reply. `messages` are JSON texts.
@@ -191,13 +200,17 @@ impl Client {
         if req.mcp_servers.is_some() {
             betas = if betas.is_empty() { BETA_MCP.to_string() } else { format!("{betas},{BETA_MCP}") };
         }
+        let key = self.key.read().unwrap().clone();
+        if key.is_empty() {
+            bail!("no API key yet: type /login to add one");
+        }
         let mut attempt = 0;
         loop {
             attempt += 1;
             let mut call = self
                 .http
                 .post(&self.url)
-                .header("x-api-key", &self.key)
+                .header("x-api-key", &key)
                 .header("anthropic-version", VERSION)
                 .header("content-type", "application/json");
             if !betas.is_empty() {

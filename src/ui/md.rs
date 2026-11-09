@@ -11,6 +11,21 @@ pub struct Markdown {
 }
 
 impl Markdown {
+    /// Whether `raw` would render as a plain paragraph: not code, a heading,
+    /// a quote, a list item or a rule. Only those can be committed while
+    /// they're still streaming, because their later rows look the same as a
+    /// paragraph of their own.
+    pub fn is_paragraph(&self, raw: &str) -> bool {
+        let t = raw.trim_start();
+        !self.in_code
+            && raw.len() == t.len()
+            && !t.starts_with("```")
+            && !matches!(t, "---" | "***" | "___")
+            && heading(t).is_none()
+            && !t.starts_with('>')
+            && list_item(t).is_none()
+    }
+
     pub fn reset(&mut self) {
         self.in_code = false;
     }

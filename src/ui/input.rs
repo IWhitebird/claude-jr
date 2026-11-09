@@ -39,6 +39,20 @@ impl Input {
         text
     }
 
+    /// Takes the text out without remembering it (for secrets).
+    pub fn take_secret(&mut self) -> String {
+        self.cur = 0;
+        std::mem::take(&mut self.buf)
+    }
+
+    /// A copy showing • for every character, with the cursor in the same place.
+    pub fn masked(&self) -> Input {
+        let chars_before = self.buf[..self.cur].chars().count();
+        let buf = "•".repeat(self.buf.chars().count());
+        let cur = "•".len() * chars_before;
+        Input { buf, cur, ..Input::default() }
+    }
+
     pub fn insert(&mut self, s: &str) {
         self.buf.insert_str(self.cur, s);
         self.cur += s.len();

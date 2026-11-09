@@ -48,53 +48,87 @@ impl Term {
     }
 
     /// Writes `commits` above the live area, then redraws the live area.
-    /// `cursor` is a (row, column) inside `live`; `None` hides it. Does
-    /// nothing if there's nothing to commit and the live area is unchanged.
+    /// `cursor` is a (row, column) inside `live`; `None` hides it.
+    ///
+    /// When nothing is committed and the live area has the same number of
+    /// lines as last time, only the lines that changed are rewritten; while
+    /// text streams in that's usually one or two.
     pub fn draw(
         &mut self,
         commits: &mut Vec<String>,
         live: Vec<String>,
         cursor: Option<(usize, usize)>,
     ) -> io::Result<()> {
-        if commits.is_empty() && self.last.as_ref().is_some_and(|(l, c)| *l == live && *c == cursor) {
+        let same_shape = commits.is_empty() && self.last.as_ref().is_some_and(|(l, _)| l.len() == live.len());
+        if same_shape && self.last.as_ref().is_some_and(|(l, c)| *l == live && *c == cursor) {
             return Ok(());
         }
-        let b = &mut self.buf;
-        b.clear();
-        b.push_str("\x1b[?2026h\x1b[?25l");
-        if self.row > 0 {
-            let _ = write!(b, "\x1b[{}A", self.row);
+        self.buf.clear();
+        self.buf.push_str("\x1b[?2026h\x1b[?25l");
+        if same_shape {
+            self.update_lines(&live);
+        } else {
+            self.redraw(commits, &live);
         }
-        b.push_str("\r\x1b[J");
+        if let Some((row, col)) = cursor {
+            self.move_to(row);
+            self.buf.push('\r');
+            if col > 0 {
+                let _ = write!(self.buf, "\x1b[{col}C");
+            }
+            self.buf.push_str("\x1b[?25h");
+        }
+        self.buf.push_str("\x1b[?2026l");
+        self.out.write_all(self.buf.as_bytes())?;
+        self.last = Some((live, cursor));
+        self.out.flush()
+    }
+
+    /// Clears the live area, writes `commits` into scrollback, then the live
+    /// area. Leaves the cursor on its last line.
+    fn redraw(&mut self, commits: &mut Vec<String>, live: &[String]) {
+        self.move_to(0);
+        self.buf.push_str("\r\x1b[J");
         for line in commits.drain(..) {
-            b.push_str(&line);
-            b.push_str("\x1b[0m\r\n");
+            self.buf.push_str(&line);
+            self.buf.push_str("\x1b[0m\r\n");
         }
         for (i, line) in live.iter().enumerate() {
             if i > 0 {
-                b.push_str("\r\n");
+                self.buf.push_str("\r\n");
             }
-            b.push_str(line);
+            self.buf.push_str(line);
         }
-        b.push_str("\x1b[0m");
+        self.buf.push_str("\x1b[0m");
+        self.row = live.len().saturating_sub(1);
+    }
 
-        let last = live.len().saturating_sub(1);
-        self.row = last;
-        if let Some((row, col)) = cursor {
-            if last > row {
-                let _ = write!(b, "\x1b[{}A", last - row);
+    /// Rewrites only the lines that differ from the last frame.
+    fn update_lines(&mut self, live: &[String]) {
+        let Some((old, _)) = self.last.take() else { return };
+        for (i, (new, old)) in live.iter().zip(&old).enumerate() {
+            if new != old {
+                self.move_to(i);
+                self.buf.push_str("\r\x1b[2K");
+                self.buf.push_str(new);
+                self.buf.push_str("\x1b[0m");
             }
-            b.push('\r');
-            if col > 0 {
-                let _ = write!(b, "\x1b[{col}C");
-            }
-            b.push_str("\x1b[?25h");
-            self.row = row;
         }
-        b.push_str("\x1b[?2026l");
-        self.out.write_all(b.as_bytes())?;
-        self.last = Some((live, cursor));
-        self.out.flush()
+        self.last = Some((old, None));
+    }
+
+    /// Moves the cursor to `row` of the live area.
+    fn move_to(&mut self, row: usize) {
+        match row.cmp(&self.row) {
+            std::cmp::Ordering::Less => {
+                let _ = write!(self.buf, "\x1b[{}A", self.row - row);
+            }
+            std::cmp::Ordering::Greater => {
+                let _ = write!(self.buf, "\x1b[{}B", row - self.row);
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+        self.row = row;
     }
 }
 

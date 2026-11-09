@@ -27,6 +27,9 @@ use text::{BOLD_ORANGE, CYAN, DIM, GREEN, ORANGE, RED, RESET, Span, span};
 
 /// How often the status dot moves while the agent works.
 const TICK: Duration = Duration::from_millis(300);
+/// The fastest the screen is redrawn for streamed text (about 30 frames/s).
+/// Key presses are drawn at once.
+const FRAME: Duration = Duration::from_millis(33);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
 const HELP: &str = "/clear          start a new conversation
@@ -36,6 +39,7 @@ const HELP: &str = "/clear          start a new conversation
 /skills         available skills (run one with /name)
 /mcp            connected MCP servers
 /stats          memory and CPU used by claude-jr and what it started
+/login          add or change your API key; /logout removes it
 /cost           tokens and cost so far
 /exit           quit
 #note           save a note to ./AGENTS.md (used from now on)
@@ -61,7 +65,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
 
     let mut term = Term::new()?;
     crate::signals::watch(agent.tools.clone(), true);
-    thread::spawn(move || {
+    let _ = thread::Builder::new().name("keys".into()).spawn(move || {
         while let Ok(e) = ct::read() {
             if tx.send(Msg::Term(e)).is_err() {
                 break;
@@ -71,31 +75,50 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
 
     let mut app = App::new(agent, model);
     app.header();
+    // As if the last frame were long ago, so the first one draws at once.
+    let mut last_draw = Instant::now().checked_sub(FRAME).unwrap_or_else(Instant::now);
+    let mut pending = false;
     loop {
-        let msg = if app.work.is_some() {
-            match rx.recv_timeout(TICK) {
-                Ok(m) => Some(m),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => break,
-            }
+        // With a frame held back, sleep until it's due and take everything
+        // that arrived meanwhile in one go: streamed text then costs ~30
+        // wakeups a second, however small the pieces. Otherwise block until
+        // something happens, waking for the status dot while working.
+        let msg = if pending {
+            thread::sleep(FRAME.saturating_sub(last_draw.elapsed()));
+            None
         } else {
-            match rx.recv() {
-                Ok(m) => Some(m),
-                Err(_) => break,
+            let wait = if app.work.is_some() { Some(TICK) } else { None };
+            match wait.map(|t| rx.recv_timeout(t)) {
+                Some(Ok(m)) => Some(m),
+                Some(Err(RecvTimeoutError::Timeout)) => None,
+                Some(Err(RecvTimeoutError::Disconnected)) => break,
+                None => match rx.recv() {
+                    Ok(m) => Some(m),
+                    Err(_) => break,
+                },
             }
         };
         // Handle everything that's waiting, then draw once.
+        let mut key = false;
         for m in msg.into_iter().chain(rx.try_iter()) {
-            if let Msg::Term(TermEvent::Resize(..)) = m {
-                term.invalidate();
+            match m {
+                Msg::Term(TermEvent::Resize(..)) => term.invalidate(),
+                Msg::Term(_) => key = true,
+                Msg::Agent(_) => {}
             }
             app.handle(m);
         }
         if app.quit {
             break;
         }
+        if !key && last_draw.elapsed() < FRAME {
+            pending = true;
+            continue;
+        }
         let (live, cursor) = app.live();
         term.draw(&mut app.commits, live, cursor)?;
+        last_draw = Instant::now();
+        pending = false;
     }
     if let Some(tools) = app.agent.tools.get() {
         tools.shutdown();
@@ -133,8 +156,17 @@ impl Work {
 /// Something waiting on the user. Several can queue up when subagents work
 /// in parallel; they're shown one at a time.
 enum Prompt {
-    Approve { label: String, reply: Sender<Answer> },
-    Question { question: String, options: Vec<String>, reply: Sender<String> },
+    Approve {
+        label: String,
+        reply: Sender<Answer>,
+    },
+    Question {
+        question: String,
+        options: Vec<String>,
+        reply: Sender<String>,
+    },
+    /// The API key, typed or pasted; shown masked.
+    Key,
 }
 
 /// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
@@ -160,6 +192,8 @@ struct App {
     name: Option<String>,
     skills: Vec<String>,
     mcp: Vec<String>,
+    /// Whether the agent has an API key (from the environment or /login).
+    has_key: bool,
     started: Instant,
     quit_armed: Option<Instant>,
     quit: bool,
@@ -185,6 +219,7 @@ impl App {
             name: None,
             skills: Vec::new(),
             mcp: Vec::new(),
+            has_key: true,
             started: Instant::now(),
             quit_armed: None,
             quit: false,
@@ -262,6 +297,49 @@ impl App {
         self.emit(|cols, out| view::thinking(&text::clean(line), cols, out));
     }
 
+    /// A long paragraph that's still streaming would be re-wrapped and
+    /// redrawn in full on every new piece. Rows that can't change any more go
+    /// to scrollback instead, leaving the last two live. Only done when the
+    /// result looks exactly the same as rendering the whole paragraph at once.
+    fn commit_finished_rows(&mut self) {
+        const KEEP: usize = 2;
+        let text = &self.stream.text;
+        if text.len() < self.cols * (KEEP + 1) || !self.stream.md.is_paragraph(text) {
+            return;
+        }
+        let lead = if self.stream.block_start { span("● ", ORANGE) } else { span("  ", "") };
+        let render = |s: &str| {
+            let mut out = Vec::new();
+            let mut md = self.stream.md;
+            md.line(&text::clean(s), self.cols, lead, &mut out);
+            out
+        };
+        let full = render(text);
+        if full.len() <= KEEP {
+            return;
+        }
+        let target = full.len() - KEEP;
+
+        // The longest prefix, cut at a space, that renders to `target` rows.
+        let spaces: Vec<usize> = text.match_indices(' ').map(|(i, _)| i).collect();
+        let fits = |&i: &usize| render(&text[..i]).len() <= target;
+        let Some(&cut) = spaces.get(spaces.partition_point(fits).wrapping_sub(1)) else { return };
+        let head = &text[..cut];
+        // An unclosed `code` or **bold** would render differently in two halves.
+        if head.matches('`').count() % 2 == 1 || head.matches("**").count() % 2 == 1 {
+            return;
+        }
+        let rows = render(head);
+        if rows.len() != target || rows[..] != full[..target] {
+            return;
+        }
+
+        let rest = text[cut..].trim_start().to_string();
+        self.lead(); // the blank line and ● marker, as for any committed line
+        self.emit(|_, out| out.extend(rows));
+        self.stream.text = rest;
+    }
+
     /// Commits any partial line still being streamed.
     fn flush(&mut self) {
         let thinking = std::mem::take(&mut self.stream.thinking);
@@ -301,7 +379,11 @@ impl App {
 
     fn on_agent(&mut self, e: Event) {
         match e {
-            Event::Ready { resumed, name, skills, mcp } => {
+            Event::Ready { resumed, name, skills, mcp, has_key } => {
+                self.has_key = has_key;
+                if !has_key {
+                    self.prompts.push_back(Prompt::Key);
+                }
                 if resumed > 0 {
                     let which = name.as_deref().map_or("the last session".to_string(), |n| format!("\"{n}\""));
                     self.note(&format!("Resumed {which} ({resumed} messages)."), DIM);
@@ -329,6 +411,7 @@ impl App {
                     let line: String = self.stream.text.drain(..=i).collect();
                     self.commit_text_line(line.trim_end_matches('\n'));
                 }
+                self.commit_finished_rows();
             }
             Event::Thinking(t) => {
                 self.set_activity("thinking".into());
@@ -392,7 +475,7 @@ impl App {
         self.flush();
         self.stream.md.reset();
         self.work = None;
-        self.prompts.clear();
+        self.prompts.retain(|p| matches!(p, Prompt::Key));
         if let Some((msg, style)) = note {
             self.note(msg, style);
         }
@@ -423,6 +506,15 @@ impl App {
                     return self.cancel();
                 }
             }
+            Some(Prompt::Key) => match k.code {
+                KeyCode::Enter => return self.save_key(),
+                KeyCode::Esc => {
+                    self.prompts.pop_front();
+                    self.input.clear();
+                    return self.note("No key set. Type /login when you're ready.", DIM);
+                }
+                _ => {}
+            },
             None => {}
         }
 
@@ -498,6 +590,27 @@ impl App {
         }
     }
 
+    /// Saves the key typed into the key prompt and hands it to the agent.
+    fn save_key(&mut self) {
+        let key = self.input.take_secret().trim().to_string();
+        if key.is_empty() {
+            return;
+        }
+        self.prompts.pop_front();
+        match crate::config::save_api_key(&key) {
+            Ok(path) => self.note(&format!("Saved your API key to {}.", path.display()), DIM),
+            Err(e) => self.note(&format!("Couldn't save the key ({e}); it's used for this session only."), RED),
+        }
+        if !key.starts_with("sk-ant-") {
+            self.note("That doesn't look like an Anthropic key (they start with sk-ant-). /login to change it.", RED);
+        }
+        let _ = self.agent.commands.send(Command::SetKey(key));
+        self.has_key = true;
+        if let Some(q) = self.queued.take() {
+            self.submit(q);
+        }
+    }
+
     fn ctrl_c(&mut self) {
         if !self.input.is_empty() {
             self.input.clear();
@@ -531,6 +644,13 @@ impl App {
             self.queued = Some(text);
             return;
         }
+        if !self.has_key {
+            self.queued = Some(text);
+            if !self.prompts.iter().any(|p| matches!(p, Prompt::Key)) {
+                self.prompts.push_back(Prompt::Key);
+            }
+            return;
+        }
         self.gap();
         self.emit(|cols, out| view::user(&text, cols, out));
         self.stream.block_start = true;
@@ -557,6 +677,23 @@ impl App {
         match name {
             "help" => self.note(HELP, ""),
             "exit" | "quit" => self.quit = true,
+            "login" => {
+                self.input.clear();
+                if !self.prompts.iter().any(|p| matches!(p, Prompt::Key)) {
+                    self.prompts.push_front(Prompt::Key);
+                }
+            }
+            "logout" => {
+                let _ = crate::config::delete_api_key();
+                let _ = self.agent.commands.send(Command::SetKey(String::new()));
+                self.has_key = false;
+                let env = if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
+                    " ANTHROPIC_API_KEY is still set in your environment and will be used next time."
+                } else {
+                    ""
+                };
+                self.note(&format!("Removed the saved API key.{env}"), DIM);
+            }
             "memory" => {
                 let files = crate::prompt::memory_files();
                 let list: Vec<String> = files.iter().map(|f| format!("  {}", f.display())).collect();
@@ -662,6 +799,10 @@ impl App {
             Some(Prompt::Question { question, options, .. }) => {
                 view::question(question, options, cols, &mut out);
                 Some(view::input_box(&self.input, "type an answer, or press a number", cols, &mut out))
+            }
+            Some(Prompt::Key) => {
+                view::key_prompt(cols, &mut out);
+                Some(view::input_box(&self.input.masked(), "sk-ant-…", cols, &mut out))
             }
             None => {
                 let hint = if self.work.is_some() { "type to queue a message" } else { "ask anything, or /help" };

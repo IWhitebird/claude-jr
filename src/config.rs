@@ -76,3 +76,38 @@ pub fn data_dir() -> PathBuf {
         .unwrap_or_else(|| home().join(".local/share"))
         .join("claude-jr")
 }
+
+/// Where /login keeps the API key.
+fn credentials() -> PathBuf {
+    config_dir().join("credentials")
+}
+
+/// The API key: ANTHROPIC_API_KEY if set, else the one saved with /login.
+pub fn api_key() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .or_else(|| std::fs::read_to_string(credentials()).ok())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+}
+
+/// Saves the key so only this user can read it.
+pub fn save_api_key(key: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = credentials();
+    std::fs::create_dir_all(config_dir())?;
+    let mut f = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&path)?;
+    // The mode above only applies when the file is created.
+    use std::os::unix::fs::PermissionsExt;
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    f.write_all(key.as_bytes())?;
+    Ok(path)
+}
+
+pub fn delete_api_key() -> std::io::Result<()> {
+    match std::fs::remove_file(credentials()) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}

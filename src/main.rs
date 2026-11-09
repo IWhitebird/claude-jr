@@ -34,7 +34,8 @@ rule in the config allows them.
 Config: ~/.config/claude-jr/config.json and ./.claude-jr.json
   { \"model\": \"...\", \"effort\": \"high\", \"allow\": [\"bash:cargo *\", \"edit\"] }
 Project instructions: AGENTS.md or CLAUDE.md in this directory or its parents.
-Environment: ANTHROPIC_API_KEY (required), ANTHROPIC_BASE_URL, CLAUDE_JR_MODEL.";
+API key: type /login inside claude-jr (saved to ~/.config/claude-jr/credentials),
+or set ANTHROPIC_API_KEY. Also read: ANTHROPIC_BASE_URL, CLAUDE_JR_MODEL.";
 
 #[derive(Default)]
 struct Args {
@@ -101,8 +102,11 @@ fn run() -> Result<ExitCode, String> {
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
         return Err(sandbox::exec(&file.sandbox));
     }
-    let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| "ANTHROPIC_API_KEY is not set")?;
     let interactive = args.prompt.is_none();
+    let key = config::api_key().unwrap_or_default();
+    if key.is_empty() && !interactive {
+        return Err("no API key: run claude-jr and type /login, or set ANTHROPIC_API_KEY".into());
+    }
     if interactive && !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         return Err("not a terminal; use -p PROMPT for non-interactive use".into());
     }

@@ -10,6 +10,7 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, LazyLock, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -75,8 +76,13 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     let out = Arc::new(Mutex::new(Capped::new(MAX_BYTES)));
     let done = read_into(&mut child, out.clone());
 
+    // Wait for the output pipe to close, which wakes us the moment the command
+    // is done, checking for cancel and timeout every 100 ms. A process left
+    // running in the background can keep the pipe open; then the exit status
+    // tells us instead.
     let start = Instant::now();
     let mut stopped = None;
+    let mut pipe_closed = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
@@ -93,14 +99,18 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
             let _ = child.wait();
             break None;
         }
-        // Quick commands return quickly; long ones cost almost nothing to wait on.
-        let poll = if start.elapsed() < Duration::from_secs(1) { 10 } else { 100 };
-        thread::sleep(Duration::from_millis(poll));
+        if pipe_closed {
+            // Output is done but the process is still exiting: briefly.
+            thread::sleep(Duration::from_millis(2));
+        } else {
+            pipe_closed = !matches!(done.recv_timeout(Duration::from_millis(100)), Err(RecvTimeoutError::Timeout));
+        }
     };
 
     t.running.lock().unwrap().retain(|&p| p != pid);
-    // A process left running in the background can hold the pipe open.
-    let _ = done.recv_timeout(Duration::from_millis(300));
+    if !pipe_closed {
+        let _ = done.recv_timeout(Duration::from_millis(300));
+    }
     let text = out.lock().unwrap().text();
 
     if let Ok(dir) = std::fs::read_to_string(&cwd_file) {
@@ -160,7 +170,7 @@ fn spawn(script: &str, cwd: &std::path::Path) -> Result<Child, String> {
 fn read_into(child: &mut Child, sink: Arc<Mutex<Capped>>) -> mpsc::Receiver<()> {
     let (tx, rx) = mpsc::channel();
     let mut stdout = child.stdout.take().expect("stdout is piped");
-    thread::spawn(move || {
+    let _ = thread::Builder::new().name("bash-out".into()).spawn(move || {
         let mut buf = [0u8; 8192];
         while let Ok(n @ 1..) = stdout.read(&mut buf) {
             sink.lock().unwrap().push(&buf[..n]);
@@ -231,7 +241,7 @@ impl Jobs {
 
         let reader_job = job.clone();
         let mut stdout = child.stdout.take().expect("stdout is piped");
-        thread::spawn(move || {
+        let _ = thread::Builder::new().name("job-out".into()).spawn(move || {
             let mut buf = [0u8; 8192];
             while let Ok(n @ 1..) = stdout.read(&mut buf) {
                 reader_job.out.lock().unwrap().push(&buf[..n]);
@@ -240,7 +250,7 @@ impl Jobs {
 
         let inner = self.0.clone();
         let reaper_job = job.clone();
-        thread::spawn(move || {
+        let _ = thread::Builder::new().name("job-wait".into()).spawn(move || {
             let status = match child.wait() {
                 Ok(s) => match s.code() {
                     Some(c) => format!("exit {c}"),

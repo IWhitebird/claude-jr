@@ -323,7 +323,7 @@ impl Conn {
         let stdout = child.stdout.take().expect("stdout is piped");
         let pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>> = Arc::default();
         let routes = pending.clone();
-        thread::spawn(move || {
+        let _ = thread::Builder::new().name("mcp-read".into()).spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
                 // Requests from the server (like ping) aren't supported; the

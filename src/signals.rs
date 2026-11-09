@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 /// started, puts the terminal back if `terminal` is set, and exits.
 pub fn watch(tools: Arc<OnceLock<Arc<Tools>>>, terminal: bool) {
     let Ok(mut signals) = Signals::new([SIGINT, SIGTERM, SIGHUP]) else { return };
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("signals".into()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
             if let Some(t) = tools.get() {
                 t.shutdown();
