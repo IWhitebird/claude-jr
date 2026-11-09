@@ -28,16 +28,22 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason)
 - 007: src/ui/mod.rs (resize branch only; merges with 002), src/ui/history.rs
 - 006: src/ui/input.rs, .github/workflows/ci.yml, LICENSE, AGENTS.md, PLAN.md
 
-## Later (audit findings not planned yet)
+## Round two (done 2026-11-10, merged)
 
-- Auto mode auto-approves edits to .git/hooks, .mcp.json and through symlinks (do after 005).
-- The memory tool needs no approval, and its notes persist into future system prompts.
-- Resume tells the model that tools which ran were "Not run".
-- No network read timeout, so Esc can't cancel a stalled stream.
-- Escape sequences from tool output reach the panel, tables, notes and -p output.
-- The checkpoint index is trusted, and a failed restore loses entries.
-- Lines wider than the terminal break the row math.
-- Remote MCP and web tools run without approval.
+- Auto and accept-edits modes ask before edits to `.git/`, `.claude/`, `.mcp.json`, `.claude-jr.json`, and through symlinks that leave the project.
+- The memory tool asks first; subagents can't use it or start subagents.
+- Tool results at the end of a stopped turn are saved, so a resumed session knows the tools ran.
+- Network: connect and per-read timeouts, so Esc works on a stalled stream; a silent stream is retried.
+- Control characters from tool output are removed in every view, the panel and `-p` mode; no line is wider than the screen.
+- Checkpoints: the index is validated, failed restores keep their entries, the index is written atomically.
+- Server-side tools (web search/fetch, remote MCP) always show in the transcript with arguments and failures; documented that they aren't approved one by one.
+
+## Still open
+
+- Sandbox persistence paths and sockets (src/sandbox.rs).
+- Remote MCP: a per-server list of allowed tools (needs the API's toolset fields confirmed).
+- Plan mode doesn't stop server-side tools.
+- The command reviewer in auto mode also reviews edits and memory notes; its prompt is written for commands.
 
 ## Findings considered and rejected
 

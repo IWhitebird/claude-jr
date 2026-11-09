@@ -6,7 +6,7 @@
 
 <p align="center">
   A small coding agent for the terminal, in one 3 MB binary.<br>
-  It runs in 0.1 CPU and 64 MB of RAM.
+  2 MB of RAM when idle. A whole session fits in a 16 MB container on 0.05 CPU.
 </p>
 
 ---
@@ -43,9 +43,9 @@ Busy = one prompt that makes 20 bash calls with streamed text in between.
 
 |                               | claude-jr | Claude Code | pi       |
 |-------------------------------|-----------|-------------|----------|
-| install size                  | 3.0 MB    | 324.5 MB    | 109.0 MB |
-| startup (screen settles)      | 4 ms      | 167 ms      | ~260 ms  |
-| memory, idle                  | 1.9 MB    | 135.0 MB    | 141.1 MB |
+| install size                  | 3.2 MB    | 324.5 MB    | 109.0 MB |
+| startup (screen settles)      | 5 ms      | 167 ms      | ~260 ms  |
+| memory, idle                  | 2.0 MB    | 135.0 MB    | 141.1 MB |
 | processes / threads, idle     | 1 / 4     | 1 / 15      | 1 / 11   |
 | CPU while idle 10s            | 0 ms      | 70 ms       | 0 ms     |
 | busy: wall time               | 0.10 s    | 1.84 s      | 1.24 s   |
@@ -61,10 +61,11 @@ More of claude-jr's own numbers (`bench/`):
 
 | | |
 |---|---|
-| after 60 tool calls (2.4 MB of history) | 4.1 MB peak; `/clear` brings it back to 2.1 MB |
-| 100 tool calls (4 MB of history, beyond a full context) | 12 MB peak |
+| after 60 tool calls (2.4 MB of history) | 7 MB peak; `/clear` brings it back to 2 MB |
+| 100 tool calls (4 MB of history, beyond a full context) | 10 MB peak |
 | the UI while a reply streams at ~200 tokens/s | 0.6% of one core |
-| a whole session in a 0.1 CPU / 64 MB container | 10 MB peak for everything |
+| a whole session (20 commands) in a container, agent plus the commands it runs | finishes in 6 MB of RAM (Docker's minimum) at 0.1 CPU, and at 0.01 CPU with 16 MB |
+| the binary, compressed (xz) | 1.3 MB |
 
 ## Install
 
@@ -333,7 +334,7 @@ bench/
   cpu.sh          idle and busy CPU
   ui.py           the UI while a reply streams in
   compare.py      side by side with Claude Code, pi and Codex
-  box.sh          run in a 0.1 CPU / 64 MB container
+  box.sh          run in a small container (CPUS=0.05 MEMORY=16m bench/box.sh)
   sandbox.sh      check the sandbox
 ```
 
@@ -347,7 +348,7 @@ bench/
 | The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
 | Resizing leaves nothing twice (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
 | Memory budget over a long session | `bench/mem.sh` |
-| In a 0.1 CPU / 64 MB box | `bench/box.sh` |
+| In a small container | `CPUS=0.05 MEMORY=16m bench/box.sh` |
 | A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |
 | One prompt | `/usr/bin/time -v claudejr -p "..."` |
 
