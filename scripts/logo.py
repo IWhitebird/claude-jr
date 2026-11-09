@@ -6,7 +6,7 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COLORS = {"O": "#D97757", "D": "#B9583A", "K": "#2B211C", "W": "#FFFFFF",
-          "P": "#F2A48B", "G": "#8DBF5A", "s": "#5E8A3A"}
+          "P": "#F2A48B", "B": "#6FA8DC", "Y": "#F2C14E"}
 PX, PAD = 10, 2
 
 art = [l.rstrip("\n") for l in open(os.path.join(ROOT, "assets/mascot.txt")) if not l.startswith("#") and l.strip()]

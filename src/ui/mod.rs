@@ -50,7 +50,7 @@ const RESIZE_SETTLE: Duration = Duration::from_millis(60);
 const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /model [name]   pick a model from the list, or set one by id
 /effort [level] low, medium, high, xhigh, max, or default
-/rename [name]  name this session (resume with claude-jr -r NAME)
+/rename [name]  name this session (resume with claudejr -r NAME)
 /rewind         go back to before an earlier message, undoing file changes
 /jobs, /kill N  background jobs, and stopping one
 /resume         switch to an earlier conversation in this folder
@@ -67,9 +67,49 @@ const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 !command        run a shell command yourself; the agent sees the output
 images          drag a file in (its path is attached), or ctrl+v a screenshot
 
+type / to list commands: up/down pick, tab completes, enter runs
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
 shift+tab: normal → accept edits → plan → auto → skip permissions
 esc stops · ctrl-c clears the input, twice quits · up/down for history";
+
+/// The commands, shown in a list as soon as `/` is typed.
+const COMMANDS: &[(&str, &str)] = &[
+    ("help", "commands and keys"),
+    ("clear", "start a new conversation on a clean screen"),
+    ("new", "start a new conversation on a clean screen"),
+    ("model", "pick a model, or set one by id"),
+    ("effort", "low, medium, high, xhigh, max, or default"),
+    ("resume", "switch to an earlier conversation in this folder"),
+    ("rename", "name this session"),
+    ("rewind", "go back to before an earlier message, undoing file changes"),
+    ("compact", "replace the conversation with a summary"),
+    ("jobs", "background jobs"),
+    ("kill", "stop a background job: /kill N"),
+    ("memory", "instruction files in use"),
+    ("skills", "available skills"),
+    ("mcp", "connected MCP servers"),
+    ("stats", "memory and CPU used"),
+    ("cost", "tokens and cost so far"),
+    ("settings", "layout, default model, effort, mode, web tools, sandbox"),
+    ("login", "add or change your API key"),
+    ("logout", "remove your API key"),
+    ("exit", "quit"),
+];
+/// How many of them are shown at once.
+const MENU_ROWS: usize = 8;
+
+/// The commands and skills that start with what's typed after the `/`, an
+/// exact match first. Empty unless `input` is a `/` and part of one word.
+fn menu_matches<'a>(input: &str, skills: &'a [String]) -> Vec<(&'a str, &'a str)> {
+    let Some(typed) = input.strip_prefix('/') else { return Vec::new() };
+    if typed.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let all = COMMANDS.iter().copied().chain(skills.iter().map(|s| (s.as_str(), "skill")));
+    let mut found: Vec<(&str, &str)> = all.filter(|(name, _)| name.starts_with(typed)).collect();
+    found.sort_by_key(|(name, _)| *name != typed);
+    found
+}
 
 enum Msg {
     Agent(Event),
@@ -247,6 +287,8 @@ struct App {
     last_blank: bool,
     work: Option<Work>,
     prompts: VecDeque<Prompt>,
+    /// The row picked in the `/` command list.
+    menu_at: usize,
     /// When the front prompt became the front one.
     prompt_since: Instant,
     /// Messages typed while the agent was busy (or before a key), sent in order.
@@ -285,6 +327,7 @@ impl App {
             last_blank: true,
             work: None,
             prompts: VecDeque::new(),
+            menu_at: 0,
             prompt_since: Instant::now(),
             queued: VecDeque::new(),
             cost: 0.0,
@@ -743,6 +786,27 @@ impl App {
         let alt = k.modifiers.contains(KeyModifiers::ALT);
         let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         let text_cols = self.cols.saturating_sub(6);
+        // With the `/` command list open: arrows pick, tab completes, enter runs.
+        let menu = if self.prompts.is_empty() { menu_matches(self.input.text(), &self.skills) } else { Vec::new() };
+        if !menu.is_empty() {
+            let at = self.menu_at.min(menu.len() - 1);
+            let picked = format!("/{}", menu[at].0);
+            match k.code {
+                KeyCode::Up => return self.menu_at = if at == 0 { menu.len() - 1 } else { at - 1 },
+                KeyCode::Down => return self.menu_at = (at + 1) % menu.len(),
+                KeyCode::Tab => {
+                    self.input.clear();
+                    self.input.insert(&format!("{picked} "));
+                    return self.menu_at = 0;
+                }
+                KeyCode::Enter if !(shift || alt) => {
+                    self.input.take();
+                    self.menu_at = 0;
+                    return self.submit(picked);
+                }
+                _ => self.menu_at = 0,
+            }
+        }
         match k.code {
             KeyCode::Char('c') if ctrl => self.ctrl_c(),
             KeyCode::Char('d') if ctrl && self.input.is_empty() => self.quit = true,
@@ -1081,7 +1145,7 @@ impl App {
             "rename" => {
                 let _ = self.agent.commands.send(Command::Rename(arg.to_string()));
                 self.name = Some(arg.to_string());
-                self.note(&format!("Renamed to \"{arg}\". Resume it later with: claude-jr -r \"{arg}\""), DIM);
+                self.note(&format!("Renamed to \"{arg}\". Resume it later with: claudejr -r \"{arg}\""), DIM);
             }
             "clear" | "new" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
             "clear" | "new" => {
@@ -1193,6 +1257,9 @@ impl App {
                 Some(view::input_box(&self.input, hint, cols, &mut out))
             }
         };
+        if self.prompts.is_empty() {
+            view::menu(&menu_matches(self.input.text(), &self.skills), self.menu_at, MENU_ROWS, cols, &mut out);
+        }
         self.panel(&mut out);
         out.push(self.footer());
 
@@ -1332,6 +1399,18 @@ fn tokens(n: u64) -> String {
 #[cfg(test)]
 mod guard_tests {
     use super::*;
+
+    #[test]
+    fn slash_lists_matching_commands() {
+        let skills = vec!["review".to_string(), "model-card".to_string()];
+        let names = |input: &str| menu_matches(input, &skills).iter().map(|(n, _)| *n).collect::<Vec<_>>();
+        assert_eq!(names("/").len(), COMMANDS.len() + 2);
+        assert_eq!(names("/re"), ["resume", "rename", "rewind", "review"]);
+        assert_eq!(names("/model"), ["model", "model-card"], "an exact match comes first");
+        assert!(names("/model x").is_empty(), "arguments are being typed");
+        assert!(names("hello").is_empty());
+        assert!(names("/nope").is_empty());
+    }
 
     #[test]
     fn approval_keys_wait_for_the_guard() {

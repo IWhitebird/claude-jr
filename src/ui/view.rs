@@ -143,6 +143,26 @@ pub fn picker(title: &str, items: &[String], hint: &str, cols: usize, out: &mut 
     boxed(&rows, cols, out);
 }
 
+/// The `/` command list under the input box: `rows` of `items` around the
+/// picked one, which is highlighted.
+pub fn menu(items: &[(&str, &str)], at: usize, rows: usize, cols: usize, out: &mut Vec<String>) {
+    if items.is_empty() {
+        return;
+    }
+    let at = at.min(items.len() - 1);
+    let first = (at + 1).saturating_sub(rows).min(items.len().saturating_sub(rows));
+    let name_w = items.iter().map(|(n, _)| width(n)).max().unwrap_or(0) + 1;
+    for (i, (name, what)) in items.iter().enumerate().skip(first).take(rows) {
+        let (mark, style) = if i == at { ("›", ORANGE) } else { (" ", "") };
+        let pad = " ".repeat(name_w - width(name));
+        let what = fit(&clean(what), cols.saturating_sub(name_w + 6));
+        out.push(format!(" {ORANGE}{mark}{RESET} {style}/{}{RESET}{pad} {DIM}{what}{RESET}", clean(name)));
+    }
+    let hidden = items.len() - items.len().min(first + rows);
+    let hint = if hidden > 0 { format!("{hidden} more · ") } else { String::new() };
+    out.push(format!("   {DIM}{hint}up/down to pick · tab completes · enter runs{RESET}"));
+}
+
 pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
     let path = crate::config::config_dir().join("credentials");
     let where_ = format!("It's saved to {}, readable only by you.", path.display());
@@ -268,8 +288,8 @@ fn pixel(c: u8) -> Option<(u8, u8, u8)> {
         b'K' => (0x2B, 0x21, 0x1C), // eyes, mouth
         b'W' => (0xFF, 0xFF, 0xFF), // eye shine
         b'P' => (0xF2, 0xA4, 0x8B), // cheeks
-        b'G' => (0x8D, 0xBF, 0x5A), // leaves
-        b's' => (0x5E, 0x8A, 0x3A), // stem
+        b'B' => (0x6F, 0xA8, 0xDC), // cap
+        b'Y' => (0xF2, 0xC1, 0x4E), // propeller, cap dots
         _ => return None,
     })
 }
