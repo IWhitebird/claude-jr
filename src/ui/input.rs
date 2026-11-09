@@ -118,7 +118,7 @@ impl Input {
     pub fn delete_word(&mut self) {
         let before = &self.buf[..self.cur];
         let trimmed = before.trim_end();
-        let start = trimmed.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+        let start = trimmed.char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
         self.buf.drain(start..self.cur);
         self.cur = start;
     }
@@ -220,6 +220,18 @@ mod tests {
         i.home();
         i.kill_to_end();
         assert_eq!(i.text(), "");
+    }
+
+    #[test]
+    fn delete_word_after_wide_space() {
+        let mut i = Input::default();
+        i.insert("a\u{3000}bc");
+        i.delete_word();
+        assert_eq!(i.text(), "a\u{3000}");
+        let mut i = Input::default();
+        i.insert("foo bar  ");
+        i.delete_word();
+        assert_eq!(i.text(), "foo ");
     }
 
     #[test]
