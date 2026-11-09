@@ -273,7 +273,8 @@ impl Agent {
                 },
                 Command::Shell(cmd) => self.shell(&cmd),
                 Command::Clear => {
-                    self.messages.clear();
+                    // A new Vec, not clear(): that would keep the old capacity.
+                    self.messages = Vec::new();
                     self.session = Session::new();
                     self.tools.checkpoints.open(self.session.checkpoint_dir());
                     self.system = crate::prompt::system();

@@ -74,6 +74,19 @@ impl Term {
         self.last = None;
     }
 
+    /// Wipes the screen and the terminal's scrollback, for /clear. The next
+    /// draw starts from the top-left corner.
+    pub fn clear(&mut self) -> io::Result<()> {
+        self.out.write_all(b"\x1b[?2026h\x1b[2J\x1b[3J\x1b[H\x1b[?2026l")?;
+        self.out.flush()?;
+        self.row = 0;
+        if let Some(a) = &mut self.anchor {
+            (a.next, a.top) = (0, 0);
+        }
+        self.invalidate();
+        Ok(())
+    }
+
     /// After a resize: the bottom layout re-anchors to the new height.
     pub fn resize(&mut self, rows: usize) {
         let height = self.last.as_ref().map_or(0, |(l, _)| l.len());

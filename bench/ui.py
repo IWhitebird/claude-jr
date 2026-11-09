@@ -37,6 +37,8 @@ def drain(seconds, until=None):
             chunk = os.read(fd, 65536)
             if b"\x1b[c" in chunk:
                 os.write(fd, b"\x1b[?62c")
+            if b"\x1b[6n" in chunk:  # cursor position, asked for by the bottom layout
+                os.write(fd, b"\x1b[1;1R")
             out += chunk
             written[0] += len(chunk)
             if until and until in out[-4096:]:

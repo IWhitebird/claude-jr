@@ -22,7 +22,9 @@ while time.time() < deadline and first_frame is None:
     if select.select([fd], [], [], 0.01)[0]:
         chunk = os.read(fd, 65536)
         if b"\x1b[c" in chunk:
-            os.write(fd, b"\x1b[?62c")  # answer the terminal query like a basic terminal
+            os.write(fd, b"\x1b[?62c")
+        if b"\x1b[6n" in chunk:  # cursor position, asked for by the bottom layout
+            os.write(fd, b"\x1b[1;1R")  # answer the terminal query like a basic terminal
         out += chunk
         if "╭".encode() in out:
             first_frame = time.perf_counter() - start

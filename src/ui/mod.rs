@@ -33,7 +33,7 @@ const TICK: Duration = Duration::from_millis(300);
 const FRAME: Duration = Duration::from_millis(33);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
-const HELP: &str = "/clear          start a new conversation
+const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /model [name]   pick a model from the list, or set one by id
 /effort [level] low, medium, high, xhigh, max, or default
 /rename [name]  name this session (resume with claude-jr -r NAME)
@@ -125,6 +125,9 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
         if !key && last_draw.elapsed() < FRAME {
             pending = true;
             continue;
+        }
+        if std::mem::take(&mut app.clear_screen) {
+            term.clear()?;
         }
         let (live, cursor) = app.live();
         term.draw(&mut app.commits, live, cursor)?;
@@ -219,6 +222,8 @@ struct App {
     effort: Option<String>,
     /// Subagents running now: (id, task, latest step). Shown under the input.
     subagents: Vec<(usize, String, String)>,
+    /// /clear asked for the terminal to be wiped before the next draw.
+    clear_screen: bool,
     started: Instant,
     quit_armed: Option<Instant>,
     quit: bool,
@@ -247,6 +252,7 @@ impl App {
             has_key: true,
             effort: None,
             subagents: Vec::new(),
+            clear_screen: false,
             started: Instant::now(),
             quit_armed: None,
             quit: false,
@@ -1008,12 +1014,17 @@ impl App {
                 self.name = Some(arg.to_string());
                 self.note(&format!("Renamed to \"{arg}\". Resume it later with: claude-jr -r \"{arg}\""), DIM);
             }
-            "clear" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
-            "clear" => {
+            "clear" | "new" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
+            "clear" | "new" => {
                 let _ = self.agent.commands.send(Command::Clear);
-                self.context = 0;
-                self.name = None;
-                self.note("Started a new conversation.", DIM);
+                // A clean slate on screen too: the loop wipes the terminal before
+                // the next draw, and the header starts the page again.
+                self.clear_screen = true;
+                self.commits.clear();
+                self.stream = Stream { block_start: true, ..Stream::default() };
+                (self.context, self.name, self.queued) = (0, None, None);
+                self.subagents.clear();
+                self.header();
             }
             _ if self.skills.iter().any(|s| s == name) => {
                 if self.work.is_some() {
