@@ -137,6 +137,8 @@ pub enum Chunk<'a> {
     Text(&'a str),
     Thinking(&'a str),
     ToolStart(&'a str),
+    /// More of a tool call's input arrived (this many bytes).
+    ToolInput(usize),
     BlockEnd,
 }
 
@@ -328,7 +330,9 @@ fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) ->
                 let Value::Object(delta) = ev["delta"].take() else { continue };
                 match delta.get("type").and_then(Value::as_str).unwrap_or("") {
                     "input_json_delta" => {
-                        json_buf.push_str(delta["partial_json"].as_str().unwrap_or(""));
+                        let part = delta["partial_json"].as_str().unwrap_or("");
+                        json_buf.push_str(part);
+                        on(Chunk::ToolInput(part.len()));
                         continue;
                     }
                     "text_delta" => on(Chunk::Text(delta["text"].as_str().unwrap_or(""))),
@@ -415,6 +419,7 @@ data: {"type":"message_stop"}
             Chunk::Text(t) => text.push_str(t),
             Chunk::Thinking(t) => thinking.push_str(t),
             Chunk::ToolStart(n) => tools.push(n.to_string()),
+            Chunk::ToolInput(_) => {}
             Chunk::BlockEnd => ends += 1,
         })
         .unwrap();

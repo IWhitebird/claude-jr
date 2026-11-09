@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fresh Basket – Fruit Store</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="container nav">
+      <a href="#" class="logo">🍎 Fresh Basket</a>
+      <nav class="links">
+        <a href="#shop">Shop</a>
+        <a href="#about">About</a>
+        <a href="#contact">Contact</a>
+      </nav>
+      <button class="cart-btn" id="cartBtn" aria-label="Open cart">
+        🛒 <span id="cartCount">0</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <h1>Fresh fruit, delivered to your door</h1>
+      <p>Hand-picked, seasonal and full of flavor.</p>
+      <a href="#shop" class="btn">Shop Now</a>
+    </div>
+  </section>
+
+  <main id="shop" class="container shop">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search fruits..." />
+      <div class="filters" id="filters">
+        <button class="filter active" data-cat="all">All</button>
+        <button class="filter" data-cat="citrus">Citrus</button>
+        <button class="filter" data-cat="berries">Berries</button>
+        <button class="filter" data-cat="tropical">Tropical</button>
+        <button class="filter" data-cat="classic">Classic</button>
+      </div>
+    </div>
+    <div class="grid" id="productGrid"></div>
+    <p class="empty" id="noResults" hidden>No fruits match your search.</p>
+  </main>
+
+  <section id="about" class="about">
+    <div class="container">
+      <h2>Why Fresh Basket?</h2>
+      <div class="features">
+        <div class="feature"><span>🌱</span><h3>Organic</h3><p>Grown without harmful pesticides.</p></div>
+        <div class="feature"><span>🚚</span><h3>Fast Delivery</h3><p>Same-day delivery in your city.</p></div>
+        <div class="feature"><span>💚</span><h3>Local Farms</h3><p>Supporting farmers near you.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="contact" class="footer">
+    <div class="container">
+      <p>📍 123 Orchard Lane &nbsp;|&nbsp; 📞 (555) 123-4567 &nbsp;|&nbsp; ✉️ hello@freshbasket.com</p>
+      <p>&copy; <span id="year"></span> Fresh Basket</p>
+    </div>
+  </footer>
+
+  <!-- Cart drawer -->
+  <div class="overlay" id="overlay"></div>
+  <aside class="cart" id="cart" aria-hidden="true">
+    <div class="cart-head">
+      <h2>Your Cart</h2>
+      <button class="close" id="closeCart" aria-label="Close cart">✕</button>
+    </div>
+    <ul class="cart-items" id="cartItems"></ul>
+    <div class="cart-foot">
+      <div class="total">Total: <strong id="cartTotal">$0.00</strong></div>
+      <button class="btn full" id="checkoutBtn">Checkout</button>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>

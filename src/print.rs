@@ -53,7 +53,7 @@ pub fn run(cfg: agent::Config, prompt: String) -> bool {
                 eprintln!("error: {e}");
                 return false;
             }
-            Event::Ready { .. } | Event::ToolStart(_) | Event::Usage(_) => {}
+            Event::Ready { .. } | Event::ToolStart(_) | Event::ToolInput(_) | Event::Usage(_) => {}
         }
     }
     false

@@ -16,10 +16,6 @@ before anything changes. It's a minimal take on Claude Code: four tools, a
 terminal UI, no runtime, nothing to install besides the binary.
 
 ```
- ╭─────╮
- │ ● ● │   claude-jr 0.1.0
- ╰──‿──╯   claude-opus-5-5 · ~/proj/app
-
 > add a --verbose flag to the cli
 
 ● Read(src/cli.rs)

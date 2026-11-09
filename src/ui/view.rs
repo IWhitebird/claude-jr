@@ -119,6 +119,49 @@ pub fn footer(left: Span, right: &str, cols: usize) -> String {
     format!(" {}{text}{RESET}{}{DIM}{right}{RESET}", left.style, " ".repeat(pad))
 }
 
+/// The mascot as pixel art: each text row shows two pixel rows using half
+/// blocks. Same design as assets/logo.svg, smaller.
+const MASCOT: [&[u8; 12]; 8] = [
+    b"...GG..GG...",
+    b".....ss.....",
+    b"..OOOOOOOO..",
+    b".OOWKOOWKOO.",
+    b".OOKKOOKKOO.",
+    b".POOOKKOOOP.",
+    b".DDDDDDDDDD.",
+    b"..DD....DD..",
+];
+
+/// 256-color palette index for a mascot pixel; None is see-through.
+fn pixel(c: u8) -> Option<u8> {
+    Some(match c {
+        b'O' => 173, // orange
+        b'D' => 130, // darker orange
+        b'K' => 235, // eyes, mouth
+        b'W' => 231, // eye shine
+        b'P' => 217, // cheeks
+        b'G' => 107, // leaves
+        b's' => 65,  // stem
+        _ => return None,
+    })
+}
+
+pub fn mascot() -> [String; 4] {
+    std::array::from_fn(|row| {
+        let (top, bottom) = (MASCOT[row * 2], MASCOT[row * 2 + 1]);
+        let mut line = String::new();
+        for (&t, &b) in top.iter().zip(bottom.iter()) {
+            match (pixel(t), pixel(b)) {
+                (None, None) => line.push(' '),
+                (Some(t), None) => line.push_str(&format!("\x1b[38;5;{t}m▀{RESET}")),
+                (None, Some(b)) => line.push_str(&format!("\x1b[38;5;{b}m▄{RESET}")),
+                (Some(t), Some(b)) => line.push_str(&format!("\x1b[38;5;{t};48;5;{b}m▀{RESET}")),
+            }
+        }
+        line
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

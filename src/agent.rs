@@ -91,6 +91,8 @@ pub enum Event {
     BlockEnd,
     /// The model started writing a tool call; its input is still streaming.
     ToolStart(String),
+    /// More of that tool call's input arrived (this many bytes).
+    ToolInput(usize),
     /// A tool call is about to run.
     Tool {
         label: String,
@@ -246,6 +248,7 @@ impl Agent {
                     Chunk::Text(t) => Event::Text(t.to_string()),
                     Chunk::Thinking(t) => Event::Thinking(t.to_string()),
                     Chunk::ToolStart(n) => Event::ToolStart(n.to_string()),
+                    Chunk::ToolInput(n) => Event::ToolInput(n),
                     Chunk::BlockEnd => Event::BlockEnd,
                 })
             });

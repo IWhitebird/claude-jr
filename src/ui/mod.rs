@@ -105,6 +105,9 @@ struct App {
     block_start: bool,
     busy: Option<Instant>,
     activity: String,
+    /// The tool call being streamed in, and how much of its input has arrived.
+    tool: String,
+    tool_bytes: usize,
     ask: Option<(String, Sender<Answer>)>,
     queued: Option<String>,
     cost: f64,
@@ -132,6 +135,8 @@ impl App {
             block_start: true,
             busy: None,
             activity: String::new(),
+            tool: String::new(),
+            tool_bytes: 0,
             ask: None,
             queued: None,
             cost: 0.0,
@@ -152,15 +157,18 @@ impl App {
             _ => cwd,
         };
         let version = env!("CARGO_PKG_VERSION");
+        let [m0, m1, m2, m3] = view::mascot();
+        let sandbox = if crate::sandbox::active() {
+            format!("{ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}")
+        } else {
+            String::new()
+        };
         self.commits.extend([
-            format!(" {ORANGE}╭─────╮{RESET}"),
-            format!(" {ORANGE}│ ● ● │{RESET}   {BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
-            format!(" {ORANGE}╰──‿──╯{RESET}   {DIM}{} · {cwd}{RESET}", self.model),
-            format!("           {DIM}/help for commands · shift+tab to change mode{RESET}"),
+            format!(" {m0}  {BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
+            format!(" {m1}  {DIM}{} · {cwd}{RESET}", self.model),
+            format!(" {m2}  {DIM}/help for commands · shift+tab to change mode{RESET}"),
+            format!(" {m3}  {sandbox}"),
         ]);
-        if crate::sandbox::active() {
-            self.commits.push(format!("           {ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}"));
-        }
         self.commits.push(String::new());
         self.last_blank = true;
     }
@@ -276,7 +284,15 @@ impl App {
                 self.flush();
                 self.block_start = true;
             }
-            Event::ToolStart(name) => self.activity = format!("Preparing {name}"),
+            Event::ToolStart(name) => {
+                self.activity = format!("Preparing {name}");
+                self.tool = name;
+                self.tool_bytes = 0;
+            }
+            Event::ToolInput(n) => {
+                self.tool_bytes += n;
+                self.activity = format!("Writing {} · {}", self.tool, size(self.tool_bytes));
+            }
             Event::Tool { label, diff } => {
                 self.flush();
                 self.gap();
@@ -539,4 +555,8 @@ impl App {
         out.drain(..extra);
         (out, cursor.map(|(r, c)| (r.saturating_sub(extra), c)))
     }
+}
+
+fn size(bytes: usize) -> String {
+    if bytes < 1024 { format!("{bytes} B") } else { format!("{:.1} KB", bytes as f64 / 1024.0) }
 }
