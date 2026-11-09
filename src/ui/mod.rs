@@ -38,6 +38,7 @@ const HELP: &str = "/clear          start a new conversation
 /effort [level] low, medium, high, xhigh, max, or default
 /rename [name]  name this session (resume with claude-jr -r NAME)
 /rewind         go back to before an earlier message, undoing file changes
+/resume         switch to an earlier conversation in this folder
 /memory         instruction files in use
 /skills         available skills (run one with /name)
 /mcp            connected MCP servers
@@ -177,6 +178,8 @@ enum Prompt {
     Key,
     /// /rewind: (turn, what you typed), newest first.
     Rewind(Vec<(usize, String)>),
+    /// /resume: session ids and their descriptions, newest first.
+    Resume(Vec<(String, String)>),
 }
 
 /// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
@@ -447,6 +450,21 @@ impl App {
             Event::Notice(msg) => self.note(&msg, DIM),
             Event::RewindPoints(points) if points.is_empty() => self.note("Nothing to rewind to yet.", DIM),
             Event::RewindPoints(points) => self.prompts.push_front(Prompt::Rewind(points)),
+            Event::Resumed { name, messages, recap } => {
+                let which = name.as_deref().map_or("the conversation".to_string(), |n| format!("\"{n}\""));
+                self.note(&format!("Resumed {which} ({messages} messages)."), DIM);
+                if let Some((prompt, reply)) = recap {
+                    self.gap();
+                    self.emit(|cols, out| view::user(&prompt, cols, out));
+                    let short: Vec<&str> = reply.lines().filter(|l| !l.trim().is_empty()).take(6).collect();
+                    self.stream.block_start = true;
+                    for line in short {
+                        self.commit_text_line(line);
+                    }
+                    self.stream.md.reset();
+                }
+                (self.name, self.context) = (name, 0);
+            }
             Event::Rewound { prompt, files } => {
                 let restored = match files {
                     0 => "No files needed restoring".to_string(),
@@ -575,6 +593,22 @@ impl App {
                         if let Some(&(turn, _)) = points.get(c as usize - '1' as usize) {
                             self.prompts.pop_front();
                             let _ = self.agent.commands.send(Command::Rewind(Some(turn)));
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.prompts.pop_front();
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Some(Prompt::Resume(sessions)) => {
+                match k.code {
+                    KeyCode::Char(c @ '1'..='9') => {
+                        if let Some((id, _)) = sessions.get(c as usize - '1' as usize) {
+                            let pick = crate::session::Pick::Named(id.clone());
+                            self.prompts.pop_front();
+                            let _ = self.agent.commands.send(Command::Resume(pick));
                         }
                     }
                     KeyCode::Esc => {
@@ -789,6 +823,27 @@ impl App {
                     self.prompts.push_front(Prompt::Key);
                 }
             }
+            "resume" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
+            "resume" => {
+                let now = std::time::SystemTime::now();
+                let sessions: Vec<(String, String)> = crate::session::Session::list()
+                    .into_iter()
+                    .rev()
+                    .filter(|s| s.messages > 0)
+                    .take(9)
+                    .map(|s| {
+                        let age = now.duration_since(s.modified).map_or(0, |d| d.as_secs());
+                        let title = s.name.unwrap_or_else(|| s.first_prompt.lines().next().unwrap_or("").to_string());
+                        let desc = format!("{title}  ({}, {} messages)", ago(age), s.messages);
+                        (s.id, desc)
+                    })
+                    .collect();
+                if sessions.is_empty() {
+                    self.note("No saved conversations in this folder yet.", DIM);
+                } else {
+                    self.prompts.push_front(Prompt::Resume(sessions));
+                }
+            }
             "rewind" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
             "rewind" => {
                 let _ = self.agent.commands.send(Command::Rewind(None));
@@ -926,6 +981,11 @@ impl App {
                 view::picker("Rewind: restores the files the agent changed since then", &items, hint, cols, &mut out);
                 None
             }
+            Some(Prompt::Resume(sessions)) => {
+                let items: Vec<String> = sessions.iter().map(|(_, d)| d.clone()).collect();
+                view::picker("Resume a conversation", &items, "press a number · esc to cancel", cols, &mut out);
+                None
+            }
             Some(Prompt::Key) => {
                 view::key_prompt(cols, &mut out);
                 Some(view::input_box(&self.input.masked(), "sk-ant-…", cols, &mut out))
@@ -991,6 +1051,16 @@ impl App {
 
 fn size(bytes: usize) -> String {
     if bytes < 1024 { format!("{bytes} B") } else { format!("{:.1} KB", bytes as f64 / 1024.0) }
+}
+
+/// 90 -> "1 min ago", 7200 -> "2 h ago".
+fn ago(secs: u64) -> String {
+    match secs {
+        0..60 => "just now".into(),
+        60..3600 => format!("{} min ago", secs / 60),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
+    }
 }
 
 /// 950 -> "950", 12_400 -> "12k", 1_000_000 -> "1M".

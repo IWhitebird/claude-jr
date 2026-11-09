@@ -65,6 +65,8 @@ pub enum Command {
     /// None: list the points /rewind can go back to. Some(turn): go back to
     /// before that turn, restoring files and cutting the conversation.
     Rewind(Option<usize>),
+    /// Switch to a saved conversation.
+    Resume(Pick),
 }
 
 pub enum Answer {
@@ -91,6 +93,13 @@ pub enum Event {
     Rewound {
         prompt: String,
         files: usize,
+    },
+    /// Switched to a saved conversation. `recap`: your last message and the
+    /// reply to it.
+    Resumed {
+        name: Option<String>,
+        messages: usize,
+        recap: Option<(String, String)>,
     },
     Text(String),
     /// Progress notes the model writes between tool calls.
@@ -268,6 +277,7 @@ impl Agent {
                     (self.core.emit)(Event::RewindPoints(points));
                 }
                 Command::Rewind(Some(turn)) => self.rewind(turn),
+                Command::Resume(pick) => self.resume(&pick),
                 Command::Remember(note) => {
                     let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
                     self.push_user(json!({ "type": "text", "text": text }));
@@ -328,6 +338,28 @@ impl Agent {
         self.messages.truncate(turn);
         self.session.truncate(&self.system, turn);
         (self.core.emit)(Event::Rewound { prompt, files });
+    }
+
+    fn resume(&mut self, pick: &Pick) {
+        let Some(Loaded { session, system, messages }) = Session::load(pick) else {
+            return (self.core.emit)(Event::Error("couldn't load that conversation".into()));
+        };
+        self.tools.checkpoints.open(session.checkpoint_dir());
+        (self.session, self.system, self.messages, self.told_plan) = (session, system, messages, false);
+        self.close_open_calls("Not run: the session ended.");
+
+        let prompt = self.messages.iter().rev().find_map(Msg::prompt);
+        let reply = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| !m.user)
+            .map(|m| m.content().iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"));
+        (self.core.emit)(Event::Resumed {
+            name: self.session.name.clone(),
+            messages: self.messages.len(),
+            recap: prompt.zip(reply),
+        });
     }
 
     fn shell(&mut self, cmd: &str) {
