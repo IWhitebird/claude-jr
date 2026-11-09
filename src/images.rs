@@ -241,4 +241,145 @@ mod tests {
         );
         assert_eq!(paths_in(&text), [spaced.clone(), plain.clone()]);
     }
+
+    use std::io::Read;
+
+    fn encode_all(path: &Path) -> (String, usize) {
+        let mut e = Encoder::open(path);
+        let declared = e.len;
+        let mut out = String::new();
+        e.read_to_string(&mut out).unwrap();
+        (out, declared)
+    }
+
+    #[test]
+    fn media_types_by_extension() {
+        let t = |p: &str| media_type(Path::new(p));
+        assert_eq!(t("a.png"), Some("image/png"));
+        assert_eq!(t("a.JPG"), Some("image/jpeg"));
+        assert_eq!(t("a.jpeg"), Some("image/jpeg"));
+        assert_eq!(t("a.gif"), Some("image/gif"));
+        assert_eq!(t("a.webp"), Some("image/webp"));
+        assert_eq!(t("a.svg"), None);
+        assert_eq!(t("noext"), None);
+    }
+
+    #[test]
+    fn words_split_like_a_shell_would() {
+        assert_eq!(words(r#"a  b\ c 'd e' "f g" h'i j"#), ["a", "b c", "d e", "f g", "h'i", "j"]);
+        assert_eq!(words("trailing\\"), ["trailing"]);
+        assert!(words("   ").is_empty());
+        // An unclosed quote runs to the end.
+        assert_eq!(words("x 'y z"), ["x", "y z"]);
+    }
+
+    #[test]
+    fn paths_must_exist_and_are_listed_once() {
+        let dir = crate::tools::test_dir("images-paths");
+        let a = dir.join("a.png");
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::create_dir(dir.join("folder.png")).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+        let text = format!(
+            "{} (see {}), {} {}; {}/folder.png {}/notes.txt",
+            a.display(),
+            a.display(),
+            "\"".to_string() + &a.display().to_string() + "\"",
+            dir.join("gone.png").display(),
+            dir.display(),
+            dir.display()
+        );
+        assert_eq!(paths_in(&text), [a], "punctuation is trimmed, directories and other types are ignored");
+        assert!(paths_in("").is_empty());
+    }
+
+    #[test]
+    fn a_block_refers_to_one_stored_copy_per_content() {
+        crate::tools::test_home();
+        let dir = crate::tools::test_dir("images-block");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        std::fs::write(&a, b"same bytes").unwrap();
+        std::fs::write(&b, b"same bytes").unwrap();
+        let (ba, bb) = (block(&a).unwrap(), block(&b).unwrap());
+        assert_eq!(ba["source"]["data"], bb["source"]["data"], "equal content, equal copy");
+        assert_eq!(ba["type"], "image");
+        assert_eq!(ba["source"]["media_type"], "image/png");
+        let data = ba["source"]["data"].as_str().unwrap();
+        let stored = PathBuf::from(data.strip_prefix("@@claude-jr-image:").unwrap().strip_suffix("@@").unwrap());
+        assert_eq!(stored.parent().unwrap(), store_dir());
+        assert!(stored.to_string_lossy().ends_with("-10.png"), "named by hash and size: {}", stored.display());
+        // The conversation keeps working if the original is edited or removed.
+        std::fs::write(&a, b"changed").unwrap();
+        assert_eq!(std::fs::read(&stored).unwrap(), b"same bytes");
+        std::fs::write(dir.join("c.PNG"), b"other").unwrap();
+        assert_ne!(block(&dir.join("c.PNG")).unwrap()["source"]["data"], ba["source"]["data"]);
+    }
+
+    #[test]
+    fn bad_images_are_refused_with_a_reason() {
+        crate::tools::test_home();
+        let dir = crate::tools::test_dir("images-bad");
+        let svg = dir.join("a.svg");
+        std::fs::write(&svg, b"<svg/>").unwrap();
+        assert_eq!(block(&svg).unwrap_err(), format!("{} isn't a supported image", svg.display()));
+        let missing = dir.join("nope.png");
+        assert!(block(&missing).unwrap_err().starts_with(&format!("{}: ", missing.display())));
+        let big = dir.join("big.png");
+        std::fs::File::create(&big).unwrap().set_len(MAX_BYTES + 1).unwrap();
+        assert_eq!(block(&big).unwrap_err(), format!("{} is 5 MB; images can be at most 5 MB", big.display()));
+        let exact = dir.join("exact.png");
+        std::fs::File::create(&exact).unwrap().set_len(MAX_BYTES).unwrap();
+        assert!(block(&exact).is_ok(), "5 MB exactly is allowed");
+    }
+
+    #[test]
+    fn messages_are_split_at_image_markers_in_the_store_only() {
+        crate::tools::test_home();
+        let inside = store_dir().join("abc-1.png");
+        let json =
+            format!(r#"{{"x":[{{"source":{{"data":"@@claude-jr-image:{}@@","type":"base64"}}}}]}}"#, inside.display());
+        let parts = pieces(&json);
+        let [Piece::Text(head), Piece::Image(p), Piece::Text(tail)] = parts.as_slice() else {
+            panic!("expected text, image, text");
+        };
+        assert_eq!(std::str::from_utf8(head).unwrap(), r#"{"x":[{"source":{"data":""#);
+        assert_eq!(p, &inside);
+        assert_eq!(std::str::from_utf8(tail).unwrap(), r#"","type":"base64"}}]}"#);
+
+        // A marker pointing anywhere else is just text: it can't pull in other files.
+        let outside = r#"{"data":"@@claude-jr-image:/etc/passwd@@"}"#;
+        let parts = pieces(outside);
+        assert!(parts.iter().all(|p| matches!(p, Piece::Text(_))));
+        let joined: Vec<u8> =
+            parts.iter().flat_map(|p| if let Piece::Text(t) = p { t.to_vec() } else { vec![] }).collect();
+        assert_eq!(joined, outside.as_bytes());
+        // An unterminated marker is left alone, and plain messages are one piece.
+        assert_eq!(pieces(r#"{"data":"@@claude-jr-image:/x"#).len(), 1);
+        assert_eq!(pieces("plain").len(), 1);
+    }
+
+    #[test]
+    fn the_encoder_streams_base64_of_any_size() {
+        use base64::Engine;
+        let dir = crate::tools::test_dir("images-encoder");
+        // Bigger than one chunk (12 KB) and not a multiple of 3.
+        let bytes: Vec<u8> = (0..30_001u32).map(|i| (i * 7 % 251) as u8).collect();
+        let file = dir.join("big.bin");
+        std::fs::write(&file, &bytes).unwrap();
+        let (text, declared) = encode_all(&file);
+        assert_eq!(text, base64::engine::general_purpose::STANDARD.encode(&bytes));
+        assert_eq!(declared, text.len(), "Content-Length is known up front");
+
+        let empty = dir.join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        assert_eq!(encode_all(&empty), (String::new(), 0));
+    }
+
+    #[test]
+    fn a_missing_stored_image_is_replaced_by_a_tiny_placeholder() {
+        let (text, declared) = encode_all(Path::new("/no/such/stored/image.png"));
+        assert_eq!(text, std::str::from_utf8(MISSING).unwrap());
+        assert_eq!(declared, MISSING.len());
+    }
 }
