@@ -1108,5 +1108,35 @@ mod tests {
         let body = rig.bodies().pop().unwrap();
         assert!(body.contains(r#"<skill name=\"unit-agent-skill\">"#) && body.contains("Step one."));
         assert!(body.contains("for src/"));
+
+        // A skill whose file went away since startup is an error, not a message.
+        std::fs::remove_file(skill.join("SKILL.md")).unwrap();
+        let events = rig.run(vec![Command::Skill { name: "unit-agent-skill".into(), args: String::new() }]);
+        assert!(errors_of(&events)[0].contains("SKILL.md"), "{:?}", errors_of(&events));
+        assert_eq!(rig.bodies().len(), 1, "nothing was sent");
+    }
+
+    #[test]
+    fn rewind_that_cannot_restore_keeps_the_conversation() {
+        use std::os::unix::fs::PermissionsExt;
+        let write = tool_use("w1", "write", json!({"path": "sub/a.txt", "content": "hi\n"}));
+        let mut rig =
+            Rig::new("agent-rewind-fail", Mode::Bypass, vec![ok(tools_reply(&[write])), ok(text_reply("Wrote it."))]);
+        rig.run(vec![Command::Send("make sub/a.txt".into())]);
+        // Removing a file needs write access to its folder.
+        let sub = rig.dir.join("sub");
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let events = rig.run(vec![Command::Rewind(Some(0))]);
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let errors = errors_of(&events);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("couldn't restore"), "{errors:?}");
+        assert_eq!(rig.agent.messages.len(), 4, "the conversation is left as it was");
+        assert!(sub.join("a.txt").exists());
+
+        // The entry stays in the index, so a second try works.
+        let events = rig.run(vec![Command::Rewind(Some(0))]);
+        assert!(matches!(events.first(), Some(Event::Rewound { files: 1, .. })));
+        assert!(!sub.join("a.txt").exists());
     }
 }

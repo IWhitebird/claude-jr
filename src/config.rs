@@ -333,6 +333,22 @@ mod tests {
     }
 
     #[test]
+    fn the_current_folder_is_trusted_only_after_trust() {
+        let _g = files();
+        reset_user_files();
+        assert!(!is_trusted());
+        assert!(Config::load().is_ok());
+        trust().unwrap();
+        assert!(is_trusted());
+        let last = std::fs::read_to_string(trusted_file()).unwrap();
+        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+        assert_eq!(last.lines().last(), Some(here.to_str().unwrap()));
+        for f in project_files() {
+            assert!(Path::new(f).exists());
+        }
+    }
+
+    #[test]
     fn folders_follow_the_xdg_variables() {
         crate::tools::test_home();
         let home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap();

@@ -356,6 +356,20 @@ mod tests {
         let other = json!({"type":"code_execution_tool_result","content":{"error_code":"timeout"}});
         assert_eq!(server_result(&other), Some(Err("code_execution failed: timeout".into())));
         assert!(server_result(&json!({"type":"text"})).is_none());
+
+        let found = json!({"type":"web_search_tool_result","content":[{"title":"a"},{"title":"b"}]});
+        assert_eq!(server_result(&found), Some(Ok("2 results".into())));
+        let failed = json!({"type":"web_search_tool_result","content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}});
+        assert_eq!(server_result(&failed), Some(Err("search failed: max_uses_exceeded".into())));
+        let page =
+            json!({"type":"web_fetch_tool_result","content":{"type":"web_fetch_result","url":"https://x.test/a\nb"}});
+        assert_eq!(server_result(&page), Some(Ok("Fetched https://x.test/a b".into())));
+        let page = json!({"type":"web_fetch_tool_result","content":{"type":"web_fetch_result"}});
+        assert_eq!(server_result(&page), Some(Ok("Fetched the page".into())));
+        let done = json!({"type":"bash_code_execution_tool_result","content":{"stdout":"2"}});
+        assert_eq!(server_result(&done), Some(Ok("bash_code_execution done".into())));
+        let plain = json!({"type":"mcp_tool_result","content":"all good"});
+        assert_eq!(server_result(&plain), Some(Ok("all good".into())));
     }
 
     use crate::agent::Command;
