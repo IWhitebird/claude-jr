@@ -39,7 +39,7 @@ pub struct Caps {
 impl Caps {
     pub fn of(model: &str) -> Caps {
         let (fallback, updates, compact) = match model {
-            "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-1" => (true, true, true),
+            "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-2" | "claude-fable-5-1" => (true, true, true),
             "claude-opus-5" => (true, false, true),
             "claude-fable-5" => (false, true, true),
             "claude-haiku-5-5" | "claude-sonnet-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
@@ -63,6 +63,9 @@ impl Caps {
                 | "claude-sonnet-5-5"
                 | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
+                | "claude-fable-5-2"
+                | "claude-fable-5-1"
+                | "claude-fable-5"
         ) || matches!(family(model), Some("opus" | "sonnet"));
         Caps { fallback, updates, compact, window, web }
     }
@@ -79,7 +82,7 @@ pub const CATALOGUE: [(&str, &str); 7] = [
     ("claude-opus-5-5", "default; strong at long coding tasks"),
     ("claude-sonnet-5-5", "fast, half the price; everyday edits"),
     ("claude-haiku-5-5", "fastest and cheapest; small changes"),
-    ("claude-fable-5-1", "most capable; hardest problems"),
+    ("claude-fable-5-2", "most capable; hardest problems"),
     ("claude-opus-5", "previous Opus"),
     ("claude-sonnet-5", "previous Sonnet"),
     ("claude-opus-4-8", "older Opus"),
@@ -121,7 +124,9 @@ fn family(model: &str) -> Option<&'static str> {
 fn price(model: &str) -> Option<(f64, f64, f64)> {
     Some(match model {
         "claude-opus-5-5" => (4.0, 20.0, 0.20),
-        "claude-sonnet-5-5" | "claude-sonnet-5" => (2.0, 10.0, 0.20),
+        "claude-sonnet-5-5" => (2.0, 10.0, 0.10),
+        "claude-sonnet-5" => (2.0, 10.0, 0.20),
+        "claude-fable-5-2" => (8.0, 40.0, 0.20),
         "claude-haiku-5-5" => (0.10, 0.50, 0.01),
         "claude-fable-5-1" => (10.0, 50.0, 0.25),
         "claude-fable-5" => (10.0, 50.0, 1.0),
@@ -133,7 +138,7 @@ fn price(model: &str) -> Option<(f64, f64, f64)> {
                 "opus" => "claude-opus-5-5",
                 "sonnet" => "claude-sonnet-5-5",
                 "haiku" => "claude-haiku-5-5",
-                _ => "claude-fable-5-1",
+                _ => "claude-fable-5-2",
             });
         }
     })
@@ -651,9 +656,9 @@ data: {"type":"message_stop"}
 
     #[test]
     fn newer_versions_use_their_family() {
-        let caps = Caps::of("claude-fable-5-2");
+        let caps = Caps::of("claude-fable-5-3");
         assert!(caps.updates && caps.compact && !caps.fallback && !caps.web);
-        assert_eq!(cost("claude-fable-5-2", &Usage { input_tokens: 1_000_000, ..Default::default() }), Some(10.0));
+        assert_eq!(cost("claude-fable-5-3", &Usage { input_tokens: 1_000_000, ..Default::default() }), Some(8.0));
         assert!(Caps::of("claude-sonnet-5-7").web);
         assert!(!Caps::of("claude-haiku-5-6").updates);
         assert_eq!(cost("gpt-9", &Usage::default()), None);
