@@ -39,6 +39,7 @@ const HELP: &str = "/clear          start a new conversation
 /rename [name]  name this session (resume with claude-jr -r NAME)
 /rewind         go back to before an earlier message, undoing file changes
 /resume         switch to an earlier conversation in this folder
+/compact [focus] replace the conversation with a summary, to free up context
 /memory         instruction files in use
 /skills         available skills (run one with /name)
 /mcp            connected MCP servers
@@ -822,6 +823,12 @@ impl App {
                 if !self.prompts.iter().any(|p| matches!(p, Prompt::Key)) {
                     self.prompts.push_front(Prompt::Key);
                 }
+            }
+            "compact" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
+            "compact" => {
+                self.work = Some(Work::new());
+                self.set_activity("summarizing the conversation".into());
+                let _ = self.agent.commands.send(Command::Compact(arg.to_string()));
             }
             "resume" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
             "resume" => {

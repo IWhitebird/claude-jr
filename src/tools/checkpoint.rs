@@ -41,6 +41,16 @@ impl Checkpoints {
         *self.0.lock().unwrap() = State { dir: Some(dir), turn: 0, entries };
     }
 
+    /// Forgets every checkpoint (the files stay as they are). After /compact
+    /// the old turns are gone, so there's nothing to rewind to.
+    pub fn clear(&self) {
+        let mut s = self.0.lock().unwrap();
+        s.entries.clear();
+        if let Some(dir) = &s.dir {
+            let _ = std::fs::write(dir.join("index.jsonl"), "");
+        }
+    }
+
     pub fn begin_turn(&self, turn: usize) {
         self.0.lock().unwrap().turn = turn;
     }
