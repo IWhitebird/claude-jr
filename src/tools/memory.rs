@@ -87,9 +87,7 @@ mod tests {
 
     #[test]
     fn add_and_remove() {
-        let dir = super::super::test_dir("memory");
-        // Tests share the process environment, so this one sets its own data dir.
-        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+        super::super::test_home();
         let add = |n: &str| update(&json!({"action": "add", "note": n}));
         assert_eq!(add("uses pnpm, not npm").unwrap(), "Saved. 1 notes in memory.");
         assert_eq!(add("uses pnpm, not npm").unwrap(), "Already noted.");

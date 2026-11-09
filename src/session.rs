@@ -262,3 +262,37 @@ fn dir() -> PathBuf {
     let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
     crate::config::data_dir().join("sessions").join(name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_rename_truncate_and_load() {
+        crate::tools::test_home();
+        let msg = |role: &str, text: &str| Msg::new(role, json!([{ "type": "text", "text": text }]));
+        let mut s = Session::new();
+        let id = stem(&s.path);
+        let mut messages = vec![msg("user", "first"), msg("assistant", "one"), msg("user", "second")];
+
+        // A trailing user message is held back until its turn finishes.
+        s.save("SYSTEM", &messages);
+        assert_eq!(s.saved, 2);
+        messages.push(msg("assistant", "two"));
+        s.save("SYSTEM", &messages);
+        s.rename("SYSTEM", "my work");
+        s.truncate("SYSTEM", 2); // rewind to before "second"
+        s.save(
+            "SYSTEM",
+            &[msg("user", "first"), msg("assistant", "one"), msg("user", "again"), msg("assistant", "ok")],
+        );
+
+        let loaded = Session::load(&Pick::Named("my work".into())).expect("found by name");
+        assert_eq!(loaded.system, "SYSTEM");
+        assert_eq!(loaded.session.name.as_deref(), Some("my work"));
+        let prompts: Vec<String> = loaded.messages.iter().filter_map(Msg::prompt).collect();
+        assert_eq!(prompts, ["first", "again"]);
+        assert!(Session::load(&Pick::Named(id)).is_some(), "found by id too");
+        assert!(Session::list().iter().any(|s| s.name.as_deref() == Some("my work") && s.messages == 4));
+    }
+}

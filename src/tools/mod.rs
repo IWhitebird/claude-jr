@@ -345,6 +345,23 @@ static AGENT: std::sync::LazyLock<Box<RawValue>> = std::sync::LazyLock::new(|| {
     }))
 });
 
+/// Points claude-jr's data and config folders at a private temp folder, once
+/// per test run, so tests never touch the real ones. (Environment variables
+/// are shared by every test in the process, so they're set only here.)
+#[cfg(test)]
+pub(crate) fn test_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let d = test_dir("home");
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", d.join("data"));
+            std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
+        }
+        d
+    })
+    .clone()
+}
+
 #[cfg(test)]
 pub(crate) fn test_dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("cjr-test-{name}-{}", std::process::id()));

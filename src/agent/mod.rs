@@ -507,3 +507,110 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    /// A fake Messages API: answers each request with the next reply, as SSE.
+    fn fake_api(replies: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let mut replies = replies.into_iter();
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut out = stream;
+                // Keep-alive: several requests on one connection, until it closes.
+                'requests: loop {
+                    let mut len = 0;
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            break 'requests;
+                        }
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            len = v.trim().parse().unwrap_or(0);
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0; len];
+                    let _ = reader.read_exact(&mut body);
+                    let Some(sse) = replies.next() else { return };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
+                        sse.len()
+                    );
+                    let _ = out.write_all(head.as_bytes()).and_then(|_| out.write_all(sse.as_bytes()));
+                }
+            }
+        });
+        url
+    }
+
+    fn sse(events: &[serde_json::Value]) -> String {
+        events.iter().map(|e| format!("data: {e}\n\n")).collect()
+    }
+
+    #[test]
+    fn a_turn_runs_a_tool_and_finishes() {
+        crate::tools::test_home();
+        let tool_call = sse(&[
+            json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"command\": \"echo hi\"}"}}),
+            json!({"type": "content_block_stop", "index": 0}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 5}}),
+            json!({"type": "message_stop"}),
+        ]);
+        let answer = sse(&[
+            json!({"type": "message_start", "message": {"usage": {"input_tokens": 20}}}),
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "It printed hi."}}),
+            json!({"type": "content_block_stop", "index": 0}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}}),
+            json!({"type": "message_stop"}),
+        ]);
+        let url = fake_api(vec![tool_call, answer]);
+
+        let (tx, rx) = mpsc::channel();
+        let cfg = Config {
+            key: "test".into(),
+            base_url: Some(url),
+            model: "claude-opus-5-5".into(),
+            effort: None,
+            auto_model: "claude-haiku-5-5".into(),
+            mode: Mode::Bypass,
+            allow: Vec::new(),
+            resume: None,
+            mcp: BTreeMap::new(),
+            web: false,
+            interactive: false,
+        };
+        let agent = spawn(cfg, move |e| {
+            let _ = tx.send(e);
+        });
+        agent.commands.send(Command::Send("say hi".into())).unwrap();
+
+        let (mut text, mut tools, mut results) = (String::new(), Vec::new(), Vec::new());
+        loop {
+            match rx.recv_timeout(Duration::from_secs(10)).expect("the turn finishes") {
+                Event::Text(t) => text.push_str(&t),
+                Event::Tool { label, .. } => tools.push(label),
+                Event::ToolResult { ok, summary } => results.push((ok, summary)),
+                Event::Done => break,
+                Event::Error(e) => panic!("turn failed: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(tools, ["Bash(echo hi)"]);
+        assert_eq!(results, [(true, "hi".to_string())]);
+        assert_eq!(text, "It printed hi.");
+    }
+}
