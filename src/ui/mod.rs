@@ -152,14 +152,16 @@ impl App {
             _ => cwd,
         };
         let version = env!("CARGO_PKG_VERSION");
-        let lines = [
+        self.commits.extend([
             format!(" {ORANGE}╭─────╮{RESET}"),
             format!(" {ORANGE}│ ● ● │{RESET}   {BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
             format!(" {ORANGE}╰──‿──╯{RESET}   {DIM}{} · {cwd}{RESET}", self.model),
             format!("           {DIM}/help for commands · shift+tab to change mode{RESET}"),
-            String::new(),
-        ];
-        self.commits.extend(lines);
+        ]);
+        if crate::sandbox::active() {
+            self.commits.push(format!("           {ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}"));
+        }
+        self.commits.push(String::new());
         self.last_blank = true;
     }
 
@@ -526,7 +528,8 @@ impl App {
                 Mode::Bypass => span("⏵⏵ skip permissions on (shift+tab to cycle)", RED),
             }
         };
-        let name = self.name.as_deref().map(|n| format!("{n} · ")).unwrap_or_default();
+        let sandbox = if crate::sandbox::active() { "sandbox · " } else { "" };
+        let name = self.name.as_deref().map(|n| format!("{sandbox}{n} · ")).unwrap_or_else(|| sandbox.to_string());
         let right = format!("{name}{} · {}k tokens · ${:.2}", self.model, self.context / 1000, self.cost);
         out.push(view::footer(left, &right, cols));
 

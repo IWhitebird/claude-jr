@@ -4,6 +4,7 @@ mod config;
 mod permission;
 mod print;
 mod prompt;
+mod sandbox;
 mod session;
 mod tools;
 mod ui;
@@ -19,6 +20,7 @@ const USAGE: &str = "usage: claude-jr [options] [-p PROMPT]
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
+      --sandbox        only let it write inside this directory (Linux, bubblewrap)
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
@@ -40,6 +42,7 @@ struct Args {
     effort: Option<String>,
     yes: bool,
     resume: Option<Pick>,
+    sandbox: bool,
 }
 
 enum Cli {
@@ -62,6 +65,7 @@ fn parse_args() -> Result<Cli, String> {
             "-c" | "--continue" => args.resume = Some(Pick::Latest),
             "-r" | "--resume" => args.resume = Some(Pick::Named(value()?)),
             "--sessions" => return Ok(Cli::Sessions),
+            "--sandbox" => args.sandbox = true,
             "-h" | "--help" => return Ok(Cli::Show(USAGE.into())),
             "-V" | "--version" => return Ok(Cli::Show(format!("claude-jr {}", env!("CARGO_PKG_VERSION")))),
             _ => return Err(format!("unknown argument: {a}\n\n{USAGE}")),
@@ -93,6 +97,9 @@ fn run() -> Result<ExitCode, String> {
         }
     };
     let file = config::Config::load()?;
+    if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
+        return Err(sandbox::exec(&file.sandbox));
+    }
     let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| "ANTHROPIC_API_KEY is not set")?;
     let interactive = args.prompt.is_none();
     if interactive && !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {

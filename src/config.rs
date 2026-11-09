@@ -3,7 +3,8 @@
 // {
 //   "model": "claude-sonnet-5-5",
 //   "effort": "high",
-//   "allow": ["bash:cargo *", "bash:git status", "edit"]
+//   "allow": ["bash:cargo *", "bash:git status", "edit"],
+//   "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": ["/home/me/.m2"] }
 // }
 
 use serde::Deserialize;
@@ -16,6 +17,22 @@ pub struct Config {
     pub effort: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxConfig {
+    /// Always run sandboxed, as if --sandbox were given.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Extra paths the sandbox can read.
+    #[serde(default)]
+    pub read: Vec<String>,
+    /// Extra paths the sandbox can write.
+    #[serde(default)]
+    pub write: Vec<String>,
 }
 
 impl Config {
@@ -27,6 +44,9 @@ impl Config {
             cfg.model = file.model.or(cfg.model);
             cfg.effort = file.effort.or(cfg.effort);
             cfg.allow.extend(file.allow);
+            cfg.sandbox.enabled |= file.sandbox.enabled;
+            cfg.sandbox.read.extend(file.sandbox.read);
+            cfg.sandbox.write.extend(file.sandbox.write);
         }
         Ok(cfg)
     }
