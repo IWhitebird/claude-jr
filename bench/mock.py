@@ -15,6 +15,7 @@ ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
 OUTPUT_KB = int(os.environ.get("MOCK_OUTPUT_KB", "1"))
 LOG = os.environ.get("MOCK_LOG")
 CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
+SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features"
 
 
 def sse(events):
@@ -65,6 +66,39 @@ def final(usage):
                                                   for i in range(0, len(text), 20)])], "end_turn", usage)
 
 
+def text_reply(text, usage):
+    return reply([({"type": "text", "text": ""}, [{"type": "text_delta", "text": text}])], "end_turn", usage)
+
+
+def features(body, done, usage):
+    """Exercises every tool family, one step per round of tool results."""
+    system = body.get("system", "")
+    if "You review actions" in system:          # auto mode's reviewer
+        action = body["messages"][-1]["content"][0]["text"]
+        return text_reply("BLOCK: deletes files" if "rm -rf" in action else "ALLOW", usage)
+    if "You are a subagent" in system:          # a subagent: read a file, then report
+        if done == 0:
+            return reply([tool("s1", "read", {"path": "notes.txt"})], "tool_use", usage)
+        return text_reply("Subagent report: notes.txt has 2 lines.", usage)
+    steps = [
+        [tool("t1", "todo", {"todos": [
+            {"content": "look around", "status": "in_progress"},
+            {"content": "report", "status": "pending"}]}),
+         tool("q1", "ask_user", {"question": "Which color?", "options": ["red", "blue"]})],
+        [tool("a1", "agent", {"description": "check notes", "prompt": "Read notes.txt"}),
+         tool("a2", "agent", {"description": "check notes again", "prompt": "Read notes.txt"})],
+        [tool("b1", "bash", {"command": "sleep 0.3; echo served; sleep 30", "background": True}),
+         tool("j1", "jobs", {"action": "wait", "id": 1, "until": "served", "timeout": 5})],
+        [tool("k1", "skill", {"name": "demo"}),
+         tool("m1", "mcp__demo__echo", {"text": "ping"})],
+        [tool("c1", "bash", {"command": "echo reviewed-and-allowed"}),
+         tool("c2", "bash", {"command": "rm -rf ./build"})],
+    ]
+    if done < len(steps):
+        return reply(steps[done], "tool_use", usage)
+    return text_reply("All features checked.\n", usage)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -78,7 +112,10 @@ class Handler(BaseHTTPRequestHandler):
                    if m["role"] == "user" and isinstance(m["content"], list)
                    and any(b.get("type") == "tool_result" for b in m["content"]))
         usage = {"input_tokens": 50, "cache_read_input_tokens": len(raw) // 4}
-        out = sse(tool_round(done, usage) if done < ROUNDS else final(usage))
+        if SCENARIO == "features":
+            out = sse(features(body, done, usage))
+        else:
+            out = sse(tool_round(done, usage) if done < ROUNDS else final(usage))
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("content-length", str(len(out)))
