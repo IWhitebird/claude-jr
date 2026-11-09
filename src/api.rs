@@ -815,4 +815,207 @@ data: {"type":"message_stop"}
         assert_eq!(reply.stop_reason, "end_turn");
         server.join().unwrap();
     }
+
+    use std::sync::{Arc, Mutex};
+
+    /// What the scripted server saw: the head of each request, lower-cased.
+    type Heads = Arc<Mutex<Vec<String>>>;
+
+    /// A server that answers request n with `responses[n]` (status, extra
+    /// header lines, body) and records each request's head.
+    fn scripted(responses: Vec<(u16, &'static str, String)>) -> (String, Heads) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let heads: Heads = Arc::default();
+        let seen = heads.clone();
+        std::thread::spawn(move || {
+            let mut responses = responses.into_iter();
+            for stream in l.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut out = stream;
+                'requests: loop {
+                    let (mut head, mut len) = (String::new(), 0);
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            break 'requests;
+                        }
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            len = v.trim().parse().unwrap_or(0);
+                        }
+                        let end = line == "\r\n";
+                        head.push_str(&line.to_ascii_lowercase());
+                        if end {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0; len];
+                    let _ = reader.read_exact(&mut body);
+                    head.push_str(&String::from_utf8_lossy(&body));
+                    seen.lock().unwrap().push(head);
+                    let Some((status, extra, body)) = responses.next() else { return };
+                    let reply = format!("HTTP/1.1 {status} X\r\n{extra}content-length: {}\r\n\r\n{body}", body.len());
+                    let _ = out.write_all(reply.as_bytes());
+                }
+            }
+        });
+        (base, heads)
+    }
+
+    fn hello_sse() -> String {
+        let events = [
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":1}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        events.iter().map(|e| format!("data: {e}\n\n")).collect()
+    }
+
+    const SSE: &str = "content-type: text/event-stream\r\n";
+    const JSON: &str = "content-type: application/json\r\n";
+
+    fn ask(client: &Client, model: &str) -> Result<Reply> {
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new(model, None, "sys", &tools);
+        client.stream(&req, &[r#"{"role":"user","content":"hi"}"#], &AtomicBool::new(false), |_| {})
+    }
+
+    #[test]
+    fn a_missing_key_is_reported_before_anything_is_sent() {
+        let (base, heads) = scripted(vec![]);
+        let client = Client::new(String::new(), Some(base));
+        assert!(!client.has_key());
+        let err = ask(&client, "claude-opus-5-5").err().unwrap();
+        assert_eq!(err.to_string(), "no API key yet: type /login to add one");
+        client.set_key("k".into());
+        assert!(client.has_key());
+        assert!(heads.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rate_limits_are_retried_after_the_time_the_server_asks_for() {
+        let limited = (
+            429,
+            "retry-after: 0\r\ncontent-type: application/json\r\n",
+            r#"{"error":{"message":"slow down"}}"#.to_string(),
+        );
+        let (base, heads) = scripted(vec![limited, (200, SSE, hello_sse())]);
+        let reply = ask(&Client::new("k".into(), Some(base)), "claude-opus-5-5").unwrap();
+        assert_eq!(reply.content[0]["text"], "hi");
+        assert_eq!(heads.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn giving_up_after_five_attempts_shows_the_servers_message() {
+        let limited = || {
+            (
+                429,
+                "retry-after: 0\r\ncontent-type: application/json\r\n",
+                r#"{"error":{"message":"slow down"}}"#.to_string(),
+            )
+        };
+        let (base, heads) = scripted((0..5).map(|_| limited()).collect());
+        let err = ask(&Client::new("k".into(), Some(base)), "claude-opus-5-5").err().unwrap();
+        assert_eq!(err.to_string(), "API error 429: slow down");
+        assert_eq!(heads.lock().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn other_errors_are_not_retried_and_odd_bodies_are_shortened() {
+        let body = "x".repeat(900);
+        let (base, heads) = scripted(vec![(400, "", body)]);
+        let err = ask(&Client::new("k".into(), Some(base)), "claude-opus-5-5").err().unwrap();
+        assert_eq!(err.to_string(), format!("API error 400: {}", "x".repeat(500)));
+        assert_eq!(heads.lock().unwrap().len(), 1);
+        assert_eq!(error_message(r#"{"error":{"message":"bad"}}"#), "bad");
+        assert_eq!(error_message(r#"{"error":{}}"#), r#"{"error":{}}"#);
+    }
+
+    #[test]
+    fn an_overloaded_stream_before_any_content_is_requested_again() {
+        let overloaded = "data: {\"type\":\"error\",\"error\":{\"message\":\"Overloaded\"}}\n\n".to_string();
+        let (base, heads) = scripted(vec![(200, SSE, overloaded), (200, SSE, hello_sse())]);
+        let start = Instant::now();
+        let reply = ask(&Client::new("k".into(), Some(base)), "claude-opus-5-5").unwrap();
+        assert_eq!(reply.content[0]["text"], "hi");
+        assert_eq!(heads.lock().unwrap().len(), 2);
+        assert!(start.elapsed() >= Duration::from_millis(450), "it waited before retrying");
+    }
+
+    #[test]
+    fn requests_carry_the_key_version_and_the_betas_the_model_has() {
+        let (base, heads) = scripted(vec![(200, SSE, hello_sse()), (200, SSE, hello_sse()), (200, JSON, hello_sse())]);
+        let client = Client::new("sk-test".into(), Some(format!("{base}/")));
+        ask(&client, "claude-opus-5-5").unwrap();
+        let mcp = RawValue::from_string(r#"[{"type":"url","url":"https://x.test","name":"x"}]"#.into()).unwrap();
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let mut req = Request::new("something-else", None, "", &tools);
+        req.mcp_servers = Some(&mcp);
+        client.stream(&req, &[] as &[&str], &AtomicBool::new(false), |_| {}).unwrap();
+        req.model = "claude-haiku-5-5";
+        client.stream(&req, &[] as &[&str], &AtomicBool::new(false), |_| {}).unwrap();
+
+        let heads = heads.lock().unwrap();
+        assert!(heads[0].starts_with("post /v1/messages http/1.1"), "{}", heads[0]);
+        assert!(heads[0].contains("x-api-key: sk-test"));
+        assert!(heads[0].contains(&format!("anthropic-version: {VERSION}")));
+        assert!(heads[0].contains(&format!("anthropic-beta: {}", Caps::of("claude-opus-5-5").betas())));
+        assert!(!heads[0].contains(BETA_MCP));
+        assert!(heads[1].contains(&format!("anthropic-beta: {BETA_MCP}\r\n")), "only the connector beta: {}", heads[1]);
+        assert!(heads[1].contains(r#""mcp_servers":[{"type":"url""#));
+        assert!(heads[2].contains(&format!("{},{BETA_MCP}", BETA_COMPACT)), "{}", heads[2]);
+    }
+
+    #[test]
+    fn a_stream_that_ends_early_says_so() {
+        let run =
+            |data: &str| read_sse(data.as_bytes(), &AtomicBool::new(false), SILENCE_LIMIT, &mut |_| {}).err().unwrap();
+        let err = run("");
+        assert!(err.is::<Retryable>() && err.to_string() == "the stream ended before any reply");
+        let started = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n";
+        let err = run(started);
+        assert!(!err.is::<Retryable>() && err.to_string() == "the stream ended early");
+        // The connection dropped in the middle of a line.
+        let err = run(&format!("{started}data: {{\"type\":\"content_bl"));
+        assert_eq!(err.to_string(), "the stream ended early");
+        let err = run("data: {not json}\n");
+        assert!(err.to_string().contains("key must be a string"), "{err}");
+    }
+
+    #[test]
+    fn waiting_between_attempts() {
+        assert_eq!(backoff(1, None), Duration::from_millis(500));
+        assert_eq!(backoff(3, None), Duration::from_secs(2));
+        assert_eq!(backoff(7, None), Duration::from_secs(16), "capped");
+        assert_eq!(backoff(1, Some(3)), Duration::from_secs(3));
+        assert_eq!(backoff(1, Some(900)), Duration::from_secs(60), "a server's long wait is capped too");
+        assert!(wait(Duration::ZERO, &AtomicBool::new(false)).is_ok());
+        let start = Instant::now();
+        assert!(wait(Duration::from_millis(250), &AtomicBool::new(false)).is_ok());
+        assert!(start.elapsed() >= Duration::from_millis(250));
+        let err = wait(Duration::from_secs(30), &AtomicBool::new(true)).err().unwrap();
+        assert!(err.is::<Cancelled>());
+        assert_eq!(Cancelled.to_string(), "cancelled");
+        assert_eq!(Retryable("x".into()).to_string(), "x");
+    }
+
+    #[test]
+    fn models_are_described_with_price_and_window() {
+        assert_eq!(describe("claude-opus-5-5"), "$4/$20 \u{b7} 1M context");
+        assert_eq!(describe("claude-haiku-4-5"), "$1/$5 \u{b7} 200k context");
+        assert_eq!(describe("claude-sonnet-5-5"), "$2/$10 \u{b7} 1M context");
+        assert_eq!(describe("my-own-model"), "1M context");
+        for (id, _) in CATALOGUE {
+            assert!(price(id).is_some(), "{id} has a price");
+        }
+        assert_eq!(family("claude-mythos-5-1"), Some("fable"));
+        assert_eq!(family("claude-sonnet-4-5"), None);
+        assert_eq!(family("claude-unknown-9"), None);
+        assert_eq!(price("claude-unknown-9"), None);
+        assert_eq!(price("claude-opus-9-1"), price("claude-opus-5-5"));
+    }
 }
