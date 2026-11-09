@@ -209,7 +209,8 @@ struct App {
     last_blank: bool,
     work: Option<Work>,
     prompts: VecDeque<Prompt>,
-    queued: Option<String>,
+    /// Messages typed while the agent was busy (or before a key), sent in order.
+    queued: VecDeque<String>,
     cost: f64,
     context: u64,
     /// The session's name, set with /rename.
@@ -243,7 +244,7 @@ impl App {
             last_blank: true,
             work: None,
             prompts: VecDeque::new(),
-            queued: None,
+            queued: VecDeque::new(),
             cost: 0.0,
             context: 0,
             name: None,
@@ -585,7 +586,12 @@ impl App {
         if let Some((msg, style)) = note {
             self.note(msg, style);
         }
-        if let Some(q) = self.queued.take() {
+        self.send_queued();
+    }
+
+    /// Sends the next queued message, if any.
+    fn send_queued(&mut self) {
+        if let Some(q) = self.queued.pop_front() {
             self.submit(q);
         }
     }
@@ -599,14 +605,7 @@ impl App {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match self.prompts.front() {
             Some(Prompt::Approve { .. }) => return self.on_approve_key(k),
-            Some(Prompt::Question { options, .. }) => {
-                if let KeyCode::Char(c @ '1'..='9') = k.code {
-                    let i = c as usize - '1' as usize;
-                    if self.input.is_empty() && i < options.len() {
-                        let answer = options[i].clone();
-                        return self.answer(answer);
-                    }
-                }
+            Some(Prompt::Question { .. }) => {
                 if k.code == KeyCode::Esc || (ctrl && k.code == KeyCode::Char('c')) {
                     self.answer(String::new());
                     return self.cancel();
@@ -750,9 +749,12 @@ impl App {
     }
 
     /// Answers the question at the front of the queue.
+    /// Answers the question at the front of the queue. A number on its own
+    /// picks that option; anything else is sent as typed.
     fn answer(&mut self, text: String) {
-        if let Some(Prompt::Question { reply, .. }) = self.prompts.pop_front() {
-            let _ = reply.send(text);
+        if let Some(Prompt::Question { reply, options, .. }) = self.prompts.pop_front() {
+            let picked = text.trim().parse::<usize>().ok().and_then(|n| options.get(n.wrapping_sub(1)));
+            let _ = reply.send(picked.cloned().unwrap_or(text));
         }
     }
 
@@ -823,9 +825,7 @@ impl App {
         }
         let _ = self.agent.commands.send(Command::SetKey(key));
         self.has_key = true;
-        if let Some(q) = self.queued.take() {
-            self.submit(q);
-        }
+        self.send_queued();
     }
 
     fn ctrl_c(&mut self) {
@@ -857,12 +857,14 @@ impl App {
         if let Some(note) = trimmed.strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
             return self.remember(note);
         }
+        let shell = trimmed.strip_prefix('!').map(|c| c.trim().to_string());
         if self.work.is_some() {
-            self.queued = Some(text);
+            self.queued.push_back(text);
             return;
         }
-        if !self.has_key {
-            self.queued = Some(text);
+        // Shell commands don't need the API, so they run without a key.
+        if !self.has_key && shell.is_none() {
+            self.queued.push_back(text);
             if !self.prompts.iter().any(|p| matches!(p, Prompt::Key)) {
                 self.prompts.push_back(Prompt::Key);
             }
@@ -872,8 +874,8 @@ impl App {
         self.emit(|cols, out| view::user(&text, cols, out));
         self.stream.block_start = true;
         self.work = Some(Work::new());
-        let cmd = match trimmed.strip_prefix('!') {
-            Some(shell) => Command::Shell(shell.trim().to_string()),
+        let cmd = match shell {
+            Some(shell) => Command::Shell(shell),
             None => Command::Send(text),
         };
         let _ = self.agent.commands.send(cmd);
@@ -1022,7 +1024,8 @@ impl App {
                 self.clear_screen = true;
                 self.commits.clear();
                 self.stream = Stream { block_start: true, ..Stream::default() };
-                (self.context, self.name, self.queued) = (0, None, None);
+                (self.context, self.name) = (0, None);
+                self.queued.clear();
                 self.subagents.clear();
                 self.header();
             }
@@ -1079,7 +1082,7 @@ impl App {
             }
             Some(Prompt::Question { question, options, .. }) => {
                 view::question(question, options, cols, &mut out);
-                Some(view::input_box(&self.input, "type an answer, or press a number", cols, &mut out))
+                Some(view::input_box(&self.input, "type an answer, or an option's number, then enter", cols, &mut out))
             }
             Some(Prompt::Rewind(points)) => {
                 let items: Vec<String> =
@@ -1159,8 +1162,10 @@ impl App {
         let mut left = Vec::new();
         if self.quit_armed.is_some_and(|t| t.elapsed() < QUIT_WINDOW) {
             left.push(span("press ctrl-c again to quit", DIM));
-        } else if let Some(q) = &self.queued {
-            queued = format!("queued: {}", q.lines().next().unwrap_or(""));
+        } else if let Some(q) = self.queued.front() {
+            let more =
+                if self.queued.len() > 1 { format!(" (+{} more)", self.queued.len() - 1) } else { String::new() };
+            queued = format!("queued: {}{more}", q.lines().next().unwrap_or(""));
             left.push(span(&queued, DIM));
         } else {
             match self.agent.mode.get() {

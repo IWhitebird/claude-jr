@@ -309,7 +309,8 @@ type Reply = Result<Value, String>;
 /// A running server. A reader thread routes each reply to whoever is waiting
 /// for its id, so calls from several threads can be in flight at once.
 struct Conn {
-    stdin: Mutex<ChildStdin>,
+    /// Shared with the reader thread, which answers the server's own requests.
+    stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>>,
     next: AtomicU64,
     child: Mutex<Child>,
@@ -321,14 +322,27 @@ impl Conn {
         let mut child = cmd.spawn()?;
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
+        let stdin = Arc::new(Mutex::new(stdin));
         let pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>> = Arc::default();
         let routes = pending.clone();
+        let answers = stdin.clone();
         let _ = thread::Builder::new().name("mcp-read".into()).spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-                // Requests from the server (like ping) aren't supported; the
-                // server will time them out. Notifications are ignored.
-                let Some(id) = msg["id"].as_u64().filter(|_| msg.get("method").is_none()) else { continue };
+                // A request from the server: answer ping, decline anything else.
+                if let (Some(method), Some(id)) = (msg["method"].as_str(), msg.get("id")) {
+                    let reply = if method == "ping" {
+                        json!({ "jsonrpc": "2.0", "id": id, "result": {} })
+                    } else {
+                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } })
+                    };
+                    let mut line = reply.to_string();
+                    line.push('\n');
+                    let _ = answers.lock().unwrap().write_all(line.as_bytes());
+                    continue;
+                }
+                // Notifications are ignored; replies go to whoever is waiting.
+                let Some(id) = msg["id"].as_u64() else { continue };
                 let reply = match msg.get("error") {
                     Some(e) => Err(e["message"].as_str().unwrap_or("error").to_string()),
                     None => Ok(msg["result"].clone()),
@@ -343,7 +357,7 @@ impl Conn {
             }
         });
         let pid = child.id();
-        Ok(Conn { stdin: Mutex::new(stdin), pending, next: AtomicU64::new(1), child: Mutex::new(child), pid })
+        Ok(Conn { stdin, pending, next: AtomicU64::new(1), child: Mutex::new(child), pid })
     }
 
     fn send(&self, msg: &Value) -> Result<(), String> {
@@ -407,7 +421,11 @@ while IFS= read -r line; do
   case "$line" in
     *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}\n' "$id" ;;
     *'"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"echo","description":"Echo","inputSchema":{"type":"object"}}]}}\n' "$id" ;;
-    *'"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"pong"}]}}\n' "$id" ;;
+    *'"tools/call"'*)
+      printf '{"jsonrpc":"2.0","id":"p1","method":"ping"}\n'
+      IFS= read -r answer
+      case "$answer" in *'"id":"p1"'*'"result"'*) text=pong ;; *) text=no-ping-answer ;; esac
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$text" ;;
   esac
 done"#;
 
