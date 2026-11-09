@@ -45,7 +45,7 @@ UI, and nothing more.
 ## Dependencies
 
 `ureq` (rustls), `serde`, `serde_json` (raw_value), `crossterm`,
-`unicode-width`, `anyhow`.
+`unicode-width`, `anyhow`, `signal-hook` (already pulled in by crossterm).
 
 ## Phases
 
@@ -66,6 +66,32 @@ UI, and nothing more.
    edits, plan, skip permissions); `/rename`, `-r`, `--sessions`; `#note`
    memory and `/memory`; `--sandbox` with bubblewrap and `bench/sandbox.sh`;
    logo and README. Done.
+
+8. **Agent features.** Background bash and the `jobs` tool (watch with
+   `wait` + `until`), job-finished notices; parallel tool calls; subagents
+   (`agent` tool, own context and shell, can't nest or ask questions);
+   `ask_user` questions with options; `todo` list; skills in Claude Code's
+   format; MCP over stdio (local) and through the API connector (remote);
+   auto mode with a Haiku reviewer; `!cmd` shell. Done.
+9. **Resources.** Redraw only when the picture changes; breathing status dot
+   at ~3 frames/s; context `used/window` in the footer; `/stats` from /proc;
+   `bench/cpu.sh` and `bench/idle.py`; clean exit on SIGINT/SIGTERM/SIGHUP
+   that stops every child process. Done.
+
+## Next: benchmarking (needs an API key)
+
+- Task suite in `bench/tasks/`: small repos, a prompt and a `check.sh` each
+- Runner: each task in a fresh sandboxed copy, records pass/fail, tokens,
+  cost, time, peak memory
+- Same runner for Claude Code and pi, then all three inside the
+  0.1 CPU / 64 MB box
+- Terminal-Bench run once the suite is stable
+
+## Open questions to verify against the real API
+
+- Dropping messages before the newest compaction block, to shrink RAM and
+  request size in very long sessions
+- Remote MCP through the connector, end to end
 
 ## Browser / WASM
 
@@ -89,8 +115,6 @@ and doesn't help bash either, since WASI can't start processes.
 
 - Split I/O behind traits (step one toward a browser build)
 - macOS sandbox (sandbox-exec)
-- MCP client (stdio)
-- Subagents
 - Syntax highlighting in code blocks
 - Persisting "always allow" answers to the project config
 

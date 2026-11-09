@@ -5,15 +5,16 @@
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
-  A small coding agent for the terminal, in one 2.5 MB binary.<br>
+  A small coding agent for the terminal, in one 2.8 MB binary.<br>
   It runs in 0.1 CPU and 64 MB of RAM.
 </p>
 
 ---
 
-claude-jr talks to Claude, reads and edits your files, and runs commands, asking
-before anything changes. It's a minimal take on Claude Code: four tools, a
-terminal UI, no runtime, nothing to install besides the binary.
+claude-jr talks to Claude, reads and edits your files, and runs commands,
+asking before anything changes. It has what you'd expect from a coding agent
+(subagents, background jobs, skills, MCP, an auto-approve mode, a sandbox)
+without a runtime: no Node, no Python, no async framework.
 
 ```
 > add a --verbose flag to the cli
@@ -39,11 +40,12 @@ Static x86_64 build, measured with the scripts in [`bench/`](bench):
 
 | | |
 |---|---|
-| Binary | 2.5 MB, static |
+| Binary | 2.8 MB, static |
 | Startup to first frame | 3 ms |
-| Memory when idle | 1.4 MB |
+| Memory when idle | 1.7 MB |
 | CPU when idle | 0 |
-| Memory after 60 tool calls (2.4 MB of history) | 6.3 MB |
+| Memory after 60 tool calls (2.4 MB of history) | 4.1 MB |
+| CPU per tool call (claude-jr's own work) | ~5 ms |
 | Whole container at 0.1 CPU / 64 MB | 10 MB peak |
 
 ## Install
@@ -87,24 +89,86 @@ claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 |---|---|
 | `/rename NAME` | name this conversation |
 | `/model NAME` | switch model |
-| `/memory` | show loaded instruction files |
+| `/skills`, `/mcp` | what's loaded |
+| `/memory` | instruction files in use |
+| `/stats` | memory and CPU of claude-jr and everything it started |
 | `/cost` | tokens and spend so far |
 | `/clear` | start over |
+| `/<skill> args` | run a skill |
 | `#some note` | save a note to `./AGENTS.md` |
+| `!command` | run a command yourself; the agent sees the output |
 
 ## Modes
 
 Shift-tab cycles through them; the current one shows under the input box.
 
-| Mode | write / edit | bash |
+| Mode | edits | commands |
 |---|---|---|
-| normal | asks | asks |
-| accept edits | runs | asks |
-| plan | refused; the model is told to plan instead | asks |
-| skip permissions | runs | runs |
+| normal | ask | ask |
+| accept edits | run | ask |
+| plan | refused; the model is told to plan instead | ask |
+| auto | run inside the project | a small model (Haiku) reviews each one: routine ones run, risky ones ask you, with the reason |
+| skip permissions | run | run |
 
 When it asks: `y` yes, `a` always for this session, `n` no. `-y` starts in
 skip-permissions mode. With `-p`, anything that would ask is refused.
+
+Auto mode costs a fraction of a cent per reviewed command. It blocks things
+like `git push`, deleting outside the project, `sudo`, and sending data over
+the network unless your request plausibly needs them.
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `read`, `write`, `edit` | files; edits must match exactly once, and a file must be read before it's changed |
+| `bash` | commands; `cd` carries over; `background: true` for servers, watchers and long builds |
+| `jobs` | list, read, wait on or kill background jobs; `wait` can stop as soon as output contains some text ("Listening on") |
+| `agent` | a subagent with its own context for a self-contained task; several run in parallel |
+| `ask_user` | the model asks you something, with options you pick by number |
+| `todo` | a task list for longer work, shown as it changes |
+| `skill` | loads a skill's instructions |
+| MCP tools | whatever your MCP servers provide |
+
+Reads, subagents, skills and MCP calls in the same reply run at the same time.
+When a background job ends, you see a notice and the model is told with your
+next message.
+
+## Skills
+
+Same format as Claude Code, so existing skills work. Put them in
+`.claude/skills/<name>/SKILL.md` (project) or `~/.claude/skills/` (yours):
+
+```markdown
+---
+name: release
+description: Cut a release: bump the version, tag, write notes.
+---
+1. ...
+```
+
+Only names and descriptions are sent up front. The model loads a skill when a
+task matches it, or you run it with `/release`.
+
+## MCP
+
+`.mcp.json` (Claude Code's format) or `"mcp_servers"` in the config:
+
+```json
+{
+  "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "linear": { "url": "https://mcp.linear.app/mcp", "headers": { "Authorization": "Bearer ${LINEAR_TOKEN}" } }
+  }
+}
+```
+
+- **Local servers** (`command`) run as their own processes and talk JSON-RPC
+  over stdin/stdout. claude-jr adds one small thread per server; the server's
+  own memory is separate, and `/stats` shows it.
+- **Remote servers** (`url`) are handed to the API's MCP connector, so
+  Anthropic calls them and they cost nothing locally. The URL must be
+  reachable from the internet.
 
 ## Sandbox
 
@@ -127,17 +191,22 @@ without risking anything, use a throwaway worktree:
 git worktree add /tmp/try && cd /tmp/try && claude-jr --sandbox
 ```
 
-Combine it with skip-permissions mode and the agent can work without asking,
-but only inside that directory. Linux only for now.
+Linux only for now.
 
 ## Memory and sessions
 
+- **In RAM**: only the current conversation, kept as the exact JSON text sent
+  to the API. Requests are streamed straight from it, so it's never copied.
+  Tool output is cut to 50 KB (start and end) before it's stored.
+- **Context**: the footer shows `used/window` tokens. Near the limit the API
+  compacts older turns on its side.
+- **On disk**: `~/.local/share/claude-jr/sessions/<directory>/`, one message
+  per line, only ever appended to. `--sessions` lists them.
 - **Instructions**: `AGENTS.md` or `CLAUDE.md` in the current directory, its
-  parents, and `~/.config/claude-jr/` go into the system prompt.
-  `#some note` appends to `./AGENTS.md` and the model sees it right away.
-- **Conversations** are saved as JSONL under `~/.local/share/claude-jr/sessions/<directory>/`,
-  one message per line, exactly as sent to the API. `--sessions` lists them.
-- **Long conversations** are compacted on the server when they get big.
+  parents, and `~/.config/claude-jr/`. `#note` appends to `./AGENTS.md`.
+
+When claude-jr exits, by quitting, a signal or closing the terminal, it stops
+every command, background job and MCP server it started.
 
 ## Config
 
@@ -147,68 +216,80 @@ but only inside that directory. Linux only for now.
 {
   "model": "claude-sonnet-5-5",
   "effort": "high",
+  "auto_model": "claude-haiku-5-5",
   "allow": ["bash:cargo *", "bash:git status", "edit"],
-  "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": [] }
+  "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": [] },
+  "mcp_servers": {}
 }
 ```
 
 `allow` rules skip the prompt: `tool` for every call, or `tool:pattern` where
-`*` matches anything. A command with `;`, `&&`, `|`, `$(...)` or redirects
-only matches a rule that spells it out exactly, so `cargo *` can't approve
-`cargo test; rm -rf ~`.
+`*` matches anything; `mcp__server` covers all of a server's tools. A command
+with `;`, `&&`, `|`, `$(...)` or redirects only matches a rule that spells it
+out exactly, so `cargo *` can't approve `cargo test; rm -rf ~`.
 
 ## How it works
 
 ```
  key reader ─┐
              ├─> UI thread ── commands ──> agent thread ──> Claude API
- agent ──────┘   (draws)    <── events ───  (runs tools)
+ agent ──────┘   (draws)    <── events ───  (runs tools; subagents and
+                                             parallel calls on more threads)
 ```
 
-- **No async runtime.** Three threads and channels. The UI blocks on one
-  channel, so it uses no CPU while you think.
+- **No async runtime.** Plain threads and channels. The UI blocks on one
+  channel, so it uses no CPU while you think, and it only writes to the
+  terminal when the picture changed.
 - **Messages are stored as the JSON text that goes over the wire.** A request
-  is streamed straight from them, so the history is never copied, and the
-  session file is the same text.
+  is streamed straight from them and the session file is the same text.
 - **The history only grows.** That keeps the prompt cache warm and the model's
-  earlier reasoning valid. The system prompt is fixed per session; mode
-  changes and notes go into the next user message instead.
+  earlier reasoning valid. The system prompt and tool list are fixed per
+  session; mode changes, notes and job notices go into the next user message.
 - **The UI writes finished lines once** into normal terminal scrollback and
-  redraws only the few lines at the bottom, so scrolling and copying work as
-  usual.
+  redraws only the few lines at the bottom.
 
 ```
 src/
-  main.rs        args, config, start
-  agent.rs       conversation, tool loop, modes, permissions
-  api.rs         requests, streaming, retries, per-model features, prices
-  tools.rs       read, write, edit, bash
-  prompt.rs      system prompt, AGENTS.md, notes
-  session.rs     saved conversations
-  sandbox.rs     bubblewrap
-  permission.rs  allow rules
-  config.rs      config files
-  print.rs       -p output
-  ui/            terminal UI: loop, drawing, input, markdown, wrapping
+  main.rs         args, config, start
+  agent/          conversation, tool loop, subagents, modes and approval
+  tools/          read/write/edit, bash and jobs, todo, skills, MCP client
+  api.rs          requests, streaming, retries, per-model features, prices
+  prompt.rs       system prompt, AGENTS.md, notes
+  session.rs      saved conversations
+  sandbox.rs      bubblewrap
+  signals.rs      clean exit on signals
+  permission.rs   allow rules
+  config.rs       config files
+  print.rs        -p output
+  ui/             terminal UI: loop, drawing, input, markdown, /stats
 bench/
-  mock.py        fake API for tests and benchmarks
-  mem.sh         long session; fails above 16 MB
-  box.sh         run in a 0.1 CPU / 64 MB container
-  sandbox.sh     check the sandbox
+  mock.py         fake API for tests and benchmarks
+  mem.sh          long session; fails above 16 MB
+  cpu.sh          idle and busy CPU
+  box.sh          run in a 0.1 CPU / 64 MB container
+  sandbox.sh      check the sandbox
 ```
+
+## Measuring it yourself
+
+| What | How |
+|---|---|
+| Inside the app | `/stats` |
+| Idle and busy CPU, memory | `bench/cpu.sh` |
+| Memory budget over a long session | `bench/mem.sh` |
+| In a 0.1 CPU / 64 MB box | `bench/box.sh` |
+| A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |
+| One prompt | `/usr/bin/time -v claude-jr -p "..."` |
+
+None of the scripts need an API key; they run against `bench/mock.py`.
 
 ## Development
 
 ```sh
-cargo test            # unit tests
-bench/mem.sh          # memory budget
-bench/sandbox.sh      # sandbox check
-bench/box.sh          # container run (needs docker and the static build)
+cargo test
+bench/mem.sh && bench/cpu.sh && bench/sandbox.sh
 ```
-
-None of these need an API key; they run against `bench/mock.py`.
 
 ## Not included
 
-Other providers, MCP, plugins, hooks, subagents, web tools, IDE integration,
-Windows.
+Other providers, plugins, hooks, web tools, IDE integration, Windows.
