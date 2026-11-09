@@ -35,6 +35,7 @@ const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
 const HELP: &str = "/clear          start a new conversation
 /model [name]   show or change the model
+/effort [level] low, medium, high, xhigh, max, or default
 /rename [name]  name this session (resume with claude-jr -r NAME)
 /memory         instruction files in use
 /skills         available skills (run one with /name)
@@ -58,6 +59,7 @@ enum Msg {
 pub fn run(cfg: agent::Config) -> io::Result<()> {
     term::restore_on_panic();
     let model = cfg.model.clone();
+    let effort = cfg.effort.clone();
     let (tx, rx) = mpsc::channel();
     let to_ui = tx.clone();
     let agent = agent::spawn(cfg, move |e| {
@@ -75,6 +77,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
     });
 
     let mut app = App::new(agent, model);
+    app.effort = effort;
     app.header();
     // As if the last frame were long ago, so the first one draws at once.
     let mut last_draw = Instant::now().checked_sub(FRAME).unwrap_or_else(Instant::now);
@@ -197,6 +200,8 @@ struct App {
     mcp: Vec<String>,
     /// Whether the agent has an API key (from the environment or /login).
     has_key: bool,
+    /// Effort level chosen with /effort or --effort; None is the model's default.
+    effort: Option<String>,
     started: Instant,
     quit_armed: Option<Instant>,
     quit: bool,
@@ -223,6 +228,7 @@ impl App {
             skills: Vec::new(),
             mcp: Vec::new(),
             has_key: true,
+            effort: None,
             started: Instant::now(),
             quit_armed: None,
             quit: false,
@@ -624,6 +630,30 @@ impl App {
         }
     }
 
+    /// /effort: how hard the model thinks. The API's default for the model is
+    /// used until one is picked. Changing it mid-conversation means the next
+    /// request misses the prompt cache once.
+    fn set_effort(&mut self, arg: &str) {
+        const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+        match arg {
+            "" => {
+                let now = self.effort.as_deref().unwrap_or("the model's default");
+                self.note(&format!("Effort: {now}. Choose with /effort {} or default.", LEVELS.join("|")), "");
+            }
+            "default" => {
+                self.effort = None;
+                let _ = self.agent.commands.send(Command::Effort(None));
+                self.note("Effort set to the model's default.", DIM);
+            }
+            level if LEVELS.contains(&level) => {
+                self.effort = Some(level.to_string());
+                let _ = self.agent.commands.send(Command::Effort(self.effort.clone()));
+                self.note(&format!("Effort set to {level}."), DIM);
+            }
+            other => self.note(&format!("Unknown effort \"{other}\". Use {} or default.", LEVELS.join(", ")), RED),
+        }
+    }
+
     /// Saves the key typed into the key prompt and hands it to the agent.
     fn save_key(&mut self) {
         let key = self.input.take_secret().trim().to_string();
@@ -763,6 +793,7 @@ impl App {
                 self.note(&msg, "");
             }
             "model" if arg.is_empty() => self.note(&format!("Model: {}", self.model), ""),
+            "effort" => self.set_effort(arg),
             "model" => {
                 self.model = arg.to_string();
                 let _ = self.agent.commands.send(Command::Model(self.model.clone()));
@@ -891,7 +922,10 @@ impl App {
         if let Some(n) = &self.name {
             right.push(n.clone());
         }
-        right.push(self.model.clone());
+        right.push(match &self.effort {
+            Some(e) => format!("{} {e}", self.model),
+            None => self.model.clone(),
+        });
         right.push(format!("{}/{}", tokens(self.context), tokens(window)));
         right.push(format!("${:.2}", self.cost));
         let jobs = self.agent.tools.get().map_or(0, |t| t.running_jobs());

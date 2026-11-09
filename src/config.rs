@@ -24,6 +24,8 @@ pub struct Config {
     pub allow: Vec<String>,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// Set to false to turn off Anthropic's web search and fetch tools.
+    pub web_tools: Option<bool>,
     /// MCP servers, in the same shape as .mcp.json's "mcpServers".
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, ServerConfig>,
@@ -52,6 +54,7 @@ impl Config {
             cfg.model = file.model.or(cfg.model);
             cfg.effort = file.effort.or(cfg.effort);
             cfg.auto_model = file.auto_model.or(cfg.auto_model);
+            cfg.web_tools = file.web_tools.or(cfg.web_tools);
             cfg.mcp_servers.extend(file.mcp_servers);
             cfg.allow.extend(file.allow);
             cfg.sandbox.enabled |= file.sandbox.enabled;

@@ -125,6 +125,7 @@ fn run() -> Result<ExitCode, String> {
         resume: args.resume,
         auto_model: file.auto_model.unwrap_or_else(|| "claude-haiku-5-5".into()),
         mcp: file.mcp_servers,
+        web: file.web_tools.unwrap_or(true),
         interactive,
     };
 

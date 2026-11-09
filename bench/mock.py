@@ -15,7 +15,7 @@ ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
 OUTPUT_KB = int(os.environ.get("MOCK_OUTPUT_KB", "1"))
 LOG = os.environ.get("MOCK_LOG")
 CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
-SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench"
+SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web"
 TEXT_CHARS = int(os.environ.get("MOCK_TEXT_CHARS", "2000"))  # "bench": streamed text per reply
 DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, like a real stream
 
@@ -117,6 +117,17 @@ def bench(body, done, usage):
     return reply(blocks, "end_turn", usage)
 
 
+def web(usage):
+    """What a reply looks like after Anthropic ran a web search on its side."""
+    results = [{"type": "web_search_result", "url": f"https://example.com/{i}", "title": f"Result {i}",
+                "encrypted_content": "x"} for i in range(3)]
+    return reply([
+        ({"type": "server_tool_use", "id": "srv1", "name": "web_search", "input": {"query": "vite config"}}, []),
+        ({"type": "web_search_tool_result", "tool_use_id": "srv1", "content": results}, []),
+        ({"type": "text", "text": ""}, [{"type": "text_delta", "text": "Vite reads vite.config.ts.\n"}]),
+    ], "end_turn", usage)
+
+
 def as_message(events):
     """Turns a streamed reply back into one JSON message, for stream: false."""
     content, stop = [], "end_turn"
@@ -172,6 +183,8 @@ class Handler(BaseHTTPRequestHandler):
         usage = {"input_tokens": 50, "cache_read_input_tokens": len(raw) // 4}
         if SCENARIO == "features":
             events = features(body, done, usage)
+        elif SCENARIO == "web":
+            events = web(usage)
         elif SCENARIO == "bench":
             # Count results, not messages: some agents put several rounds'
             # results in one message.

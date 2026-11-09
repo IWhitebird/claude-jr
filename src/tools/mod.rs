@@ -107,7 +107,8 @@ impl Tools {
 
     /// Tool definitions for the API, serialized once per session. Subagents
     /// don't get `agent` (no nesting) or `ask_user` (they can't reach the user).
-    pub fn definitions(&self, main: bool) -> Box<RawValue> {
+    /// `web` adds Anthropic's web search and fetch, which run on their side.
+    pub fn definitions(&self, main: bool, web: bool) -> Box<RawValue> {
         let mut defs = vec![fs::READ.clone(), fs::WRITE.clone(), fs::EDIT.clone(), bash::BASH.clone()];
         defs.extend([bash::JOBS.clone(), todo::TODO.clone()]);
         if main {
@@ -117,10 +118,14 @@ impl Tools {
             defs.push(skill::definition(&self.skills));
         }
         defs.extend(self.mcp.definitions());
+        if web {
+            defs.push(def(json!({ "type": "web_search_20260209", "name": "web_search", "max_uses": 5 })));
+            defs.push(def(json!({ "type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 5 })));
+        }
         let mut defs: Vec<Value> =
             defs.iter().map(|d| serde_json::from_str(d.get()).expect("definitions are valid JSON")).collect();
         // Stream big inputs (file contents) as they're written. Only for our own
-        // tools; remote MCP toolsets don't take the field.
+        // tools; server tools and remote MCP toolsets don't take the field.
         for d in defs.iter_mut().filter(|d| d.get("input_schema").is_some()) {
             d["eager_input_streaming"] = json!(true);
         }

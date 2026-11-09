@@ -37,6 +37,8 @@ pub struct Config {
     pub allow: Vec<String>,
     pub resume: Option<Pick>,
     pub mcp: BTreeMap<String, ServerConfig>,
+    /// Offer Anthropic's web search and fetch tools (on models that have them).
+    pub web: bool,
     /// Whether someone is there to answer questions and approvals.
     pub interactive: bool,
 }
@@ -53,6 +55,8 @@ pub enum Command {
     /// Start a new conversation.
     Clear,
     Model(String),
+    /// low, medium, high, xhigh or max; None for the model's default.
+    Effort(Option<String>),
     Rename(String),
     /// A note the user just saved to memory; the model sees it with the next message.
     Remember(String),
@@ -176,6 +180,7 @@ impl Agent {
         for e in errors {
             emit(Event::Notice(e));
         }
+        let web = cfg.web && crate::api::Caps::of(&cfg.model).web;
         let root = std::env::current_dir().unwrap_or_else(|_| ".".into());
         let tools = Arc::new(Tools::new(root, skill::discover(), servers));
         let notify = emit.clone();
@@ -185,7 +190,7 @@ impl Agent {
         let core = Core {
             client: Client::new(cfg.key, cfg.base_url),
             model: Mutex::new(cfg.model),
-            effort: cfg.effort,
+            effort: Mutex::new(cfg.effort),
             auto_model: cfg.auto_model,
             mode,
             rules: Mutex::new(Rules::new(cfg.allow)),
@@ -193,12 +198,12 @@ impl Agent {
             emit,
             interactive: cfg.interactive,
             connector: tools.mcp.connector(),
-            sub_defs: tools.definitions(false),
+            sub_defs: tools.definitions(false, web),
             sub_system: OnceLock::new(),
             request: Mutex::default(),
         };
         let mut agent = Agent {
-            defs: tools.definitions(true),
+            defs: tools.definitions(true, web),
             core: Arc::new(core),
             tools,
             system,
@@ -236,6 +241,7 @@ impl Agent {
                     self.told_plan = false;
                 }
                 Command::Model(m) => *self.core.model.lock().unwrap() = m,
+                Command::Effort(e) => *self.core.effort.lock().unwrap() = e,
                 Command::Rename(name) => self.session.rename(&self.system, &name),
                 Command::SetKey(key) => self.core.client.set_key(key),
                 Command::Remember(note) => {

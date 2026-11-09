@@ -27,6 +27,8 @@ pub struct Caps {
     pub compact: bool,
     /// Context window in tokens.
     pub window: u64,
+    /// Anthropic's web search and fetch tools (the 2026-02-09 versions).
+    pub web: bool,
 }
 
 impl Caps {
@@ -40,7 +42,18 @@ impl Caps {
             _ => (false, false, false),
         };
         let window = if model.starts_with("claude-haiku-4") { 200_000 } else { 1_000_000 };
-        Caps { fallback, updates, compact, window }
+        let web = matches!(
+            model,
+            "claude-opus-5-5"
+                | "claude-opus-5"
+                | "claude-opus-4-8"
+                | "claude-opus-4-7"
+                | "claude-opus-4-6"
+                | "claude-sonnet-5-5"
+                | "claude-sonnet-5"
+                | "claude-sonnet-4-6"
+        );
+        Caps { fallback, updates, compact, window, web }
     }
 
     fn betas(self) -> String {
@@ -147,6 +160,9 @@ pub enum Chunk<'a> {
     ToolStart(&'a str),
     /// More of a tool call's input arrived (this many bytes).
     ToolInput(usize),
+    /// A finished block from a tool that ran on Anthropic's side (web search
+    /// and fetch, remote MCP): the call, then its result.
+    ServerTool(&'a Value),
     BlockEnd,
 }
 
@@ -343,7 +359,7 @@ fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) ->
             }
             "content_block_start" => {
                 let block = ev["content_block"].take();
-                if block["type"] == "tool_use" || block["type"] == "mcp_tool_use" {
+                if matches!(block["type"].as_str(), Some("tool_use" | "mcp_tool_use" | "server_tool_use")) {
                     on(Chunk::ToolStart(block["name"].as_str().unwrap_or("")));
                 }
                 content.push(block);
@@ -366,12 +382,16 @@ fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) ->
                 merge(block, delta);
             }
             "content_block_stop" => {
-                if let Some(block) = content.last_mut()
-                    && !json_buf.is_empty()
-                {
-                    block["input"] =
-                        serde_json::from_str(&json_buf).unwrap_or_else(|e| json!({ "_invalid_json": e.to_string() }));
-                    json_buf.clear();
+                if let Some(block) = content.last_mut() {
+                    if !json_buf.is_empty() {
+                        block["input"] = serde_json::from_str(&json_buf)
+                            .unwrap_or_else(|e| json!({ "_invalid_json": e.to_string() }));
+                        json_buf.clear();
+                    }
+                    let kind = block["type"].as_str().unwrap_or("");
+                    if kind == "server_tool_use" || kind == "mcp_tool_use" || kind.ends_with("_tool_result") {
+                        on(Chunk::ServerTool(block));
+                    }
                 }
                 on(Chunk::BlockEnd);
             }
@@ -443,7 +463,7 @@ data: {"type":"message_stop"}
             Chunk::Text(t) => text.push_str(t),
             Chunk::Thinking(t) => thinking.push_str(t),
             Chunk::ToolStart(n) => tools.push(n.to_string()),
-            Chunk::ToolInput(_) => {}
+            Chunk::ToolInput(_) | Chunk::ServerTool(_) => {}
             Chunk::BlockEnd => ends += 1,
         })
         .unwrap();

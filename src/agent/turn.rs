@@ -19,7 +19,8 @@ use std::thread;
 pub struct Core {
     pub client: Client,
     pub model: Mutex<String>,
-    pub effort: Option<String>,
+    /// None: the model's own default.
+    pub effort: Mutex<Option<String>>,
     pub auto_model: String,
     pub mode: Arc<SharedMode>,
     pub rules: Mutex<Rules>,
@@ -55,16 +56,18 @@ impl Core {
     pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>) -> Event {
         loop {
             let model = self.model.lock().unwrap().clone();
-            let mut req = Request::new(&model, self.effort.as_deref(), ctx.system, ctx.defs);
+            let effort = self.effort.lock().unwrap().clone();
+            let mut req = Request::new(&model, effort.as_deref(), ctx.system, ctx.defs);
             req.mcp_servers = self.connector.as_deref();
-            let result = self.client.stream(&req, messages, &self.cancel, |c| {
-                (ctx.emit)(match c {
+            let result = self.client.stream(&req, messages, &self.cancel, |c| match c {
+                Chunk::ServerTool(block) => show_server_tool(ctx, block),
+                c => (ctx.emit)(match c {
                     Chunk::Text(t) => Event::Text(t.to_string()),
                     Chunk::Thinking(t) => Event::Thinking(t.to_string()),
                     Chunk::ToolStart(n) => Event::ToolStart(n.to_string()),
                     Chunk::ToolInput(n) => Event::ToolInput(n),
-                    Chunk::BlockEnd => Event::BlockEnd,
-                })
+                    _ => Event::BlockEnd,
+                }),
             });
 
             let reply = match result {
@@ -77,7 +80,6 @@ impl Core {
             if reply.content.is_empty() {
                 return Event::Error(format!("empty reply (stop reason: {})", reply.stop_reason));
             }
-            show_remote_mcp(ctx, &reply.content);
 
             let calls: Vec<Call> = reply
                 .content
@@ -240,26 +242,45 @@ pub fn job_notes(tools: &Tools) -> Option<String> {
     Some(format!("<system-reminder>{} Use the jobs tool to read their output.</system-reminder>", lines.join(" ")))
 }
 
-/// Remote MCP calls happen on Anthropic's side; show them like local ones.
-fn show_remote_mcp(ctx: &Ctx, content: &[Value]) {
-    for b in content {
-        match b["type"].as_str() {
-            Some("mcp_tool_use") => {
-                let label = format!("{}: {} (remote)", b["server_name"].as_str().unwrap_or("mcp"), b["name"]);
-                (ctx.emit)(Event::Tool { label: label.replace('"', ""), diff: None });
+/// Tools that run on Anthropic's side (web search and fetch, remote MCP)
+/// arrive as finished blocks in the stream; show them like local ones.
+fn show_server_tool(ctx: &Ctx, b: &Value) {
+    {
+        let kind = b["type"].as_str().unwrap_or("");
+        let label = match kind {
+            "server_tool_use" if b["name"] == "web_search" => {
+                format!("Search({})", b["input"]["query"].as_str().unwrap_or(""))
             }
-            Some("mcp_tool_result") => {
-                let text: String = b["content"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|p| p["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let out = if b["is_error"] == true { Err(text) } else { Ok(text) };
-                (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary("mcp", &out) });
+            "server_tool_use" if b["name"] == "web_fetch" => {
+                format!("Fetch({})", b["input"]["url"].as_str().unwrap_or(""))
             }
-            _ => {}
+            "mcp_tool_use" => {
+                format!("{}: {} (remote)", b["server_name"].as_str().unwrap_or("mcp"), b["name"].as_str().unwrap_or(""))
+            }
+            _ => String::new(),
+        };
+        if !label.is_empty() {
+            return (ctx.emit)(Event::Tool { label, diff: None });
         }
+        let out = match kind {
+            // A list of results on success, an object with error_code on failure.
+            "web_search_tool_result" => match &b["content"] {
+                Value::Array(results) => Ok(format!("{} results", results.len())),
+                e => Err(format!("search failed: {}", e["error_code"].as_str().unwrap_or("error"))),
+            },
+            "web_fetch_tool_result" => match b["content"]["type"].as_str() {
+                Some("web_fetch_result") => {
+                    Ok(format!("Fetched {}", b["content"]["url"].as_str().unwrap_or("the page")))
+                }
+                _ => Err(format!("fetch failed: {}", b["content"]["error_code"].as_str().unwrap_or("error"))),
+            },
+            "mcp_tool_result" => {
+                let text: Vec<&str> =
+                    b["content"].as_array().into_iter().flatten().filter_map(|p| p["text"].as_str()).collect();
+                if b["is_error"] == true { Err(text.join("\n")) } else { Ok(text.join("\n")) }
+            }
+            _ => return,
+        };
+        (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary("server", &out) });
     }
 }
