@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const VERSION: &str = "2026-10-21";
 const BETA_FALLBACK: &str = "server-side-fallback-2026-07-01";
@@ -15,6 +15,11 @@ const BETA_UPDATES: &str = "thinking-display-updates-2026-08-18";
 const BETA_COMPACT: &str = "compact-2026-01-12";
 const BETA_MCP: &str = "mcp-client-2025-11-20";
 const MAX_ATTEMPTS: u32 = 5;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// One blocking read gives up after this, so the cancel flag is checked often.
+const READ_TIMEOUT: Duration = Duration::from_secs(3);
+/// A stream with no bytes at all (not even pings) for this long is dead.
+const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
 /// What a model supports beyond the basic Messages API.
 #[derive(Clone, Copy)]
@@ -252,17 +257,24 @@ pub struct Client {
     url: String,
     /// Empty until the user logs in. Behind a lock so /login applies at once.
     key: std::sync::RwLock<String>,
+    silence: Duration,
 }
 
 impl Client {
     pub fn new(key: String, base: Option<String>) -> Self {
         let http = ureq::Agent::config_builder()
             .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_per_read(Some(READ_TIMEOUT))
             .build()
             .into();
         let base = base.unwrap_or_else(|| "https://api.anthropic.com".into());
-        Client { http, url: format!("{}/v1/messages", base.trim_end_matches('/')), key: std::sync::RwLock::new(key) }
+        Client {
+            http,
+            url: format!("{}/v1/messages", base.trim_end_matches('/')),
+            key: std::sync::RwLock::new(key),
+            silence: SILENCE_LIMIT,
+        }
     }
 
     pub fn set_key(&self, key: String) {
@@ -317,7 +329,7 @@ impl Client {
             let status = res.status().as_u16();
             if status == 200 {
                 let reader = BufReader::new(res.body_mut().as_reader());
-                match read_sse(reader, cancel, &mut on) {
+                match read_sse(reader, cancel, self.silence, &mut on) {
                     Err(e) if e.is::<Retryable>() && attempt < MAX_ATTEMPTS => {
                         wait(backoff(attempt, None), cancel)?;
                         continue;
@@ -437,17 +449,52 @@ fn error_message(body: &str) -> String {
 /// Builds the assistant content blocks from SSE events. Blocks are kept exactly
 /// as sent (thinking signatures, compaction blocks, unknown types), because they
 /// must be passed back unchanged.
-fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) -> Result<Reply> {
+fn read_sse(mut r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut impl FnMut(Chunk)) -> Result<Reply> {
+    let mut emitted = false;
+    let mut on = |c: Chunk| {
+        emitted = true;
+        on(c)
+    };
     let mut content: Vec<Value> = Vec::new();
     let mut json_buf = String::new();
     let mut stop_reason = String::new();
     let mut usage = Usage::default();
 
-    for line in r.lines() {
+    let mut raw = Vec::new();
+    let mut last_byte = Instant::now();
+    loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(Cancelled.into());
         }
-        let line = line?;
+        // `raw` keeps a partly read line across read timeouts.
+        let before = raw.len();
+        match r.read_until(b'\n', &mut raw) {
+            Ok(0) if raw.is_empty() => break,
+            Ok(_) => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
+                if raw.len() != before {
+                    last_byte = Instant::now();
+                }
+                if last_byte.elapsed() < silence {
+                    continue;
+                }
+                let msg = format!("the stream went silent for {}s", silence.as_secs());
+                return Err(if emitted { anyhow!(msg) } else { Retryable(msg).into() });
+            }
+            Err(e) => {
+                let msg = format!("the connection broke: {e}");
+                return Err(if emitted { anyhow!(msg) } else { Retryable(msg).into() });
+            }
+        }
+        last_byte = Instant::now();
+        if raw.last() != Some(&b'\n') {
+            // end of stream in the middle of a line
+            raw.clear();
+            break;
+        }
+        let line = String::from_utf8_lossy(&raw).into_owned();
+        raw.clear();
+        let line = line.trim_end_matches(['\n', '\r']);
         let Some(data) = line.strip_prefix("data:") else { continue };
         let mut ev: Value = serde_json::from_str(data.trim_start())?;
 
@@ -560,7 +607,7 @@ data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"outpu
 data: {"type":"message_stop"}
 "#;
         let (mut text, mut thinking, mut tools, mut ends) = (String::new(), String::new(), Vec::new(), 0);
-        let reply = read_sse(sse.as_bytes(), &AtomicBool::new(false), &mut |c| match c {
+        let reply = read_sse(sse.as_bytes(), &AtomicBool::new(false), SILENCE_LIMIT, &mut |c| match c {
             Chunk::Text(t) => text.push_str(t),
             Chunk::Thinking(t) => thinking.push_str(t),
             Chunk::ToolStart(n) => tools.push(n.to_string()),
@@ -606,12 +653,15 @@ data: {"type":"message_stop"}
     #[test]
     fn errors_before_any_content_can_be_retried() {
         let overloaded = "data: {\"type\":\"error\",\"error\":{\"message\":\"Overloaded\"}}\n";
-        let err = read_sse(overloaded.as_bytes(), &AtomicBool::new(false), &mut |_| {}).err().expect("an error");
+        let err = read_sse(overloaded.as_bytes(), &AtomicBool::new(false), SILENCE_LIMIT, &mut |_| {})
+            .err()
+            .expect("an error");
         assert!(err.is::<Retryable>());
         let late =
             "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n"
                 .to_string() + overloaded;
-        let err = read_sse(late.as_bytes(), &AtomicBool::new(false), &mut |_| {}).err().expect("an error");
+        let err =
+            read_sse(late.as_bytes(), &AtomicBool::new(false), SILENCE_LIMIT, &mut |_| {}).err().expect("an error");
         assert!(!err.is::<Retryable>(), "text was already shown");
     }
 
@@ -621,5 +671,89 @@ data: {"type":"message_stop"}
         assert_eq!(Caps::of("something-else").betas(), "");
         let u = Usage { input_tokens: 1_000_000, output_tokens: 1_000_000, ..Default::default() };
         assert_eq!(cost("claude-opus-5-5", &u), Some(24.0));
+    }
+
+    /// Serves one SSE event, then goes quiet with the connection open.
+    fn stalled_server() -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            let ev = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n";
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
+            s.write_all(format!("{head}{:x}\r\n{ev}\r\n", ev.len()).as_bytes()).unwrap();
+            // hold the socket open until the client hangs up
+            while s.read(&mut buf).map(|n| n > 0).unwrap_or(false) {}
+        });
+        (base, h)
+    }
+
+    #[test]
+    fn cancel_works_while_the_stream_stalls() {
+        let (base, server) = stalled_server();
+        let client = Client::new("k".into(), Some(base));
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new("claude-opus-5-5", None, "", &tools);
+        let cancel = AtomicBool::new(false);
+        let start = Instant::now();
+        let err = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                sleep(Duration::from_millis(500));
+                cancel.store(true, Ordering::Relaxed);
+            });
+            client.stream(&req, &[] as &[&str], &cancel, |_| {}).err().expect("an error")
+        });
+        assert!(err.is::<Cancelled>(), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5), "took {:?}", start.elapsed());
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_silent_stream_times_out_as_retryable() {
+        use std::io::Write;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            s.write_all(b"data: {\"type\":\"ping\"}\n").unwrap();
+            sleep(Duration::from_secs(3));
+        });
+        let sock = std::net::TcpStream::connect(addr).unwrap();
+        sock.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let start = Instant::now();
+        let err = read_sse(BufReader::new(sock), &AtomicBool::new(false), Duration::from_millis(700), &mut |_| {})
+            .err()
+            .expect("an error");
+        assert!(err.is::<Retryable>(), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(3));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_broken_stream_is_retryable_only_before_output() {
+        struct Broken(&'static [u8]);
+        impl std::io::Read for Broken {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() {
+                    return Err(std::io::ErrorKind::ConnectionReset.into());
+                }
+                let n = self.0.len().min(buf.len());
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0 = &self.0[n..];
+                Ok(n)
+            }
+        }
+        let run = |data: &'static [u8]| {
+            read_sse(BufReader::new(Broken(data)), &AtomicBool::new(false), SILENCE_LIMIT, &mut |_| {})
+                .err()
+                .expect("an error")
+        };
+        assert!(run(b"data: {\"type\":\"ping\"}\n").is::<Retryable>());
+        let text = b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"x\"}}\n";
+        assert!(!run(text).is::<Retryable>());
     }
 }
