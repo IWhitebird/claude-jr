@@ -449,14 +449,11 @@ fn resume_by_id_and_unknown_name() {
     assert!(!last.contains("unrelated"), "resumed the right one");
 
     let before = e.requests().len();
-    // An unknown name is not an error: it says so and starts a fresh session.
+    // An unknown name is an error in -p mode: a typo must not lose the conversation.
     let o = e.run(&["-r", "no-such-session", "-p", "fresh-start", "-y"]);
-    ok(&o);
-    assert!(o.err.contains("No saved session named \"no-such-session\" here; starting a new one."), "{}", o.err);
-    let reqs = e.requests();
-    assert!(reqs.len() > before);
-    let first = reqs[before]["messages"].to_string();
-    assert!(first.contains("fresh-start") && !first.contains("the-first-topic"), "{first}");
+    assert_ne!(o.code, 0, "{}", o.err);
+    assert!(o.err.contains("no saved session named \"no-such-session\""), "{}", o.err);
+    assert_eq!(e.requests().len(), before, "nothing was sent");
 }
 
 // ---- project config and trust -----------------------------------------------

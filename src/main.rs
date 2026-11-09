@@ -124,6 +124,12 @@ fn run() -> Result<ExitCode, String> {
     if key.is_empty() && !interactive {
         return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
     }
+    // In a script, a mistyped name must not quietly start a new conversation.
+    if let (false, Some(Pick::Named(name))) = (interactive, &args.resume)
+        && Session::load(&Pick::Named(name.clone())).is_none()
+    {
+        return Err(format!("no saved session named \"{name}\" here (see claudejr --sessions)"));
+    }
     if interactive && !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         return Err("not a terminal; use -p PROMPT for non-interactive use".into());
     }

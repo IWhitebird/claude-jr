@@ -795,6 +795,19 @@ fn the_key_prompt_takes_a_pasted_key() {
 }
 
 #[test]
+fn rewind_works_before_any_file_was_changed() {
+    let world = World::new("rewind-nofiles", &[("MOCK_ROUNDS", "0")]);
+    let mut app = world.start(&["-y"]);
+    app.turn("just a question");
+    app.send("/rewind\r");
+    app.expect("1. just a question");
+    app.send("1");
+    app.expect_all(&["Rewound to before \"just a question\". No files needed restoring;", "> just a question"]);
+    app.send(CTRL_U);
+    app.exit();
+}
+
+#[test]
 fn rewind_and_resume_pick_from_a_list() {
     let world = World::new("rewind", &[("MOCK_ROUNDS", "1")]);
     let demo = world.proj().join("demo.txt");
@@ -999,6 +1012,9 @@ fn images_come_from_the_clipboard_or_a_dragged_file() {
 
     // A dragged file arrives as a pasted path.
     app.send(&format!("and this \x1b[200~{}\x1b[201~\r", shot.display()));
+    app.expect_all(&["Attached ", "Done. Here's what happened:", "ask anything"]);
+    // A message that starts with the path is still a message, not a command.
+    app.send(&format!("\x1b[200~{}\x1b[201~ what is in it\r", shot.display()));
     app.expect_all(&["Attached ", "Done. Here's what happened:", "ask anything"]);
     let stored = std::fs::read_dir(&images).unwrap().flatten().map(|f| f.path());
     assert!(stored.into_iter().any(|p| std::fs::read(p).unwrap().ends_with(b"pixels")), "the dragged image is stored");

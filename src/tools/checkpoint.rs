@@ -53,6 +53,8 @@ fn check(e: &Entry, dir: &Path) -> Result<(), String> {
 /// Writes the index through a temp file in the same folder, then renames it.
 fn write_index(dir: &Path, entries: &[Entry]) -> std::io::Result<()> {
     let lines: String = entries.iter().filter_map(|e| serde_json::to_string(e).ok()).map(|l| l + "\n").collect();
+    // Nothing may have been saved yet (a rewind before any file changed).
+    std::fs::create_dir_all(dir)?;
     let tmp = dir.join("index.jsonl.tmp");
     std::fs::write(&tmp, lines)?;
     std::fs::rename(&tmp, dir.join("index.jsonl"))

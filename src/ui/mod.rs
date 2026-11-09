@@ -111,6 +111,13 @@ fn menu_matches<'a>(input: &str, skills: &'a [String]) -> Vec<(&'a str, &'a str)
     found
 }
 
+/// Whether what follows a leading `/` is a file path (a dragged or pasted
+/// file such as /tmp/shot.png) and not a command: commands have no `/` or `.`
+/// in their name.
+fn starts_with_path(after_slash: &str) -> bool {
+    after_slash.split_whitespace().next().is_some_and(|word| word.contains(['/', '.']))
+}
+
 enum Msg {
     Agent(Event),
     Term(TermEvent),
@@ -982,7 +989,7 @@ impl App {
 
     fn submit(&mut self, text: String) {
         let trimmed = text.trim();
-        if let Some(cmd) = trimmed.strip_prefix('/') {
+        if let Some(cmd) = trimmed.strip_prefix('/').filter(|c| !starts_with_path(c)) {
             return self.command(cmd);
         }
         if let Some(note) = trimmed.strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
@@ -1403,6 +1410,17 @@ fn tokens(n: u64) -> String {
 #[cfg(test)]
 mod guard_tests {
     use super::*;
+
+    #[test]
+    fn a_path_is_not_a_command() {
+        assert!(starts_with_path("tmp/shot.png what is this"));
+        assert!(starts_with_path("home/me/a b.txt"));
+        assert!(starts_with_path("etc/"));
+        assert!(!starts_with_path("model"));
+        assert!(!starts_with_path("model claude-opus-5-5"));
+        assert!(!starts_with_path("kill 2"));
+        assert!(!starts_with_path(""));
+    }
 
     #[test]
     fn slash_lists_matching_commands() {
