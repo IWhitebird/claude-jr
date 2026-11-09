@@ -11,7 +11,7 @@
 use crate::tools::mcp::ServerConfig;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -52,11 +52,14 @@ pub struct SandboxConfig {
 
 impl Config {
     pub fn load() -> Result<Config, String> {
+        Config::load_in(&std::env::current_dir().unwrap_or_default())
+    }
+
+    /// The user's config, then the project's in `dir` if that folder is trusted.
+    fn load_in(dir: &Path) -> Result<Config, String> {
         let mut cfg = Config::default();
-        for path in [config_dir().join("config.json"), PathBuf::from(".claude-jr.json")] {
-            if path.as_os_str() == ".claude-jr.json" && !is_trusted() {
-                continue;
-            }
+        let project = is_trusted_dir(dir).then(|| dir.join(".claude-jr.json"));
+        for path in std::iter::once(config_dir().join("config.json")).chain(project) {
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let file: Config = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             cfg.model = file.model.or(cfg.model);
@@ -81,21 +84,29 @@ fn trusted_file() -> PathBuf {
 
 /// Whichever of the project files that can change settings exist in the current folder.
 pub fn project_files() -> Vec<&'static str> {
-    [".claude-jr.json", ".mcp.json"].into_iter().filter(|f| std::path::Path::new(f).exists()).collect()
+    [".claude-jr.json", ".mcp.json"].into_iter().filter(|f| Path::new(f).exists()).collect()
 }
 
 /// Has the user said to trust the current folder's project files?
 pub fn is_trusted() -> bool {
-    let Ok(dir) = std::env::current_dir().and_then(|d| d.canonicalize()) else { return false };
+    std::env::current_dir().is_ok_and(|d| is_trusted_dir(&d))
+}
+
+fn is_trusted_dir(dir: &Path) -> bool {
+    let Ok(dir) = dir.canonicalize() else { return false };
     let Ok(text) = std::fs::read_to_string(trusted_file()) else { return false };
-    text.lines().any(|l| std::path::Path::new(l) == dir)
+    text.lines().any(|l| Path::new(l) == dir)
 }
 
 /// Adds the current folder to the trusted list.
 pub fn trust() -> Result<(), String> {
+    trust_dir(&std::env::current_dir().map_err(|e| e.to_string())?)
+}
+
+fn trust_dir(dir: &Path) -> Result<(), String> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let dir = std::env::current_dir().and_then(|d| d.canonicalize()).map_err(|e| e.to_string())?;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
     let path = trusted_file();
     let mut f = std::fs::OpenOptions::new()
@@ -104,7 +115,6 @@ pub fn trust() -> Result<(), String> {
         .mode(0o600)
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    f.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     writeln!(f, "{}", dir.display()).map_err(|e| e.to_string())
 }
 
@@ -191,19 +201,15 @@ pub fn delete_api_key() -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    // The current folder is process-wide, so both cases share one test.
     #[test]
     fn project_config_needs_trust() {
         crate::tools::test_home();
-        let old = std::env::current_dir().unwrap();
         let dir = crate::tools::test_dir("trust");
         std::fs::write(dir.join(".claude-jr.json"), r#"{"mode":"bypass"}"#).unwrap();
-        std::env::set_current_dir(&dir).unwrap();
-        assert!(!is_trusted());
-        assert_eq!(Config::load().unwrap().mode, None);
-        trust().unwrap();
-        assert!(is_trusted());
-        assert_eq!(Config::load().unwrap().mode.as_deref(), Some("bypass"));
-        std::env::set_current_dir(old).unwrap();
+        assert!(!is_trusted_dir(&dir));
+        assert_eq!(Config::load_in(&dir).unwrap().mode, None);
+        trust_dir(&dir).unwrap();
+        assert!(is_trusted_dir(&dir));
+        assert_eq!(Config::load_in(&dir).unwrap().mode.as_deref(), Some("bypass"));
     }
 }
