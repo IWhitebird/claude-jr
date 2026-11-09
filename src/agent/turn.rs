@@ -15,6 +15,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
+const TOO_LONG: &str = "the conversation no longer fits in the model's context. Run /compact, then continue.";
+
 /// What the main agent and its subagents share.
 pub struct Core {
     pub client: Client,
@@ -74,6 +76,7 @@ impl Core {
             let reply = match result {
                 Ok(r) => r,
                 Err(e) if e.is::<api::Cancelled>() => return Event::Cancelled,
+                Err(e) if format!("{e}").contains("too long") => return Event::Error(TOO_LONG.into()),
                 Err(e) => return Event::Error(format!("{e:#}")),
             };
             let cost = api::cost(&model, &reply.usage);
@@ -106,6 +109,7 @@ impl Core {
                 return match stop.as_str() {
                     "refusal" => Event::Error("the model declined this request".into()),
                     "max_tokens" => Event::Error("the reply hit the max_tokens limit".into()),
+                    "model_context_window_exceeded" => Event::Error(TOO_LONG.into()),
                     _ => Event::Done,
                 };
             }

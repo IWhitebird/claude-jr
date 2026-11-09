@@ -39,9 +39,15 @@ impl Caps {
             "claude-fable-5" => (false, true, true),
             "claude-haiku-5-5" | "claude-sonnet-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
             | "claude-sonnet-4-6" => (false, false, true),
+            // A newer version than this build knows: assume what its family
+            // has, but leave out the refusal fallback, which is per model and
+            // makes the API reject the request where it isn't supported.
+            m if family(m) == Some("haiku") => (false, false, true),
+            m if family(m).is_some() => (false, true, true),
             _ => (false, false, false),
         };
         let window = if model.starts_with("claude-haiku-4") { 200_000 } else { 1_000_000 };
+        // Known models by name; newer Opus and Sonnet versions by family.
         let web = matches!(
             model,
             "claude-opus-5-5"
@@ -52,7 +58,7 @@ impl Caps {
                 | "claude-sonnet-5-5"
                 | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
-        );
+        ) || matches!(family(model), Some("opus" | "sonnet"));
         Caps { fallback, updates, compact, window, web }
     }
 
@@ -86,7 +92,27 @@ pub fn describe(model: &str) -> String {
     }
 }
 
+/// "opus", "sonnet", "haiku" or "fable" for a Claude 4.6-or-later model id
+/// (Mythos counts as Fable), including versions newer than this build.
+fn family(model: &str) -> Option<&'static str> {
+    let rest = model.strip_prefix("claude-")?;
+    let (name, version) = rest.split_once('-')?;
+    let major: u32 = version.split('-').next()?.parse().ok()?;
+    if major < 5 && !matches!(rest, "opus-4-6" | "opus-4-7" | "opus-4-8" | "sonnet-4-6") {
+        return None;
+    }
+    Some(match name {
+        "opus" => "opus",
+        "sonnet" => "sonnet",
+        "haiku" => "haiku",
+        "fable" | "mythos" => "fable",
+        _ => return None,
+    })
+}
+
 /// Dollars per million tokens: input, output, cache read. Cache writes are 1.25x input.
+/// Unknown newer versions are priced like the latest one this build knows
+/// in their family: an estimate, until the table is updated.
 fn price(model: &str) -> Option<(f64, f64, f64)> {
     Some(match model {
         "claude-opus-5-5" => (4.0, 20.0, 0.20),
@@ -97,7 +123,14 @@ fn price(model: &str) -> Option<(f64, f64, f64)> {
         "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => (5.0, 25.0, 0.50),
         "claude-sonnet-4-6" => (3.0, 15.0, 0.30),
         "claude-haiku-4-5" => (1.0, 5.0, 0.10),
-        _ => return None,
+        m => {
+            return price(match family(m)? {
+                "opus" => "claude-opus-5-5",
+                "sonnet" => "claude-sonnet-5-5",
+                "haiku" => "claude-haiku-5-5",
+                _ => "claude-fable-5-1",
+            });
+        }
     })
 }
 
@@ -190,6 +223,19 @@ pub enum Chunk<'a> {
     BlockEnd,
 }
 
+/// The stream broke before any content arrived (an "overloaded" event, a
+/// dropped connection): safe to send the request again.
+#[derive(Debug)]
+struct Retryable(String);
+
+impl std::fmt::Display for Retryable {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Retryable {}
+
 #[derive(Debug)]
 pub struct Cancelled;
 
@@ -271,7 +317,13 @@ impl Client {
             let status = res.status().as_u16();
             if status == 200 {
                 let reader = BufReader::new(res.body_mut().as_reader());
-                return read_sse(reader, cancel, &mut on);
+                match read_sse(reader, cancel, &mut on) {
+                    Err(e) if e.is::<Retryable>() && attempt < MAX_ATTEMPTS => {
+                        wait(backoff(attempt, None), cancel)?;
+                        continue;
+                    }
+                    result => return result,
+                }
             }
 
             let retry_after =
@@ -429,13 +481,16 @@ fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) ->
             }
             "message_stop" => return Ok(Reply { content, stop_reason, usage }),
             "error" => {
-                let msg = ev["error"]["message"].as_str().unwrap_or("stream error");
-                return Err(anyhow!("API error: {msg}"));
+                let msg = format!("API error: {}", ev["error"]["message"].as_str().unwrap_or("stream error"));
+                return Err(if content.is_empty() { Retryable(msg).into() } else { anyhow!(msg) });
             }
             _ => {}
         }
     }
-    bail!("stream ended early")
+    if content.is_empty() {
+        return Err(Retryable("the stream ended before any reply".into()).into());
+    }
+    bail!("the stream ended early")
 }
 
 /// Applies a delta to its block: strings are appended, anything else replaces.
@@ -513,6 +568,29 @@ data: {"type":"message_stop"}
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["messages"][1]["content"], "yo");
         assert_eq!(v["model"], "m");
+    }
+
+    #[test]
+    fn newer_versions_use_their_family() {
+        let caps = Caps::of("claude-fable-5-2");
+        assert!(caps.updates && caps.compact && !caps.fallback && !caps.web);
+        assert_eq!(cost("claude-fable-5-2", &Usage { input_tokens: 1_000_000, ..Default::default() }), Some(10.0));
+        assert!(Caps::of("claude-sonnet-5-7").web);
+        assert!(!Caps::of("claude-haiku-5-6").updates);
+        assert_eq!(cost("gpt-9", &Usage::default()), None);
+        assert_eq!(family("claude-opus-4-5"), None);
+    }
+
+    #[test]
+    fn errors_before_any_content_can_be_retried() {
+        let overloaded = "data: {\"type\":\"error\",\"error\":{\"message\":\"Overloaded\"}}\n";
+        let err = read_sse(overloaded.as_bytes(), &AtomicBool::new(false), &mut |_| {}).err().expect("an error");
+        assert!(err.is::<Retryable>());
+        let late =
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n"
+                .to_string() + overloaded;
+        let err = read_sse(late.as_bytes(), &AtomicBool::new(false), &mut |_| {}).err().expect("an error");
+        assert!(!err.is::<Retryable>(), "text was already shown");
     }
 
     #[test]
