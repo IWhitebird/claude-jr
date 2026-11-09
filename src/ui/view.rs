@@ -404,7 +404,7 @@ mod tests {
         let mut input = Input::default();
         input.insert(&long);
         let diff_in = Diff { line: 99, old: long.clone(), new: format!("{long}\n{long}") };
-        let names: Vec<(&str, &str)> = vec![("日本語", "tab\tぜんぶ"), ("😀😀", "x"), ("a", &words[0])];
+        let names: Vec<(&str, &str)> = vec![("日本語", "tab\tぜんぶ"), ("😀😀", "x"), ("a", words[0])];
         for cols in [1usize, 2, 5, 10, 20, 40, 80] {
             let mut out = Vec::new();
             user(&long, cols, &mut out);

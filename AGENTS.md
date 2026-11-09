@@ -13,7 +13,7 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 
 ## Verify
 - `cargo test --release`
-- `cargo clippy --release -- -D warnings`
+- `cargo clippy --release --all-targets -- -D warnings`
 - `cargo fmt --check`
 
 ## Release build
