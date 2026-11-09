@@ -88,4 +88,31 @@ mod tests {
         assert!(me.rss_kb > 0 && me.threads > 0);
         assert!(super::report(std::time::Duration::from_secs(1), &[]).starts_with("claude-jr"));
     }
+
+    #[test]
+    fn children_are_listed_with_a_total() {
+        let me = std::process::id();
+        let report = super::report(std::time::Duration::from_secs(90), &[me, u32::MAX - 1]);
+        let lines: Vec<&str> = report.lines().collect();
+        assert!(lines[0].contains("1m 30s") && lines[0].contains("threads"), "{report}");
+        // The live process is shown; the one that doesn't exist is skipped without a fuss.
+        assert_eq!(lines.len(), 3, "{report}");
+        assert!(lines[1].contains(&format!("(pid {me})")) && lines[1].contains("memory"), "{report}");
+        assert!(lines[2].starts_with("total"), "{report}");
+        let alone = super::report(std::time::Duration::from_secs(1), &[]);
+        assert!(!alone.contains("total"), "no children, no total");
+    }
+
+    #[test]
+    fn sizes_and_durations_are_short() {
+        assert_eq!(super::kb(0), "0 KB");
+        assert_eq!(super::kb(1023), "1023 KB");
+        assert_eq!(super::kb(1024), "1.0 MB");
+        assert_eq!(super::kb(2560), "2.5 MB");
+        assert_eq!(super::clock(std::time::Duration::from_secs(5)), "5s");
+        assert_eq!(super::clock(std::time::Duration::from_secs(59)), "59s");
+        assert_eq!(super::clock(std::time::Duration::from_secs(60)), "1m 00s");
+        assert_eq!(super::clock(std::time::Duration::from_secs(3725)), "62m 05s");
+        assert!(super::read("no-such-pid").is_none());
+    }
 }

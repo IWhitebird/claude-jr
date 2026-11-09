@@ -282,6 +282,8 @@ mod tests {
         crate::tools::test_home();
         let msg = |role: &str, text: &str| Msg::new(role, json!([{ "type": "text", "text": text }]));
         let mut s = Session::new();
+        // Agent tests start sessions too; the same millisecond must not mean the same file.
+        s.path.set_file_name(format!("{}-main.jsonl", stem(&s.path)));
         let id = stem(&s.path);
         let mut messages = vec![msg("user", "first"), msg("assistant", "one"), msg("user", "second")];
 

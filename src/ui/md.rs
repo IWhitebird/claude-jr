@@ -164,4 +164,121 @@ mod tests {
             [("use ", ""), ("cargo", CODE), (" and ", ""), ("care", BOLD), (" ", ""), ("*", ""), (" x", "")]
         );
     }
+
+    fn plain_lines(src: &str, cols: usize) -> Vec<String> {
+        let mut md = Markdown::default();
+        let mut out = Vec::new();
+        for l in src.lines() {
+            md.line(l, cols, span("  ", ""), &mut out);
+        }
+        out.iter().map(|l| super::super::text::strip(l)).collect()
+    }
+
+    #[test]
+    fn only_plain_paragraphs_can_be_committed_while_streaming() {
+        let md = Markdown::default();
+        for yes in
+            ["Just a sentence.", "Mentions `code` and **bold** inline", "1.5 is a number, not a list", "#nospace"]
+        {
+            assert!(md.is_paragraph(yes), "{yes}");
+        }
+        for no in [
+            "# Heading",
+            "###### small",
+            "- item",
+            "* item",
+            "+ item",
+            "12. item",
+            "> quote",
+            ">",
+            "| a | b |",
+            "```rust",
+            "---",
+            "***",
+            "___",
+            "  indented",
+            "\tindented",
+        ] {
+            assert!(!md.is_paragraph(no), "{no}");
+        }
+        // Inside a code block nothing is a paragraph.
+        assert!(!md.after("```").is_paragraph("plain text"));
+        assert!(md.after("```").after("```").is_paragraph("plain text"));
+    }
+
+    #[test]
+    fn code_fences_toggle_the_state() {
+        let md = Markdown::default();
+        assert!(!md.in_code());
+        let open = md.after("  ```python");
+        assert!(open.in_code());
+        assert!(open.after("not a fence").in_code());
+        assert!(!open.after("```").in_code());
+        let mut m = open;
+        m.reset();
+        assert!(!m.in_code());
+    }
+
+    #[test]
+    fn code_keeps_its_indent_and_expands_tabs() {
+        let out = plain_lines("```\n\tif x {\n        y\n}\n```\nafter", 40);
+        assert_eq!(out, ["      if x {", "          y", "  }", "  after"]);
+    }
+
+    #[test]
+    fn rules_headings_and_quotes() {
+        let out = plain_lines("---\n***\n___", 100);
+        let rule = format!("  {}", "\u{2500}".repeat(40));
+        assert_eq!(out, [rule.clone(), rule.clone(), rule]);
+        assert_eq!(
+            plain_lines("---", 12),
+            [format!("  {}", "\u{2500}".repeat(10))],
+            "narrow terminals get a shorter rule"
+        );
+
+        let out = plain_lines("###### six\n####### seven\n#none\n## ", 40);
+        assert_eq!(out, ["  six", "  ####### seven", "  #none", "  "]);
+
+        let out = plain_lines("> quoted\n>\n> **bold** text", 40);
+        assert_eq!(out, ["  \u{2502} quoted", "  \u{2502} ", "  \u{2502} bold text"]);
+    }
+
+    #[test]
+    fn lists_wrap_under_their_text() {
+        let out = plain_lines(
+            "- a long item that needs to wrap around the edge\n10. numbered with two digits that wraps too",
+            20,
+        );
+        assert_eq!(
+            out,
+            [
+                "  \u{2022} a long item that",
+                "    needs to wrap",
+                "    around the edge",
+                "  10. numbered with",
+                "      two digits",
+                "      that wraps too",
+            ]
+        );
+        assert_eq!(plain_lines("   * indented", 40), ["     \u{2022} indented"]);
+        assert_eq!(plain_lines("+ plus", 40), ["  \u{2022} plus"]);
+    }
+
+    #[test]
+    fn unfinished_inline_marks_stay_as_text() {
+        let spans = |s: &str| {
+            let mut out = Vec::new();
+            inline(s, "", &mut out);
+            out.iter().map(|x| (x.text.to_string(), x.style)).collect::<Vec<_>>()
+        };
+        assert_eq!(spans("a `b"), [("a ".to_string(), ""), ("`".to_string(), ""), ("b".to_string(), "")]);
+        assert_eq!(spans("**open"), [("*".to_string(), ""), ("*".to_string(), ""), ("open".to_string(), "")]);
+        assert_eq!(spans("``"), [("`".to_string(), ""), ("`".to_string(), "")], "empty code is not code");
+        assert_eq!(spans("plain"), [("plain".to_string(), "")]);
+        assert_eq!(spans("**a** and `b`").len(), 3);
+        // The base style applies to the plain parts only.
+        let mut out = Vec::new();
+        inline("x `y`", DIM, &mut out);
+        assert_eq!((out[0].style, out[1].style), (DIM, CODE));
+    }
 }

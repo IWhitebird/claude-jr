@@ -430,4 +430,162 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn the_kept_diff_is_just_the_changed_part() {
+        let d = Diff { line: 10, old: "same\nold 1\nold 2\ntail\n".into(), new: "same\nnew 1\ntail\n".into() };
+        let t = trim_diff(&d);
+        assert_eq!((t.line, t.old.as_str(), t.new.as_str()), (11, "old 1\nold 2\n", "new 1\n"));
+        // Nothing changed: nothing kept.
+        let same = trim_diff(&Diff { line: 1, old: "a\nb".into(), new: "a\nb".into() });
+        assert_eq!((same.line, same.old.as_str(), same.new.as_str()), (3, "", ""));
+        // A pure insertion.
+        let ins = trim_diff(&Diff { line: 5, old: "a\nc".into(), new: "a\nb\nc".into() });
+        assert_eq!((ins.line, ins.old.as_str(), ins.new.as_str()), (6, "", "b\n"));
+        // Very long changes are cut, but at more lines than are shown.
+        let many: String = (0..500).map(|i| format!("{i}\n")).collect();
+        let t = trim_diff(&Diff { line: 1, old: String::new(), new: many });
+        assert_eq!(t.new.lines().count(), 200);
+        assert!(t.new.lines().count() > MAX_DIFF_LINES);
+    }
+
+    #[test]
+    fn a_long_diff_shows_the_first_lines_and_a_count() {
+        let new: String = (0..45).map(|i| format!("line {i}\n")).collect();
+        let d = Diff { line: 1, old: String::new(), new };
+        let mut out = Vec::new();
+        diff(&d, 60, &mut out);
+        assert_eq!(out.len(), MAX_DIFF_LINES + 1);
+        assert_eq!(plain(&out[0]), "     1 + line 0");
+        assert_eq!(plain(&out[MAX_DIFF_LINES - 1]), "    30 + line 29");
+        assert_eq!(plain(&out[MAX_DIFF_LINES]), "    \u{2026} +15 lines");
+        // Removed lines are numbered from the same start, then the added ones.
+        let d = Diff { line: 7, old: "a\nb\n".into(), new: "x\n".into() };
+        let mut out = Vec::new();
+        diff(&d, 60, &mut out);
+        let lines: Vec<String> = out.iter().map(|l| plain(l)).collect();
+        assert_eq!(lines, ["    7 - a", "    8 - b", "    7 + x"]);
+    }
+
+    #[test]
+    fn approving_an_empty_label_still_asks() {
+        let mut out = Vec::new();
+        approve("", 40, &mut out);
+        let lines: Vec<String> = out.iter().map(|l| plain(l)).collect();
+        assert!(lines.iter().any(|l| l.contains("Allow ?")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("y yes")));
+    }
+
+    #[test]
+    fn the_command_menu_scrolls_to_the_picked_entry() {
+        let items: Vec<(String, String)> = (0..10).map(|i| (format!("cmd{i}"), format!("does {i}"))).collect();
+        let refs: Vec<(&str, &str)> = items.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let draw = |at: usize| {
+            let mut out = Vec::new();
+            menu(&refs, at, 3, 60, &mut out);
+            out.iter().map(|l| plain(l)).collect::<Vec<_>>()
+        };
+        let top = draw(0);
+        assert_eq!(top[0], " \u{203a} /cmd0  does 0");
+        assert_eq!(top[2], "   /cmd2  does 2");
+        assert_eq!(top[3], "   7 more \u{b7} up/down to pick \u{b7} tab completes \u{b7} enter runs");
+        let bottom = draw(9);
+        assert_eq!(bottom[0], "   /cmd7  does 7");
+        assert_eq!(bottom[2], " \u{203a} /cmd9  does 9");
+        assert_eq!(bottom[3], "   up/down to pick \u{b7} tab completes \u{b7} enter runs", "nothing hidden below");
+        let middle = draw(5);
+        assert_eq!(middle[2], " \u{203a} /cmd5  does 5");
+        assert!(middle[3].contains("4 more"));
+        assert_eq!(draw(99)[2], " \u{203a} /cmd9  does 9", "a position past the end is the last entry");
+        let mut out = Vec::new();
+        menu(&[], 0, 3, 60, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn status_and_footer_lines() {
+        let s = plain(&status("thinking", Duration::from_secs(5), 0, 80));
+        assert_eq!(s, "\u{b7} thinking \u{b7} 5s");
+        let s = plain(&status("thinking", Duration::from_millis(600_600), 1500, 80));
+        assert_eq!(s, "\u{25cf} thinking \u{b7} 10m 00s \u{b7} ~1500 tokens");
+        // The breathing dot cycles every 1.2 seconds.
+        let dots: Vec<char> = (0..4)
+            .map(|i| plain(&status("x", Duration::from_millis(i * 300), 0, 80)).chars().next().unwrap())
+            .collect();
+        assert_eq!(dots, ['\u{b7}', '\u{2022}', '\u{25cf}', '\u{2022}']);
+        // A long activity is cut so the time stays visible.
+        let s = plain(&status(&"w".repeat(100), Duration::from_secs(3), 0, 30));
+        assert!(s.ends_with(" \u{b7} 3s") && width(&s) <= 30, "{s}");
+
+        let f = plain(&footer(&[span("left", ""), span(" more", "")], "right", 30));
+        assert_eq!(f, format!(" left more{}right", " ".repeat(30 - 1 - 9 - 5 - 1)));
+        assert_eq!(width(&f), 29);
+    }
+
+    #[test]
+    fn the_mascot_is_even_pixel_art() {
+        let m = mascot();
+        assert!(m.len() > 3);
+        let widths: Vec<usize> = m.iter().map(|l| width(&plain(l))).collect();
+        assert!(widths.iter().all(|&w| w == widths[0]), "every row is as wide as the art: {widths:?}");
+        assert!(m.iter().any(|l| l.contains("\u{2580}")), "pixels are half blocks");
+        assert!(m.iter().all(|l| !l.contains('\n')));
+    }
+
+    #[test]
+    fn colours_map_to_the_256_palette() {
+        assert_eq!(nearest_256((0, 0, 0)), 16);
+        assert_eq!(nearest_256((255, 255, 255)), 231);
+        assert_eq!(nearest_256((255, 0, 0)), 196);
+        assert_eq!(nearest_256((0xD9, 0x77, 0x57)), 173, "the brand orange is the ORANGE style's colour");
+        assert_eq!(pixel(b'O'), Some((0xD9, 0x77, 0x57)));
+        assert_eq!(pixel(b'.'), None);
+        assert_eq!(pixel(b'?'), None);
+        for c in *b"ODKWPBY" {
+            assert!(pixel(c).is_some(), "{}", c as char);
+        }
+    }
+
+    #[test]
+    fn user_and_result_lines_are_marked() {
+        let mut out = Vec::new();
+        user("first\nsecond", 40, &mut out);
+        assert_eq!(out.iter().map(|l| plain(l)).collect::<Vec<_>>(), ["> first", "  second"]);
+        let mut out = Vec::new();
+        result(false, "line one\nline two", 40, &mut out);
+        let lines: Vec<String> = out.iter().map(|l| plain(l)).collect();
+        assert_eq!(lines, ["  \u{23bf} line one", "    line two"]);
+        assert!(out[0].contains(RED), "failures are red");
+        let mut out = Vec::new();
+        result(true, "fine", 40, &mut out);
+        assert!(!out[0].contains(RED));
+        let mut out = Vec::new();
+        question("Which?", &["red".to_string(), "blue".to_string()], 40, &mut out);
+        let lines: Vec<String> = out.iter().map(|l| plain(l)).collect();
+        assert!(lines.iter().any(|l| l.contains("1. red")) && lines.iter().any(|l| l.contains("2. blue")));
+        let mut out = Vec::new();
+        picker("Rewind", &["one".to_string()], "esc to cancel", 40, &mut out);
+        let lines: Vec<String> = out.iter().map(|l| plain(l)).collect();
+        assert!(lines[1].contains("Rewind") && lines[2].contains("1. one") && lines[3].contains("esc to cancel"));
+        let mut out = Vec::new();
+        key_prompt(60, &mut out);
+        assert!(out.iter().any(|l| plain(l).contains("Paste your Anthropic API key")));
+    }
+
+    #[test]
+    fn a_tall_input_scrolls_to_the_cursor_row() {
+        let mut input = Input::default();
+        input.insert(&(0..20).map(|i| format!("row{i}")).collect::<Vec<_>>().join("\n"));
+        let mut out = Vec::new();
+        let (line, col) = input_box(&input, "", 30, &mut out);
+        assert_eq!(out.len(), MAX_INPUT_ROWS + 2, "box edges plus at most eight rows");
+        assert!(
+            plain(&out[1]).contains("row12") && plain(&out[MAX_INPUT_ROWS]).contains("row19"),
+            "{:?}",
+            plain(&out[1])
+        );
+        assert_eq!((line, col), (MAX_INPUT_ROWS, 4 + 5));
+        // The first row is the one with the prompt marker, and it has scrolled away.
+        assert!(out.iter().all(|l| !plain(l).contains("> row")));
+    }
 }

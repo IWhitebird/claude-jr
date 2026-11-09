@@ -92,6 +92,30 @@ mod tests {
         assert!(d.contains("shown to you at the start of each one"));
     }
 
+    // These never reach the file write, so they can't disturb the notes the
+    // other test makes (every test in the process shares one project's notes).
+    #[test]
+    fn bad_requests_are_refused_without_changing_anything() {
+        super::super::test_home();
+        let ask = |action: &str, note: &str| update(&json!({"action": action, "note": note}));
+        assert_eq!(ask("add", "  \n ").unwrap_err(), "the note is empty");
+        assert_eq!(update(&json!({"action": "add"})).unwrap_err(), "the note is empty");
+        assert_eq!(ask("forget", "x").unwrap_err(), "action must be add or remove");
+        assert_eq!(update(&json!({"note": "x"})).unwrap_err(), "action must be add or remove");
+        assert_eq!(ask("remove", "no note could contain this zzq-unique").unwrap_err(), "no note matches that");
+        assert_eq!(ask("add", &"x".repeat(9000)).unwrap_err(), "memory is full (8 KB). Remove outdated notes first.");
+    }
+
+    #[test]
+    fn the_notes_file_lives_under_the_data_folder() {
+        super::super::test_home();
+        let file = path();
+        assert!(file.starts_with(crate::config::data_dir().join("memory")));
+        assert!(file.ends_with("MEMORY.md"));
+        let folder = file.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
+        assert!(folder.chars().all(|c| c.is_alphanumeric() || c == '-'), "{folder}");
+    }
+
     #[test]
     fn add_and_remove() {
         super::super::test_home();

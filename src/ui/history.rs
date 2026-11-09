@@ -182,4 +182,101 @@ mod tests {
         assert_eq!((line.as_str(), lead), ("one two three", true));
         assert_eq!((h.blocks.len(), h.lines), (0, 0));
     }
+
+    use super::super::text::strip;
+
+    fn drawn(h: &History, cols: usize) -> Vec<String> {
+        h.render(cols).iter().map(|l| strip(l)).collect()
+    }
+
+    fn text(line: &str, lead: bool) -> Block {
+        Block::Text { line: line.into(), lead, md: Markdown::default(), more: false }
+    }
+
+    #[test]
+    fn every_kind_of_block_is_drawn() {
+        let mut h = History::default();
+        h.push(Block::Lines(vec!["header 1".into(), "header 2".into()]), 2, 100);
+        h.push(Block::Blank, 1, 100);
+        h.push(Block::User("fix the bug".into()), 1, 100);
+        h.push(Block::Thinking("looking at it".into()), 1, 100);
+        h.push(text("Sure.", true), 1, 100);
+        h.push(text("More text.", false), 1, 100);
+        h.push(Block::Note { msg: "heads up".into(), style: "" }, 1, 100);
+        let diff = Diff { line: 3, old: "a\nb".into(), new: "a\nc".into() };
+        h.push(Block::Tool { label: "Edit(a.rs)".into(), diff: Some(diff) }, 3, 100);
+        h.push(Block::Tool { label: "Bash(ls)".into(), diff: None }, 1, 100);
+        h.push(Block::Result { ok: true, summary: "done".into() }, 1, 100);
+        h.push(Block::Result { ok: false, summary: "boom".into() }, 1, 100);
+        assert_eq!(
+            drawn(&h, 40),
+            [
+                "header 1",
+                "header 2",
+                "",
+                "> fix the bug",
+                "  looking at it",
+                "\u{25cf} Sure.",
+                "  More text.",
+                "  heads up",
+                "\u{25cf} Edit(a.rs)",
+                "    4 - b",
+                "    4 + c",
+                "\u{25cf} Bash(ls)",
+                "  \u{23bf} done",
+                "  \u{23bf} boom",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_table_is_drawn_boxed_or_as_plain_rows_when_narrow() {
+        let rows: Vec<String> = ["| a | b |", "|---|---|", "| 1 | 2 |"].iter().map(|s| s.to_string()).collect();
+        let mut h = History::default();
+        h.push(Block::Table { rows: rows.clone(), lead: true, md: Markdown::default() }, 7, 100);
+        let wide = drawn(&h, 40);
+        assert!(wide[0].starts_with("\u{25cf} \u{250c}"), "{wide:?}");
+        assert!(wide.iter().any(|l| l.contains("\u{2502} 1 \u{2502} 2")), "{wide:?}");
+
+        let narrow = drawn(&h, 6);
+        assert!(narrow.iter().all(|l| !l.contains('\u{250c}')), "{narrow:?}");
+        assert!(narrow[0].starts_with("\u{25cf} "), "only the first row has the marker: {narrow:?}");
+        assert!(narrow[1..].iter().all(|l| l.starts_with("  ")));
+        let joined: String = narrow.iter().map(|l| l.trim()).collect::<Vec<_>>().join("");
+        assert!(
+            joined.contains("| a | b |") || joined.contains("|a|b|") || joined.replace(' ', "").contains("|a|b|"),
+            "{narrow:?}"
+        );
+    }
+
+    #[test]
+    fn code_blocks_keep_their_state_between_lines() {
+        let mut h = History::default();
+        let open = Markdown::default();
+        let inside = open.after("```rust");
+        h.push(Block::Text { line: "let x = 1;".into(), lead: false, md: inside, more: false }, 1, 100);
+        h.push(text("let x = 1;", false), 1, 100);
+        let lines = h.render(40);
+        assert!(lines[0].contains("\x1b[36m"), "inside a fence the line is code-coloured");
+        assert!(!lines[1].contains("\x1b[36m"));
+    }
+
+    #[test]
+    fn clearing_and_unmerged_pieces() {
+        let mut h = History::default();
+        h.push(text("one", true), 1, 100);
+        // A piece that isn't marked as continuing stays separate, and so does one with its own marker.
+        h.push(text("two", false), 1, 100);
+        let streaming = Block::Text { line: "start".into(), lead: true, md: Markdown::default(), more: true };
+        h.push(streaming, 1, 100);
+        h.push(text("new paragraph", true), 1, 100);
+        assert_eq!(h.blocks.len(), 4);
+        assert!(h.take_partial().is_none(), "the last block is complete");
+        h.push(Block::Blank, 1, 100);
+        assert!(h.take_partial().is_none(), "a blank line is not a partial paragraph");
+        h.clear();
+        assert!(h.render(40).is_empty());
+        assert_eq!(h.lines, 0);
+        assert!(h.take_partial().is_none());
+    }
 }

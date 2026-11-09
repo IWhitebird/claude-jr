@@ -496,14 +496,18 @@ mod tests {
     fn ask_user_reaches_the_user_or_assumes() {
         let ask = tool_use("q1", "ask_user", json!({"question": "Which colour?", "options": ["red", "blue"]}));
         // Nobody there: the model is told to choose.
-        let mut rig =
-            Rig::new("turn-ask-none", Mode::Default, vec![ok(tools_reply(&[ask.clone()])), ok(text_reply("ok"))]);
+        let mut rig = Rig::new(
+            "turn-ask-none",
+            Mode::Default,
+            vec![ok(tools_reply(std::slice::from_ref(&ask))), ok(text_reply("ok"))],
+        );
         send(&mut rig, "paint");
         assert!(results_of(&rig, 2)[0].2.starts_with("The user isn't available."));
         assert!(!results_of(&rig, 2)[0].1);
 
         // Someone there.
-        let (url, _) = crate::agent::tests::fake_http(vec![ok(tools_reply(&[ask.clone()])), ok(text_reply("ok"))]);
+        let (url, _) =
+            crate::agent::tests::fake_http(vec![ok(tools_reply(std::slice::from_ref(&ask))), ok(text_reply("ok"))]);
         let mut cfg = crate::agent::tests::config(Some(url), Mode::Default);
         cfg.interactive = true;
         let mut rig = Rig::with("turn-ask-user", cfg);
@@ -548,7 +552,7 @@ mod tests {
 
     #[test]
     fn a_turn_cancelled_before_the_reply_ends_with_cancelled() {
-        let mut rig = Rig::new("turn-cancel-early", Mode::Bypass, vec![ok(text_reply("never read"))]);
+        let rig = Rig::new("turn-cancel-early", Mode::Bypass, vec![ok(text_reply("never read"))]);
         rig.agent.core.cancel.store(true, Ordering::Relaxed);
         let emit = rig.agent.core.emit.clone();
         let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
