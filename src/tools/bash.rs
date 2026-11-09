@@ -377,10 +377,19 @@ impl Job {
         if skipped > 0 {
             let _ = writeln!(s, "... [{skipped} earlier bytes not kept] ...");
         }
-        let text = if text.len() > MAX_BYTES { &text[text.len() - MAX_BYTES..] } else { &text };
+        let text = tail_str(&text, MAX_BYTES);
         s.push_str(if text.is_empty() { "(no new output)" } else { text });
         s
     }
+}
+
+/// The last `max` bytes of `s` or fewer, starting on a character boundary.
+fn tail_str(s: &str, max: usize) -> &str {
+    let mut start = s.len().saturating_sub(max);
+    while !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
 }
 
 /// The last `cap` bytes of a stream, plus how many bytes came in total.
@@ -457,6 +466,14 @@ impl Capped {
 mod tests {
     use super::super::test_tools;
     use super::*;
+
+    #[test]
+    fn tail_str_cuts_on_char_boundary() {
+        assert_eq!(tail_str("ééé", 3), "é");
+        assert_eq!(tail_str("abc", 10), "abc");
+        let big = "é".repeat(MAX_BYTES * 3);
+        assert!(tail_str(&big, MAX_BYTES).len() <= MAX_BYTES);
+    }
 
     #[test]
     fn keeps_cwd_and_reports_exit_code() {
