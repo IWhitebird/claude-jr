@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release -q
-bin=$PWD/target/release/claude-jr
+bin=$PWD/target/release/claudejr
 
 outside=$(mktemp -d -p /var/tmp)       # visible inside the sandbox, read-only
 project=$(mktemp -d)

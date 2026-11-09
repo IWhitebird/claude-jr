@@ -16,7 +16,7 @@ use session::{Pick, Session};
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: claude-jr [options] [-p PROMPT]
+const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
   -p, --print PROMPT   run one prompt, print the reply, exit
   -c, --continue       continue the last conversation in this directory
@@ -113,7 +113,7 @@ fn run() -> Result<ExitCode, String> {
                 config::trust()?;
             }
         } else if !interactive {
-            eprintln!("ignoring {files}: this folder isn't trusted (run claude-jr here once to trust it)");
+            eprintln!("ignoring {files}: this folder isn't trusted (run claudejr here once to trust it)");
         }
     }
     let file = config::Config::load()?;
@@ -122,7 +122,7 @@ fn run() -> Result<ExitCode, String> {
     }
     let key = config::api_key().unwrap_or_default();
     if key.is_empty() && !interactive {
-        return Err("no API key: run claude-jr and type /login, or set ANTHROPIC_API_KEY".into());
+        return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
     }
     if interactive && !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         return Err("not a terminal; use -p PROMPT for non-interactive use".into());
@@ -167,5 +167,5 @@ fn print_sessions() {
         let prompt: String = s.first_prompt.lines().next().unwrap_or("").chars().take(60).collect();
         println!("{:<14} {:<20} {:>4} msgs  {prompt}", s.id, name, s.messages);
     }
-    println!("\nResume with: claude-jr -r NAME_OR_ID   (or -c for the newest)");
+    println!("\nResume with: claudejr -r NAME_OR_ID   (or -c for the newest)");
 }

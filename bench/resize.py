@@ -4,7 +4,7 @@
 # it in bursts while a reply streams and again afterwards, and compares the
 # whole scrollback with a run that was never resized.
 #
-#   python3 bench/resize.py target/release/claude-jr
+#   python3 bench/resize.py target/release/claudejr
 
 import os, socket, subprocess, sys, tempfile, time
 

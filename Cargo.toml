@@ -3,6 +3,11 @@ name = "claude-jr"
 version = "0.1.0"
 edition = "2024"
 
+# The command is claudejr; the project is claude-jr.
+[[bin]]
+name = "claudejr"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23"

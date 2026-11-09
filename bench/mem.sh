@@ -12,7 +12,7 @@ ROUNDS=${ROUNDS:-60}
 OUTPUT_KB=${OUTPUT_KB:-40}
 
 cargo build --release -q
-bin=$PWD/target/release/claude-jr
+bin=$PWD/target/release/claudejr
 work=$(mktemp -d)
 port=$((20000 + RANDOM % 20000))
 

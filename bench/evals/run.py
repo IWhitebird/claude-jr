@@ -100,8 +100,8 @@ def agent_command(agent, prompt, model, work, report):
     """argv and extra env for one non-interactive run."""
     if agent == "claude-jr":
         binary = os.path.abspath(os.environ["CLAUDE_JR_BIN"]) if os.environ.get("CLAUDE_JR_BIN") else next(
-            (p for p in (os.path.join(ROOT, "target/x86_64-unknown-linux-musl/release/claude-jr"),
-                         os.path.join(ROOT, "target/release/claude-jr")) if os.path.exists(p)), "claude-jr")
+            (p for p in (os.path.join(ROOT, "target/x86_64-unknown-linux-musl/release/claudejr"),
+                         os.path.join(ROOT, "target/release/claudejr")) if os.path.exists(p)), "claude-jr")
         argv = [binary, "-y", "-p", prompt] + (["-m", model] if model else [])
         return argv, {"CLAUDE_JR_REPORT": report}
     if agent == "claude-code":

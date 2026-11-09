@@ -9,7 +9,7 @@
 #
 #   bench/cpu.sh
 #   ROUNDS=200 bench/cpu.sh
-#   BIN=target/x86_64-unknown-linux-musl/release/claude-jr bench/cpu.sh
+#   BIN=target/x86_64-unknown-linux-musl/release/claudejr bench/cpu.sh
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,7 +17,7 @@ ROUNDS=${ROUNDS:-60}
 OUTPUT_KB=${OUTPUT_KB:-20}
 if [ -z "${BIN:-}" ]; then
     cargo build --release -q
-    BIN=target/release/claude-jr
+    BIN=target/release/claudejr
 fi
 bin=$(realpath "$BIN")
 

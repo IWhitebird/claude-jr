@@ -70,8 +70,7 @@ More of claude-jr's own numbers (`bench/`):
 
 ```sh
 git clone https://github.com/IWhitebird/claude-jr && cd claude-jr
-cargo build --release
-cp target/release/claude-jr ~/.local/bin/
+cargo install --path .        # installs the command: claudejr
 ```
 
 Fully static binary (Linux):
@@ -84,12 +83,12 @@ CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-l
 ## Use
 
 ```sh
-claude-jr                         # start; the first time, it asks for your API key
-claude-jr --sandbox               # only allow writes inside this directory
-claude-jr -c                      # continue the last conversation here
-claude-jr -r "auth refactor"      # continue a named conversation
-claude-jr -p "explain main.rs"    # one prompt, print the answer, exit
-claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
+claudejr                         # start; the first time, it asks for your API key
+claudejr --sandbox               # only allow writes inside this directory
+claudejr -c                      # continue the last conversation here
+claudejr -r "auth refactor"      # continue a named conversation
+claudejr -p "explain main.rs"    # one prompt, print the answer, exit
+claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 ```
 
 | Key | |
@@ -100,6 +99,9 @@ claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 | esc | stop the current turn |
 | ctrl-c | clear input; twice to quit |
 | up / down | history |
+
+Type `/` to see every command; keep typing to narrow the list, up/down to pick,
+tab to complete, enter to run.
 
 | Command | |
 |---|---|
@@ -213,7 +215,7 @@ task matches it, or you run it with `/release`.
 ## Sandbox
 
 ```sh
-claude-jr --sandbox
+claudejr --sandbox
 ```
 
 claude-jr restarts itself inside [bubblewrap](https://github.com/containers/bubblewrap),
@@ -228,7 +230,7 @@ project and write to `$HOME`, and both must fail. To try the agent on a repo
 without risking anything, use a throwaway worktree:
 
 ```sh
-git worktree add /tmp/try && cd /tmp/try && claude-jr --sandbox
+git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
 ```
 
 Linux only for now.
@@ -333,11 +335,12 @@ bench/
 | Against Claude Code, pi and Codex | `python3 bench/compare.py` |
 | Inside the app | `/stats` |
 | Idle and busy CPU, memory | `bench/cpu.sh` |
-| The UI while a reply streams | `python3 bench/ui.py target/release/claude-jr` |
+| The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
+| Resizing leaves nothing twice (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
 | Memory budget over a long session | `bench/mem.sh` |
 | In a 0.1 CPU / 64 MB box | `bench/box.sh` |
 | A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |
-| One prompt | `/usr/bin/time -v claude-jr -p "..."` |
+| One prompt | `/usr/bin/time -v claudejr -p "..."` |
 
 None of the scripts need an API key; they run against `bench/mock.py`.
 

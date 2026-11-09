@@ -3,7 +3,7 @@
 # reports the container's peak memory (the agent plus every command it ran).
 #
 #   bench/box.sh                      # claude-jr against bench/mock.py
-#   bench/box.sh claude-jr -p "..."   # any command; pass ANTHROPIC_API_KEY for the real API
+#   bench/box.sh claudejr -p "..."   # any command; pass ANTHROPIC_API_KEY for the real API
 #
 # Needs docker and a static build:
 #   CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-linux-musl
@@ -15,7 +15,7 @@ CPUS=${CPUS:-0.1}
 MEMORY=${MEMORY:-64m}
 ROUNDS=${ROUNDS:-20}
 OUTPUT_KB=${OUTPUT_KB:-40}
-bin=$PWD/target/x86_64-unknown-linux-musl/release/claude-jr
+bin=$PWD/target/x86_64-unknown-linux-musl/release/claudejr
 [ -x "$bin" ] || { echo "build the static binary first (see the top of this file)"; exit 1; }
 
 env_args=()
@@ -26,14 +26,14 @@ if [ $# -eq 0 ]; then
     trap 'kill $mock 2>/dev/null' EXIT
     sleep 0.5
     env_args=(-e ANTHROPIC_API_KEY=mock -e ANTHROPIC_BASE_URL="http://127.0.0.1:$port")
-    set -- claude-jr -y -p "run the scenario"
+    set -- claudejr -y -p "run the scenario"
 else
     env_args=(-e ANTHROPIC_API_KEY)
 fi
 
 cmd=$(printf '%q ' "$@")
 docker run --rm --network host --cpus "$CPUS" --memory "$MEMORY" --memory-swap "$MEMORY" \
-    "${env_args[@]}" -e XDG_DATA_HOME=/tmp -v "$bin:/usr/local/bin/claude-jr:ro" "$IMAGE" \
+    "${env_args[@]}" -e XDG_DATA_HOME=/tmp -v "$bin:/usr/local/bin/claudejr:ro" "$IMAGE" \
     bash -c "cd /tmp && start=\$(date +%s.%N) && $cmd >/tmp/out 2>&1; code=\$?;
         end=\$(date +%s.%N)
         echo \"exit code:  \$code\"

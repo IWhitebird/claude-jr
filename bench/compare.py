@@ -8,7 +8,7 @@
 #   ROUNDS=40 IDLE=10 python3 bench/compare.py
 #
 # Agents and where they're looked for (override with the env variable):
-#   claude-jr    CLAUDE_JR_BIN  target/x86_64-unknown-linux-musl/release/claude-jr, then target/release/
+#   claude-jr    CLAUDE_JR_BIN  target/x86_64-unknown-linux-musl/release/claudejr, then target/release/
 #   claude-code  CLAUDE_BIN     `claude` on PATH
 #   pi           PI_BIN         `pi` on PATH
 #   codex        CODEX_BIN      `codex` on PATH (idle only: it speaks OpenAI's API, not Anthropic's)
@@ -87,8 +87,8 @@ def setup(name, home, port):
 
 
 AGENTS = {
-    "claude-jr": lambda: find("CLAUDE_JR_BIN", "target/x86_64-unknown-linux-musl/release/claude-jr",
-                              "target/release/claude-jr"),
+    "claude-jr": lambda: find("CLAUDE_JR_BIN", "target/x86_64-unknown-linux-musl/release/claudejr",
+                              "target/release/claudejr"),
     "claude-code": lambda: find("CLAUDE_BIN", "claude"),
     "pi": lambda: find("PI_BIN", "pi"),
     "codex": lambda: find("CODEX_BIN", "codex"),

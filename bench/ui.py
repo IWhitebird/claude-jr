@@ -1,8 +1,8 @@
 # CPU and memory of the interactive UI while a reply streams in at a
 # realistic pace (MOCK_DELAY_MS between events), against bench/mock.py.
 #
-#   python3 bench/ui.py target/release/claude-jr
-#   ROUNDS=10 TEXT=8000 DELAY=15 python3 bench/ui.py target/release/claude-jr
+#   python3 bench/ui.py target/release/claudejr
+#   ROUNDS=10 TEXT=8000 DELAY=15 python3 bench/ui.py target/release/claudejr
 
 import os, pty, select, socket, struct, subprocess, sys, tempfile, time, fcntl, termios
 

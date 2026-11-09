@@ -1,7 +1,7 @@
 # Starts the interactive UI in a pseudo-terminal, waits, and reports startup
 # time, memory and how much CPU it used while sitting idle.
 #
-#   python3 bench/idle.py target/release/claude-jr [seconds]
+#   python3 bench/idle.py target/release/claudejr [seconds]
 
 import os, pty, select, struct, sys, tempfile, time, fcntl, termios
 
