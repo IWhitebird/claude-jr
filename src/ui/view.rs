@@ -10,7 +10,7 @@ const MAX_INPUT_ROWS: usize = 8;
 pub fn user(text: &str, cols: usize, out: &mut Vec<String>) {
     let text = clean(text);
     for (i, line) in text.lines().enumerate() {
-        let lead = if i == 0 { span("> ", GREY) } else { span("  ", "") };
+        let lead = if i == 0 { span("> ", ORANGE) } else { span("  ", "") };
         wrap(&[span(line, GREY)], cols, lead, span("  ", ""), out);
     }
 }
@@ -20,7 +20,7 @@ pub fn thinking(text: &str, cols: usize, out: &mut Vec<String>) {
 }
 
 pub fn tool(label: &str, cols: usize, out: &mut Vec<String>) {
-    out.push(format!("{GREEN}●{RESET} {BOLD}{}{RESET}", fit(&clean(label), cols.saturating_sub(2))));
+    out.push(format!("{ORANGE}●{RESET} {BOLD}{}{RESET}", fit(&clean(label), cols.saturating_sub(2))));
 }
 
 pub fn result(ok: bool, summary: &str, cols: usize, out: &mut Vec<String>) {
@@ -77,12 +77,12 @@ pub fn input_box(input: &Input, hint: &str, cols: usize, out: &mut Vec<String>) 
     if input.is_empty() {
         let hint = fit(hint, text_w);
         let pad = text_w.saturating_sub(width(&hint));
-        out.push(format!("{GREY}│{RESET} > {DIM}{hint}{RESET}{} {GREY}│{RESET}", " ".repeat(pad)));
+        out.push(format!("{GREY}│{RESET} {ORANGE}>{RESET} {DIM}{hint}{RESET}{} {GREY}│{RESET}", " ".repeat(pad)));
     } else {
         for (i, r) in rows.iter().enumerate().skip(first).take(MAX_INPUT_ROWS) {
             let text = &input.text()[r.clone()];
             let pad = text_w.saturating_sub(width(text));
-            let lead = if i == 0 { "> " } else { "  " };
+            let lead = if i == 0 { format!("{ORANGE}>{RESET} ") } else { "  ".to_string() };
             out.push(format!("{GREY}│{RESET} {lead}{text}{} {GREY}│{RESET}", " ".repeat(pad)));
         }
     }
@@ -94,12 +94,12 @@ pub fn ask(label: &str, cols: usize, out: &mut Vec<String>) {
     let inner = cols.saturating_sub(4);
     let question = fit(&format!("Allow {}?", clean(label)), inner);
     let keys = fit("y yes · a always (this session) · n no", inner);
-    out.push(format!("{YELLOW}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))));
+    out.push(format!("{ORANGE}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))));
     for (text, style) in [(question, BOLD), (keys, DIM)] {
         let pad = inner.saturating_sub(width(&text));
-        out.push(format!("{YELLOW}│{RESET} {style}{text}{RESET}{} {YELLOW}│{RESET}", " ".repeat(pad)));
+        out.push(format!("{ORANGE}│{RESET} {style}{text}{RESET}{} {ORANGE}│{RESET}", " ".repeat(pad)));
     }
-    out.push(format!("{YELLOW}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))));
+    out.push(format!("{ORANGE}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))));
 }
 
 pub fn status(activity: &str, secs: u64, millis: u128, cols: usize) -> String {
@@ -107,7 +107,7 @@ pub fn status(activity: &str, secs: u64, millis: u128, cols: usize) -> String {
     let frame = SPINNER[(millis / 100) as usize % SPINNER.len()];
     let tail = format!(" ({secs}s · esc to cancel)");
     let act = fit(&clean(activity), cols.saturating_sub(width(&tail) + 4));
-    format!("{CYAN}{frame}{RESET} {act}…{DIM}{tail}{RESET}")
+    format!("{ORANGE}{frame} {act}…{RESET}{DIM}{tail}{RESET}")
 }
 
 /// One line: `left` dimmed on the left, `right` dimmed on the right.

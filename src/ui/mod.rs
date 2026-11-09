@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 use term::Term;
-use text::{BOLD, DIM, GREY, RED, RESET, span};
+use text::{BOLD_ORANGE, DIM, GREY, ORANGE, RED, RESET, span};
 
 const TICK: Duration = Duration::from_millis(100);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
@@ -139,10 +139,20 @@ impl App {
 
     fn header(&mut self) {
         let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let cwd = match cwd.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() => format!("~{rest}"),
+            _ => cwd,
+        };
         let version = env!("CARGO_PKG_VERSION");
-        self.commits.push(format!(" {BOLD}claude-jr{RESET} {DIM}{version} · {} · {cwd}{RESET}", self.model));
-        self.commits.push(format!(" {DIM}/help for commands{RESET}"));
-        self.commits.push(String::new());
+        let lines = [
+            format!(" {ORANGE}╭─────╮{RESET}"),
+            format!(" {ORANGE}│ ● ● │{RESET}   {BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
+            format!(" {ORANGE}╰──‿──╯{RESET}   {DIM}{} · {cwd}{RESET}", self.model),
+            format!("           {DIM}/help for commands · shift+tab to change mode{RESET}"),
+            String::new(),
+        ];
+        self.commits.extend(lines);
         self.last_blank = true;
     }
 
@@ -172,7 +182,7 @@ impl App {
     fn lead(&mut self) -> text::Span<'static> {
         if std::mem::take(&mut self.block_start) {
             self.gap();
-            span("● ", "")
+            span("● ", ORANGE)
         } else {
             span("  ", "")
         }
@@ -428,7 +438,7 @@ impl App {
             view::thinking(&text::clean(&self.thinking), cols, &mut out);
         }
         if !self.text.is_empty() {
-            let lead = if self.block_start { span("● ", "") } else { span("  ", "") };
+            let lead = if self.block_start { span("● ", ORANGE) } else { span("  ", "") };
             let mut md = self.md;
             md.line(&text::clean(&self.text), cols, lead, &mut out);
         }

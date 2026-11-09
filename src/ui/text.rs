@@ -8,9 +8,11 @@ pub const DIM: &str = "\x1b[2m";
 pub const ITALIC_DIM: &str = "\x1b[2;3m";
 pub const RED: &str = "\x1b[31m";
 pub const GREEN: &str = "\x1b[32m";
-pub const YELLOW: &str = "\x1b[33m";
 pub const CYAN: &str = "\x1b[36m";
 pub const GREY: &str = "\x1b[90m";
+/// The claude-jr orange (256-color 173, close to #D97757), for the brand and anything "working".
+pub const ORANGE: &str = "\x1b[38;5;173m";
+pub const BOLD_ORANGE: &str = "\x1b[1;38;5;173m";
 
 /// A run of text drawn in one style ("" is the terminal default).
 #[derive(Clone, Copy)]
