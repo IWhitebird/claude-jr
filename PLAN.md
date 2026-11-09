@@ -93,6 +93,20 @@ UI, and nothing more.
     waking for each network packet (~110 ms per 46 s) and ~30 frames a second
     in the UI (~90 ms). Parsing itself is ~10 ms for 35 KB.
 
+11. **Frontend features.** Image input (dragged paths, ctrl+v, read on images);
+    /rewind with on-disk checkpoints; /compact (client-side summary, safe with
+    preserved thinking); /resume picker; auto-memory tool; /effort; Anthropic's
+    web search and fetch; agent and job panel, /jobs, /kill; /model catalogue;
+    input anchored to the bottom of the screen; /settings; /clear on a clean
+    screen; mascot drawn from assets/mascot.txt. Done.
+12. **Evals.** bench/evals/run.py with a budget cap; a 10-task frontend suite;
+    an adapter for Aider's polyglot benchmark (not run yet: it executes code
+    from that repo, so it waits for a go-ahead). Done.
+
+Resource cost of 11 and 12: binary 2.8 -> 3.0 MB, idle 1.7 -> 1.9 MB, busy
+unchanged. Tests: 37, line coverage 53% (the UI loop and terminal drawing
+are covered by the pty scripts in bench/ rather than by cargo test).
+
 ## Next: benchmarking (needs an API key)
 
 - Task suite in `bench/tasks/`: small repos, a prompt and a `check.sh` each
