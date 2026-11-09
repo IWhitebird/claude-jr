@@ -1,11 +1,25 @@
-# claude-jr
+<p align="center">
+  <img src="assets/logo.svg" width="140" alt="claude-jr mascot">
+</p>
 
-A small coding agent for the terminal. It talks to Claude, reads and edits your
-files, and runs commands, with a prompt before anything changes.
+<h1 align="center">claude-jr</h1>
 
-One static binary. Runs in 0.1 CPU and 64 MB of RAM.
+<p align="center">
+  A small coding agent for the terminal, in one 2.5 MB binary.<br>
+  It runs in 0.1 CPU and 64 MB of RAM.
+</p>
+
+---
+
+claude-jr talks to Claude, reads and edits your files, and runs commands, asking
+before anything changes. It's a minimal take on Claude Code: four tools, a
+terminal UI, no runtime, nothing to install besides the binary.
 
 ```
+ ╭─────╮
+ │ ● ● │   claude-jr 0.1.0
+ ╰──‿──╯   claude-opus-5-5 · ~/proj/app
+
 > add a --verbose flag to the cli
 
 ● Read(src/cli.rs)
@@ -25,57 +39,109 @@ One static binary. Runs in 0.1 CPU and 64 MB of RAM.
 
 ## Numbers
 
-Static build (x86_64, musl), measured with the scripts in `bench/`:
+Static x86_64 build, measured with the scripts in [`bench/`](bench):
 
-|                                          |                      |
-|------------------------------------------|----------------------|
-| Binary                                   | 2.5 MB               |
-| First frame                              | 3 ms                 |
-| Memory, idle                             | 1.4 MB               |
-| CPU, idle                                | 0                    |
-| Memory, 60 tool rounds (2.4 MB history)  | 6.3 MB               |
-| Memory, 100 tool rounds (4 MB history)   | under 12 MB          |
-| Whole container, 0.1 CPU / 64 MB limit   | 10 MB peak           |
+| | |
+|---|---|
+| Binary | 2.5 MB, static |
+| Startup to first frame | 3 ms |
+| Memory when idle | 1.4 MB |
+| CPU when idle | 0 |
+| Memory after 60 tool calls (2.4 MB of history) | 6.3 MB |
+| Whole container at 0.1 CPU / 64 MB | 10 MB peak |
 
-## Build
+## Install
 
-```
+```sh
+git clone https://github.com/IWhitebird/claude-jr && cd claude-jr
 cargo build --release
+cp target/release/claude-jr ~/.local/bin/
 ```
 
-Static binary:
+Fully static binary (Linux):
 
-```
+```sh
 rustup target add x86_64-unknown-linux-musl
 CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 ## Use
 
-```
+```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-claude-jr                      # interactive
-claude-jr -c                   # continue the last conversation here
-claude-jr -p "explain main.rs" # one prompt, print the answer
-claude-jr -m claude-sonnet-5-5 # another model (default: claude-opus-5-5)
+
+claude-jr                         # start
+claude-jr --sandbox               # only allow writes inside this directory
+claude-jr -c                      # continue the last conversation here
+claude-jr -r "auth refactor"      # continue a named conversation
+claude-jr -p "explain main.rs"    # one prompt, print the answer, exit
+claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 ```
 
-Keys: enter sends, ctrl-j / shift-enter / `\` then enter for a new line, esc
-cancels, ctrl-c clears the input, ctrl-c twice quits, up/down for history.
+| Key | |
+|---|---|
+| enter | send |
+| ctrl-j, shift-enter, `\` + enter | new line |
+| shift-tab | change mode |
+| esc | stop the current turn |
+| ctrl-c | clear input; twice to quit |
+| up / down | history |
 
-Commands: `/clear`, `/model [name]`, `/cost`, `/help`, `/exit`.
+| Command | |
+|---|---|
+| `/rename NAME` | name this conversation |
+| `/model NAME` | switch model |
+| `/memory` | show loaded instruction files |
+| `/cost` | tokens and spend so far |
+| `/clear` | start over |
+| `#some note` | save a note to `./AGENTS.md` |
 
-## Tools
+## Modes
 
-| Tool  | Asks first | Notes |
-|-------|------------|-------|
-| read  | no         | line numbers, 2000 lines per call |
-| write | yes        | an existing file must be read first |
-| edit  | yes        | exact text, must match once; refuses if the file changed since it was read |
-| bash  | yes        | 2 min timeout, `cd` carries over, long output keeps the start and end |
+Shift-tab cycles through them; the current one shows under the input box.
 
-At the prompt: `y` yes, `a` always (this session), `n` no. In `-p` mode,
-anything that asks is refused unless you pass `--yes` or a rule allows it.
+| Mode | write / edit | bash |
+|---|---|---|
+| normal | asks | asks |
+| accept edits | runs | asks |
+| plan | refused; the model is told to plan instead | asks |
+| skip permissions | runs | runs |
+
+When it asks: `y` yes, `a` always for this session, `n` no. `-y` starts in
+skip-permissions mode. With `-p`, anything that would ask is refused.
+
+## Sandbox
+
+```sh
+claude-jr --sandbox
+```
+
+claude-jr restarts itself inside [bubblewrap](https://github.com/containers/bubblewrap),
+so the kernel enforces the limits for every tool, including its own file edits:
+
+- **writable**: the current directory, its session files, package caches, a private `/tmp`
+- **read-only**: the rest of the system, and toolchains in `$HOME` (`.cargo`, `.rustup`, `.nvm`, ...)
+- **hidden**: everything else in `$HOME`: ssh keys, tokens, other projects
+
+`bench/sandbox.sh` checks this: a fake model tries to delete a file outside the
+project and write to `$HOME`, and both must fail. To try the agent on a repo
+without risking anything, use a throwaway worktree:
+
+```sh
+git worktree add /tmp/try && cd /tmp/try && claude-jr --sandbox
+```
+
+Combine it with skip-permissions mode and the agent can work without asking,
+but only inside that directory. Linux only for now.
+
+## Memory and sessions
+
+- **Instructions**: `AGENTS.md` or `CLAUDE.md` in the current directory, its
+  parents, and `~/.config/claude-jr/` go into the system prompt.
+  `#some note` appends to `./AGENTS.md` and the model sees it right away.
+- **Conversations** are saved as JSONL under `~/.local/share/claude-jr/sessions/<directory>/`,
+  one message per line, exactly as sent to the API. `--sessions` lists them.
+- **Long conversations** are compacted on the server when they get big.
 
 ## Config
 
@@ -85,61 +151,66 @@ anything that asks is refused unless you pass `--yes` or a rule allows it.
 {
   "model": "claude-sonnet-5-5",
   "effort": "high",
-  "allow": ["bash:cargo *", "bash:git status", "edit"]
+  "allow": ["bash:cargo *", "bash:git status", "edit"],
+  "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": [] }
 }
 ```
 
-`tool` allows every call, `tool:pattern` allows matching commands or paths
-(`*` matches anything). A command with `;`, `&&`, `|`, `$(...)` and the like
-only matches a rule that spells it out exactly.
-
-`AGENTS.md` and `CLAUDE.md` in the working directory and its parents (and in
-`~/.config/claude-jr/`) are added to the system prompt.
-
-Sessions are saved as JSONL under `~/.local/share/claude-jr/sessions/`.
+`allow` rules skip the prompt: `tool` for every call, or `tool:pattern` where
+`*` matches anything. A command with `;`, `&&`, `|`, `$(...)` or redirects
+only matches a rule that spells it out exactly, so `cargo *` can't approve
+`cargo test; rm -rf ~`.
 
 ## How it works
 
-Two threads and two channels, no async runtime.
-
 ```
  key reader ─┐
-             ├─> UI thread ── Command ──> agent thread ──> Claude API
- agent ──────┘   (draws)    <── Event ───  (runs tools)
+             ├─> UI thread ── commands ──> agent thread ──> Claude API
+ agent ──────┘   (draws)    <── events ───  (runs tools)
 ```
 
-- The agent thread owns the conversation. Messages are kept as the JSON text
-  that goes over the wire; a request streams them straight from there, so the
-  history is never copied. Session files are the same text, one message per line.
-- The history is append-only, which keeps the prompt cache warm and the
-  model's earlier reasoning valid. Compaction happens on the server.
-- The UI writes finished lines once into normal terminal scrollback and only
-  redraws the few lines at the bottom. It waits on a channel, so it uses no
-  CPU when nothing is happening.
+- **No async runtime.** Three threads and channels. The UI blocks on one
+  channel, so it uses no CPU while you think.
+- **Messages are stored as the JSON text that goes over the wire.** A request
+  is streamed straight from them, so the history is never copied, and the
+  session file is the same text.
+- **The history only grows.** That keeps the prompt cache warm and the model's
+  earlier reasoning valid. The system prompt is fixed per session; mode
+  changes and notes go into the next user message instead.
+- **The UI writes finished lines once** into normal terminal scrollback and
+  redraws only the few lines at the bottom, so scrolling and copying work as
+  usual.
 
 ```
 src/
-  main.rs         args, config, pick UI or -p
-  agent.rs        conversation, tool loop, permissions
-  api.rs          request, SSE parsing, retries, model capabilities, pricing
-  tools.rs        read, write, edit, bash
-  prompt.rs       system prompt, AGENTS.md, git status
-  session.rs      messages as JSON text, JSONL sessions
-  permission.rs   allow rules
-  config.rs       config files
-  print.rs        -p output
-  ui/
-    mod.rs        event loop, keys, commands
-    term.rs       raw mode, scrollback, redraw
-    view.rs       tool blocks, diffs, input box
-    input.rs      line editor, history
-    md.rs         markdown, one line at a time
-    text.rs       styles, wrapping
+  main.rs        args, config, start
+  agent.rs       conversation, tool loop, modes, permissions
+  api.rs         requests, streaming, retries, per-model features, prices
+  tools.rs       read, write, edit, bash
+  prompt.rs      system prompt, AGENTS.md, notes
+  session.rs     saved conversations
+  sandbox.rs     bubblewrap
+  permission.rs  allow rules
+  config.rs      config files
+  print.rs       -p output
+  ui/            terminal UI: loop, drawing, input, markdown, wrapping
 bench/
-  mock.py         fake API for tests and benchmarks
-  mem.sh          long session, fails above 16 MB
-  box.sh          run inside a 0.1 CPU / 64 MB container
+  mock.py        fake API for tests and benchmarks
+  mem.sh         long session; fails above 16 MB
+  box.sh         run in a 0.1 CPU / 64 MB container
+  sandbox.sh     check the sandbox
 ```
+
+## Development
+
+```sh
+cargo test            # unit tests
+bench/mem.sh          # memory budget
+bench/sandbox.sh      # sandbox check
+bench/box.sh          # container run (needs docker and the static build)
+```
+
+None of these need an API key; they run against `bench/mock.py`.
 
 ## Not included
 

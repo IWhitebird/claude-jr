@@ -62,8 +62,33 @@ UI, and nothing more.
    - Same task in the box for Claude Code, Codex and pi. Needs an API key.
    - Benchmark run (Terminal-Bench or SWE-bench Lite). Needs an API key.
 
+7. **Polish.** Orange theme and mascot; shift+tab modes (normal, accept
+   edits, plan, skip permissions); `/rename`, `-r`, `--sessions`; `#note`
+   memory and `/memory`; `--sandbox` with bubblewrap and `bench/sandbox.sh`;
+   logo and README. Done.
+
+## Browser / WASM
+
+Not yet. What it would take:
+
+- **HTTP**: `ureq` is blocking sockets; a browser build needs `fetch`
+  (the API allows it with `anthropic-dangerous-direct-browser-access: true`,
+  which exposes the key to the page, so it's for local use only).
+- **Tools**: there is no shell or real filesystem in a browser. Options are an
+  in-memory or OPFS file tree with read/write/edit only, or a WebContainer
+  for bash, which is a large dependency.
+- **UI**: xterm.js in place of the raw terminal, fed by the same event stream.
+- **Threads**: the agent loop would become async, or run in a Web Worker.
+
+The split that makes it possible: keep `agent`, `session`, `permission` and
+the SSE parser free of I/O, and put HTTP, files, processes and the terminal
+behind small traits. Running under WASI (wasmtime) works for the same reason
+and doesn't help bash either, since WASI can't start processes.
+
 ## Later
 
+- Split I/O behind traits (step one toward a browser build)
+- macOS sandbox (sandbox-exec)
 - MCP client (stdio)
 - Subagents
 - Syntax highlighting in code blocks

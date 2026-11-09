@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="claude-jr">
+  <title>claude-jr</title>
+  <!-- sprout -->
+  <rect x="97.5" y="34" width="5" height="30" rx="2.5" fill="#5E8A3A"/>
+  <path d="M100 40 C88 26 72 28 68 34 C78 44 92 44 100 40 Z" fill="#8DBF5A"/>
+  <path d="M100 36 C110 20 128 20 133 26 C124 38 108 40 100 36 Z" fill="#7AB04A"/>
+  <!-- feet -->
+  <rect x="66" y="150" width="26" height="22" rx="10" fill="#B9583A"/>
+  <rect x="108" y="150" width="26" height="22" rx="10" fill="#B9583A"/>
+  <!-- body -->
+  <rect x="36" y="58" width="128" height="104" rx="40" fill="#D97757"/>
+  <!-- face screen -->
+  <rect x="54" y="80" width="92" height="60" rx="22" fill="#FBEFE8"/>
+  <!-- eyes -->
+  <circle cx="82" cy="106" r="9" fill="#2B211C"/>
+  <circle cx="118" cy="106" r="9" fill="#2B211C"/>
+  <circle cx="85" cy="103" r="3" fill="#FFFFFF"/>
+  <circle cx="121" cy="103" r="3" fill="#FFFFFF"/>
+  <!-- cheeks -->
+  <ellipse cx="68" cy="122" rx="7" ry="4.5" fill="#F2A48B"/>
+  <ellipse cx="132" cy="122" rx="7" ry="4.5" fill="#F2A48B"/>
+  <!-- smile -->
+  <path d="M91 120.5 Q100 134 109 120.5 Q100 127.5 91 120.5 Z" fill="#2B211C"/>
+</svg>
