@@ -1,109 +1,184 @@
 # claude-jr plan
 
-A small coding agent for the terminal, written in Rust. It does the core of what
-Claude Code does (read, edit, run, search) in a single binary with low memory and
-CPU use.
+A minimal coding agent for the terminal, written in Rust. It does what Claude
+Code does at its core (read, edit, run commands) with a similar inline terminal
+UI, and nothing more.
 
-## Goals
+## Target
 
-- One static binary, no runtime dependencies
-- Under 20 MB RSS while idle, under 50 ms to start
-- Codebase small enough to read in an afternoon (target under 5k lines)
-- Works with the Anthropic Messages API directly (`ANTHROPIC_API_KEY`)
+**Runs in 0.1 CPU and 64 MB of RAM.** A full session must work inside
+`docker run --cpus=0.1 --memory=64m`.
 
-## Non-goals (for now)
+| Budget | Limit |
+|--------|-------|
+| Idle RSS | 8 MB |
+| Peak RSS, long session | 16 MB |
+| Binary | 4 MB, static |
+| Startup | 20 ms on a laptop |
+| CPU while waiting on the model | 0% |
 
-- IDE plugins, a web UI, or multiple model providers
-- Plugin system, hooks, skills
+The 16 MB peak leaves about 45 MB for the commands the agent runs (bash, git,
+rg, small scripts). Heavy builds (cargo, npm) are out of scope for the 64 MB box.
 
-## How it works
+Also: about 2.5k lines, 6 dependencies, no async runtime, terminal only,
+Anthropic API only (`ANTHROPIC_API_KEY`).
+
+## Memory rules
+
+- One copy of the conversation. Request bodies are serialized straight from it.
+- Tool output is truncated while it streams in (head + tail), never collected
+  whole and cut later.
+- Files are read with a 50 KB / 2000 line cap per call.
+- One reused HTTPS connection.
+- Redraw only when something changed, at most ~15 times a second. Idle means
+  blocked on input, no timers.
+- Default glibc malloc; compare against musl before choosing the static build.
+
+## Not doing
+
+Other providers, MCP, plugins, hooks, skills, subagents, web tools, IDE
+integration, Windows-specific work.
+
+## Decisions
+
+**No async runtime.** An agent does one thing at a time: wait for the model or
+wait for a tool. Two plain threads and `std::sync::mpsc` cover it. That removes
+tokio and reqwest, which are most of the memory and binary size in agents like
+Codex.
+
+**Blocking HTTP with `ureq`.** It reads the streamed response line by line from a
+plain `Read`, which is all SSE needs.
+
+**Hand-written terminal UI on `crossterm`.** Like pi, not like Codex (ratatui).
+Finished messages are printed once and stay in scrollback. Only the bottom area
+(live reply, input box, status line) is redrawn, and only lines that changed,
+inside synchronized output so it doesn't flicker. This is a few hundred lines
+and is easier to reason about than a framework's inline viewport.
+
+**Four tools: read, write, edit, bash.** Same default set as pi. Search goes
+through bash (`rg`, `find`, `ls`). grep/glob tools can come later if needed.
+
+**No libraries for things we can write in 50 lines:** argument parsing, diffs
+(an edit is one replacement, so we already know the removed and added lines),
+markdown (headings, lists, bold, inline code, code fences), config paths.
+
+## Dependencies
+
+| Crate | Why |
+|-------|-----|
+| `ureq` | HTTPS with rustls, streaming response body |
+| `serde` + `serde_json` | API messages, tool inputs, sessions, config |
+| `crossterm` | raw mode, key events, cursor and color codes |
+| `unicode-width` | correct wrapping for wide characters and emoji |
+| `anyhow` | error handling |
+
+Release profile: `lto = true`, `codegen-units = 1`, `panic = "abort"`, `strip = true`.
+
+## Architecture
 
 ```
-loop {
-    stream a response for the current messages and tool definitions
-    print text as it arrives
-    if the response has no tool calls: wait for user input
-    for each tool call: check permission, run it, append the result
-}
+ main thread (UI)                         agent thread
+ ────────────────                         ────────────
+ loop:                                    loop:
+   poll keys (50 ms)        Command         wait for Command::Send
+   drain events      ─────────────────>     stream reply from API
+   redraw if changed  <─────────────────    run tool calls
+                            Event           repeat until no tool calls
 ```
 
-## Layout
+- `Command`: `Send(text)`, `Permission(Answer)`, `Clear`, `Quit`
+- `Event`: `Text(delta)`, `ToolStart`, `ToolEnd`, `AskPermission`, `Usage`,
+  `Done`, `Error`
+- **Permission**: the agent sends `AskPermission` and blocks until a
+  `Command::Permission` comes back. The UI shows the prompt.
+- **Cancel**: an `Arc<AtomicBool>`. The SSE reader checks it between lines and
+  the bash runner checks it while waiting, killing the child process.
+- **`-p` mode** uses the same agent thread with a plain printer instead of the
+  UI, so the core can be tested without a terminal.
+
+## Files
 
 ```
 src/
-  main.rs        args, startup, REPL
-  api.rs         Messages API client, SSE streaming, retries
-  types.rs       message / content block / tool types (serde)
-  agent.rs       the loop: send, stream, dispatch tools, repeat
-  tools/
-    mod.rs       tool trait + registry + JSON schemas
-    read.rs      read file (with line ranges)
-    write.rs     write file
-    edit.rs      exact string replace, must match once
-    bash.rs      run a command, timeout, truncate output
-    glob.rs      find files (respects .gitignore)
-    grep.rs      search contents (ripgrep crates)
-  permission.rs  ask / allow / deny, allowlist from config
-  session.rs     save and resume conversations as JSONL
-  compact.rs     summarize old turns near the context limit
-  config.rs      ~/.config/claude-jr/config.toml + project overrides
-  prompt.rs      system prompt, loads AGENTS.md / CLAUDE.md
+  main.rs       args, start agent thread, pick UI or -p printer     ~100
+  api.rs        request types, SSE stream parsing, retries          ~300
+  agent.rs      conversation, tool loop, cancel, permission wait    ~250
+  prompt.rs     system prompt, env info, AGENTS.md / CLAUDE.md      ~80
+  tools.rs      read, write, edit, bash + schemas + truncation      ~350
+  session.rs    save / load JSONL, compaction                       ~150
+  config.rs     ~/.config/claude-jr/config.json, allow rules        ~80
+  ui/
+    mod.rs      main loop, key handling, slash commands             ~300
+    term.rs     raw mode, differential redraw, scrollback writes    ~200
+    input.rs    input box editing, history                          ~200
+    view.rs     message / tool / diff / permission rendering        ~300
+    md.rs       minimal markdown to styled lines                    ~150
 ```
 
-## Crates
+## Tools
 
-- `tokio`, `reqwest` (rustls, stream) for async HTTP and SSE
-- `serde`, `serde_json` for API types
-- `rustyline` for the input line
-- `ignore`, `grep-searcher`, `grep-regex` for glob/grep
-- `clap` for args, `toml` for config, `anyhow` for errors
-- later: `ratatui` + `crossterm` for a TUI
+| Tool  | Asks? | Behavior |
+|-------|-------|----------|
+| read  | no    | `cat -n` style, `offset` / `limit`, 2000 lines max |
+| write | yes   | must read an existing file before overwriting |
+| edit  | yes   | `old_string` must match exactly once (or `replace_all`); file must be read first and unchanged since |
+| bash  | yes   | 2 min timeout, cwd kept between calls, output capped at 2000 lines / 50 KB (head + tail) |
 
-## Milestones
+Results are plain strings, errors included, so the model can recover.
+Allow rules in config skip the prompt, e.g. `"bash": ["cargo *", "git status"]`.
 
-### 1. It talks
-- [ ] API client with streaming text output
-- [ ] REPL: type a message, see the reply stream in
-- [ ] Model and max tokens from args/env
+## UI
 
-### 2. It acts
-- [ ] Tool trait and registry
-- [ ] read, write, edit, bash
-- [ ] Tool loop: run tools, send results, continue until done
-- [ ] Ctrl-C cancels the current turn, not the program
+```
+● Read(src/cli.rs)
+  ⎿ 48 lines
+● Edit(src/cli.rs)
+  ⎿ +3 -0
+     13 + /// Print debug output
+     14 + #[arg(short, long)]
+     15 + pub verbose: bool,
 
-### 3. It's safe and cheap
-- [ ] Permission prompts for write/edit/bash, reads auto-allowed
-- [ ] Allowlist in config (for example `bash: cargo test*`)
-- [ ] Prompt caching on system prompt, tools and conversation prefix
-- [ ] Token and cost count per turn and per session
+╭──────────────────────────────────────────╮
+│ > _                                      │
+╰──────────────────────────────────────────╯
+  ⠋ Working… 4s · esc to cancel      12.4k tokens · $0.03
+```
 
-### 4. It finds things
-- [ ] glob and grep tools
-- [ ] Load AGENTS.md / CLAUDE.md into the system prompt
-- [ ] Show git status and cwd in the system prompt
+Keys: Enter send, Ctrl-J new line, Esc cancel, Ctrl-C twice quit, Up/Down history.
+Commands: `/clear` `/compact` `/cost` `/model` `/exit`.
 
-### 5. It remembers
-- [ ] Save sessions as JSONL
-- [ ] `--resume` and `--continue`
-- [ ] Compaction when near the context limit
-- [ ] Non-interactive mode: `claude-jr -p "fix the failing test"`
+## Phases
 
-### 6. It's measured
-- [ ] Startup time, idle RSS and peak RSS vs Claude Code and Codex CLI
-- [ ] Run a benchmark (Terminal-Bench or SWE-bench Lite) and publish results
-- [ ] README with numbers
+### 1. Talk (no UI)
+- `api.rs` streaming, `agent.rs` loop without tools, `-p` printer
+- Done when `claude-jr -p "hello"` streams a reply
 
-### Later
-- [ ] ratatui TUI with diff view
-- [ ] MCP client (stdio)
-- [ ] Subagents
-- [ ] Extended thinking display
+### 2. Act
+- `tools.rs` with all four tools, tool loop, cancel flag
+- Done when `claude-jr -p "add a test for X and run it"` works end to end
 
-## Notes
+### 3. UI
+- `term.rs` redraw, `input.rs`, `view.rs` for text and tool blocks, spinner, status
+- Done when you can chat in the UI and see tool calls as they run
 
-- Edit tool follows Claude Code's rule: `old_string` must match exactly once,
-  and a file must be read before it can be edited.
-- Bash output is truncated (head + tail) so a noisy command can't fill the
-  context.
-- Every tool result is a plain string, errors included, so the model can recover.
+### 4. Safe
+- Permission prompt (yes / always / no), diff view for edit and write, allow rules
+- Done when nothing writes or runs without asking unless allowed
+
+### 5. Context
+- Prompt caching, AGENTS.md / CLAUDE.md, markdown rendering, slash commands
+- Sessions saved as JSONL, `--continue`, compaction near the context limit
+- Done when long sessions stay cheap and can be resumed
+
+### 6. Measure
+- `bench/` script: scripted long session, fails if peak RSS > 16 MB.
+  Run it at the end of every phase from phase 2 on.
+- Same task in `docker run --cpus=0.1 --memory=64m` for claude-jr, Claude
+  Code, Codex and pi: finished or not, peak RSS, wall time
+- Static builds for x86_64 and aarch64
+- Benchmark run (Terminal-Bench or SWE-bench Lite), numbers in README
+
+## References
+
+Local clones in `.temp/` (gitignored): pi-mono, codex, mini-swe-agent, opencode.
+Notes, including how Claude Code works, are in `.temp/NOTES.md`.
