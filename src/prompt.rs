@@ -40,6 +40,13 @@ pub fn system() -> String {
     }
     s.push_str("</env>");
 
+    if let Some(notes) = crate::tools::memory::load() {
+        let _ = write!(
+            s,
+            "\n\n<memory>\nYour notes from earlier sessions in this project (update them with the memory tool):\n{}\n</memory>",
+            notes.trim()
+        );
+    }
     for (path, text) in instructions(&cwd) {
         let _ = write!(s, "\n\n<instructions file=\"{}\">\n{}\n</instructions>", path.display(), text.trim());
     }

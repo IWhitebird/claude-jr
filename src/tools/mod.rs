@@ -8,6 +8,7 @@ mod bash;
 pub mod checkpoint;
 mod fs;
 pub mod mcp;
+pub mod memory;
 pub mod skill;
 mod todo;
 
@@ -40,7 +41,7 @@ pub enum Access {
 
 pub fn access(name: &str) -> Access {
     match name {
-        "read" | "todo" | "ask_user" | "skill" | "agent" | "jobs" => Access::Free,
+        "read" | "todo" | "ask_user" | "skill" | "agent" | "jobs" | "memory" => Access::Free,
         "write" | "edit" => Access::Edit,
         _ => Access::Exec, // bash and MCP tools
     }
@@ -117,7 +118,7 @@ impl Tools {
         let mut defs = vec![fs::READ.clone(), fs::WRITE.clone(), fs::EDIT.clone(), bash::BASH.clone()];
         defs.extend([bash::JOBS.clone(), todo::TODO.clone()]);
         if main {
-            defs.extend([ASK_USER.clone(), AGENT.clone()]);
+            defs.extend([ASK_USER.clone(), AGENT.clone(), memory::MEMORY.clone()]);
         }
         if !self.skills.is_empty() {
             defs.push(skill::definition(&self.skills));
@@ -150,6 +151,7 @@ impl Tools {
             "agent" => input["description"].as_str().unwrap_or("").to_string(),
             "skill" => input["name"].as_str().unwrap_or("").to_string(),
             "jobs" => format!("{} {}", input["action"].as_str().unwrap_or(""), input["id"]).trim().to_string(),
+            "memory" => format!("{}: {}", input["action"].as_str().unwrap_or(""), input["note"].as_str().unwrap_or("")),
             "ask_user" | "todo" => String::new(),
             _ => mcp::summarize_args(input),
         }
@@ -183,6 +185,7 @@ impl Tools {
             "jobs" => bash::jobs(self, input, cancel),
             "todo" => todo::update(self, input),
             "skill" => skill::load(&self.skills, input),
+            "memory" => memory::update(input),
             n if mcp::is_mcp(n) => self.mcp.call(n, input, cancel),
             _ => Err(format!("unknown tool: {name}")),
         }
