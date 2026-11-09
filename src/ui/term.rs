@@ -7,12 +7,17 @@ use crossterm::terminal;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 
+/// The live area's lines and cursor position.
+type Frame = (Vec<String>, Option<(usize, usize)>);
+
 pub struct Term {
     out: io::Stdout,
     buf: String,
     /// Cursor row inside the live area, counted from its top.
     row: usize,
     enhanced_keys: bool,
+    /// The live area as last drawn, to skip frames that wouldn't change anything.
+    last: Option<Frame>,
 }
 
 impl Term {
@@ -29,21 +34,31 @@ impl Term {
         }
         out.write_all(b"\x1b[?2004h")?; // bracketed paste
         out.flush()?;
-        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, enhanced_keys })
+        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, enhanced_keys, last: None })
     }
 
     pub fn size() -> (usize, usize) {
         terminal::size().map_or((80, 24), |(w, h)| (w as usize, h as usize))
     }
 
+    /// Forgets the last frame, so the next draw happens even if nothing changed
+    /// (after a resize, for example).
+    pub fn invalidate(&mut self) {
+        self.last = None;
+    }
+
     /// Writes `commits` above the live area, then redraws the live area.
-    /// `cursor` is a (row, column) inside `live`; `None` hides it.
+    /// `cursor` is a (row, column) inside `live`; `None` hides it. Does
+    /// nothing if there's nothing to commit and the live area is unchanged.
     pub fn draw(
         &mut self,
         commits: &mut Vec<String>,
-        live: &[String],
+        live: Vec<String>,
         cursor: Option<(usize, usize)>,
     ) -> io::Result<()> {
+        if commits.is_empty() && self.last.as_ref().is_some_and(|(l, c)| *l == live && *c == cursor) {
+            return Ok(());
+        }
         let b = &mut self.buf;
         b.clear();
         b.push_str("\x1b[?2026h\x1b[?25l");
@@ -78,6 +93,7 @@ impl Term {
         }
         b.push_str("\x1b[?2026l");
         self.out.write_all(b.as_bytes())?;
+        self.last = Some((live, cursor));
         self.out.flush()
     }
 }
@@ -99,12 +115,18 @@ impl Drop for Term {
     }
 }
 
-/// Puts the terminal back to normal if we panic while in raw mode.
+/// Leaves raw mode and shows the cursor, without the usual cleanup. For
+/// panics and signals, where `Term` won't be dropped.
+pub fn restore() {
+    let _ = terminal::disable_raw_mode();
+    let _ = io::stdout().write_all(b"\x1b[?25h\x1b[?2004l\x1b[<1u\r\n");
+    let _ = io::stdout().flush();
+}
+
 pub fn restore_on_panic() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = terminal::disable_raw_mode();
-        let _ = io::stdout().write_all(b"\x1b[?25h\x1b[?2004l\r\n");
+        restore();
         default(info);
     }));
 }

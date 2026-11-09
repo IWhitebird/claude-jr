@@ -1,42 +1,49 @@
 // The interactive terminal UI.
 //
 // Two threads feed one channel: the agent (events) and a key reader (terminal
-// input). The loop blocks on that channel, so an idle session uses no CPU;
-// while the agent works it also wakes every 100 ms to move the spinner.
+// input). The loop blocks on that channel, so an idle session uses no CPU.
+// While the agent works it also wakes every 300 ms for the status dot, and
+// the terminal is only written to when the picture actually changed.
 
 mod input;
 mod md;
+mod stats;
 mod term;
 mod text;
 mod view;
 
 use crate::agent::{self, Answer, Command, Event, Mode};
-use crate::api;
 use crossterm::event::{self as ct, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use input::Input;
 use md::Markdown;
+use std::collections::VecDeque;
 use std::io;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 use term::Term;
-use text::{BOLD_ORANGE, CYAN, DIM, ORANGE, RED, RESET, span};
+use text::{BOLD_ORANGE, CYAN, DIM, GREEN, ORANGE, RED, RESET, Span, span};
 
-const TICK: Duration = Duration::from_millis(100);
+/// How often the status dot moves while the agent works.
+const TICK: Duration = Duration::from_millis(300);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
 const HELP: &str = "/clear          start a new conversation
 /model [name]   show or change the model
 /rename [name]  name this session (resume with claude-jr -r NAME)
-/memory         show which instruction files are loaded
-#note           save a note to ./AGENTS.md (used from now on)
+/memory         instruction files in use
+/skills         available skills (run one with /name)
+/mcp            connected MCP servers
+/stats          memory and CPU used by claude-jr and what it started
 /cost           tokens and cost so far
 /exit           quit
+#note           save a note to ./AGENTS.md (used from now on)
+!command        run a shell command yourself; the agent sees the output
 
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
-shift+tab cycles modes: normal → accept edits → plan → skip permissions
-esc cancels · ctrl-c clears the input, twice quits · up/down for history";
+shift+tab: normal → accept edits → plan → auto → skip permissions
+esc stops · ctrl-c clears the input, twice quits · up/down for history";
 
 enum Msg {
     Agent(Event),
@@ -53,6 +60,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
     });
 
     let mut term = Term::new()?;
+    crate::signals::watch(agent.tools.clone(), true);
     thread::spawn(move || {
         while let Ok(e) = ct::read() {
             if tx.send(Msg::Term(e)).is_err() {
@@ -64,7 +72,7 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
     let mut app = App::new(agent, model);
     app.header();
     loop {
-        let msg = if app.busy.is_some() {
+        let msg = if app.work.is_some() {
             match rx.recv_timeout(TICK) {
                 Ok(m) => Some(m),
                 Err(RecvTimeoutError::Timeout) => None,
@@ -78,42 +86,81 @@ pub fn run(cfg: agent::Config) -> io::Result<()> {
         };
         // Handle everything that's waiting, then draw once.
         for m in msg.into_iter().chain(rx.try_iter()) {
+            if let Msg::Term(TermEvent::Resize(..)) = m {
+                term.invalidate();
+            }
             app.handle(m);
         }
         if app.quit {
             break;
         }
         let (live, cursor) = app.live();
-        term.draw(&mut app.commits, &live, cursor)?;
+        term.draw(&mut app.commits, live, cursor)?;
+    }
+    if let Some(tools) = app.agent.tools.get() {
+        tools.shutdown();
     }
     Ok(())
+}
+
+/// Text streaming in, not yet complete lines.
+#[derive(Default)]
+struct Stream {
+    text: String,
+    thinking: String,
+    md: Markdown,
+    /// The next line starts a new block and gets the ● marker.
+    block_start: bool,
+}
+
+/// The turn in progress.
+struct Work {
+    since: Instant,
+    activity: String,
+    /// Characters of reply streamed so far, for a rough token count.
+    streamed: usize,
+    /// The tool call being written, and how much of its input has arrived.
+    tool: String,
+    tool_bytes: usize,
+}
+
+impl Work {
+    fn new() -> Work {
+        Work { since: Instant::now(), activity: "listening".into(), streamed: 0, tool: String::new(), tool_bytes: 0 }
+    }
+}
+
+/// Something waiting on the user. Several can queue up when subagents work
+/// in parallel; they're shown one at a time.
+enum Prompt {
+    Approve { label: String, reply: Sender<Answer> },
+    Question { question: String, options: Vec<String>, reply: Sender<String> },
+}
+
+/// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
+pub fn restore_terminal() {
+    term::restore();
 }
 
 struct App {
     agent: agent::Handle,
     model: String,
     input: Input,
-    md: Markdown,
+    stream: Stream,
     /// Lines waiting to be written into scrollback.
     commits: Vec<String>,
     /// Whether the last line written to scrollback was blank.
     last_blank: bool,
-    /// The unfinished last line of streaming text / progress notes.
-    text: String,
-    thinking: String,
-    /// The next line starts a new block and gets the ● marker.
-    block_start: bool,
-    busy: Option<Instant>,
-    activity: String,
-    /// The tool call being streamed in, and how much of its input has arrived.
-    tool: String,
-    tool_bytes: usize,
-    ask: Option<(String, Sender<Answer>)>,
+    work: Option<Work>,
+    prompts: VecDeque<Prompt>,
     queued: Option<String>,
     cost: f64,
     context: u64,
     /// The session's name, set with /rename.
     name: Option<String>,
+    skills: Vec<String>,
+    mcp: Vec<String>,
+    started: Instant,
     quit_armed: Option<Instant>,
     quit: bool,
     cols: usize,
@@ -127,21 +174,18 @@ impl App {
             agent,
             model,
             input: Input::default(),
-            md: Markdown::default(),
+            stream: Stream { block_start: true, ..Stream::default() },
             commits: Vec::new(),
             last_blank: true,
-            text: String::new(),
-            thinking: String::new(),
-            block_start: true,
-            busy: None,
-            activity: String::new(),
-            tool: String::new(),
-            tool_bytes: 0,
-            ask: None,
+            work: None,
+            prompts: VecDeque::new(),
             queued: None,
             cost: 0.0,
             context: 0,
             name: None,
+            skills: Vec::new(),
+            mcp: Vec::new(),
+            started: Instant::now(),
             quit_armed: None,
             quit: false,
             cols,
@@ -168,17 +212,12 @@ impl App {
             format!(" {m1}  {DIM}{} · {cwd}{RESET}", self.model),
             format!(" {m2}  {DIM}/help for commands · shift+tab to change mode{RESET}"),
             format!(" {m3}  {sandbox}"),
+            String::new(),
         ]);
-        self.commits.push(String::new());
         self.last_blank = true;
     }
 
     // ---- scrollback -----------------------------------------------------
-
-    fn push(&mut self, line: String) {
-        self.last_blank = text::is_blank(&line);
-        self.commits.push(line);
-    }
 
     /// Runs a renderer that appends to scrollback, keeping `last_blank` right.
     fn emit(&mut self, f: impl FnOnce(usize, &mut Vec<String>)) {
@@ -192,12 +231,13 @@ impl App {
     /// A blank line before a new block, unless there already is one.
     fn gap(&mut self) {
         if !self.last_blank {
-            self.push(String::new());
+            self.commits.push(String::new());
+            self.last_blank = true;
         }
     }
 
-    fn lead(&mut self) -> text::Span<'static> {
-        if std::mem::take(&mut self.block_start) {
+    fn lead(&mut self) -> Span<'static> {
+        if std::mem::take(&mut self.stream.block_start) {
             self.gap();
             span("● ", ORANGE)
         } else {
@@ -207,17 +247,16 @@ impl App {
 
     fn commit_text_line(&mut self, line: &str) {
         let lead = self.lead();
-        let mut md = self.md;
+        let mut md = self.stream.md;
         self.emit(|cols, out| md.line(&text::clean(line), cols, lead, out));
-        self.md = md;
+        self.stream.md = md;
     }
 
     fn commit_thinking_line(&mut self, line: &str) {
         if line.trim().is_empty() {
             return;
         }
-        let lead_gap = std::mem::take(&mut self.block_start);
-        if lead_gap {
+        if std::mem::take(&mut self.stream.block_start) {
             self.gap();
         }
         self.emit(|cols, out| view::thinking(&text::clean(line), cols, out));
@@ -225,11 +264,11 @@ impl App {
 
     /// Commits any partial line still being streamed.
     fn flush(&mut self) {
-        let thinking = std::mem::take(&mut self.thinking);
+        let thinking = std::mem::take(&mut self.stream.thinking);
         if !thinking.is_empty() {
             self.commit_thinking_line(&thinking);
         }
-        let text = std::mem::take(&mut self.text);
+        let text = std::mem::take(&mut self.stream.text);
         if !text.is_empty() {
             self.commit_text_line(&text);
         }
@@ -240,13 +279,19 @@ impl App {
         self.emit(|cols, out| view::note(msg, style, cols, out));
     }
 
+    fn set_activity(&mut self, activity: String) {
+        if let Some(w) = &mut self.work {
+            w.activity = activity;
+        }
+    }
+
     // ---- events ---------------------------------------------------------
 
     fn handle(&mut self, m: Msg) {
         match m {
             Msg::Agent(e) => self.on_agent(e),
             Msg::Term(TermEvent::Key(k)) => self.on_key(k),
-            Msg::Term(TermEvent::Paste(s)) if self.ask.is_none() => {
+            Msg::Term(TermEvent::Paste(s)) if !matches!(self.prompts.front(), Some(Prompt::Approve { .. })) => {
                 self.input.insert(&s.replace("\r\n", "\n").replace('\r', "\n"));
             }
             Msg::Term(TermEvent::Resize(c, r)) => (self.cols, self.rows) = (c as usize, r as usize),
@@ -256,47 +301,64 @@ impl App {
 
     fn on_agent(&mut self, e: Event) {
         match e {
-            Event::Ready { resumed, name } => {
+            Event::Ready { resumed, name, skills, mcp } => {
                 if resumed > 0 {
                     let which = name.as_deref().map_or("the last session".to_string(), |n| format!("\"{n}\""));
                     self.note(&format!("Resumed {which} ({resumed} messages)."), DIM);
                 }
-                self.name = name;
+                let mut loaded = Vec::new();
+                if !skills.is_empty() {
+                    loaded.push(format!("{} skill{}", skills.len(), if skills.len() == 1 { "" } else { "s" }));
+                }
+                if !mcp.is_empty() {
+                    loaded.push(format!("MCP: {}", mcp.join(", ")));
+                }
+                if !loaded.is_empty() {
+                    self.note(&format!("Loaded {}.", loaded.join(" · ")), DIM);
+                }
+                (self.name, self.skills, self.mcp) = (name, skills, mcp);
             }
             Event::Notice(msg) => self.note(&msg, DIM),
             Event::Text(t) => {
-                self.activity = "Writing".into();
-                self.text.push_str(&t);
-                while let Some(i) = self.text.find('\n') {
-                    let line: String = self.text.drain(..=i).collect();
+                if let Some(w) = &mut self.work {
+                    w.streamed += t.len();
+                    w.activity = "writing".into();
+                }
+                self.stream.text.push_str(&t);
+                while let Some(i) = self.stream.text.find('\n') {
+                    let line: String = self.stream.text.drain(..=i).collect();
                     self.commit_text_line(line.trim_end_matches('\n'));
                 }
             }
             Event::Thinking(t) => {
-                self.activity = "Thinking".into();
-                self.thinking.push_str(&t);
-                while let Some(i) = self.thinking.find('\n') {
-                    let line: String = self.thinking.drain(..=i).collect();
+                self.set_activity("thinking".into());
+                self.stream.thinking.push_str(&t);
+                while let Some(i) = self.stream.thinking.find('\n') {
+                    let line: String = self.stream.thinking.drain(..=i).collect();
                     self.commit_thinking_line(line.trim_end_matches('\n'));
                 }
             }
             Event::BlockEnd => {
                 self.flush();
-                self.block_start = true;
+                self.stream.block_start = true;
             }
             Event::ToolStart(name) => {
-                self.activity = format!("Preparing {name}");
-                self.tool = name;
-                self.tool_bytes = 0;
+                if let Some(w) = &mut self.work {
+                    w.activity = format!("preparing {name}");
+                    w.tool = name;
+                    w.tool_bytes = 0;
+                }
             }
             Event::ToolInput(n) => {
-                self.tool_bytes += n;
-                self.activity = format!("Writing {} · {}", self.tool, size(self.tool_bytes));
+                if let Some(w) = &mut self.work {
+                    w.tool_bytes += n;
+                    w.activity = format!("writing {} · {}", w.tool, size(w.tool_bytes));
+                }
             }
             Event::Tool { label, diff } => {
                 self.flush();
                 self.gap();
-                self.activity = format!("Running {label}");
+                self.set_activity("running".into());
                 self.emit(|cols, out| {
                     view::tool(&label, cols, out);
                     if let Some(d) = &diff {
@@ -304,27 +366,33 @@ impl App {
                     }
                 });
             }
-            Event::Ask { label, reply } => self.ask = Some((label, reply)),
+            Event::Ask { label, reply } => self.prompts.push_back(Prompt::Approve { label, reply }),
+            Event::Question { question, options, reply } => {
+                self.prompts.push_back(Prompt::Question { question, options, reply });
+            }
             Event::ToolResult { ok, summary } => {
                 self.emit(|cols, out| view::result(ok, &summary, cols, out));
-                self.block_start = true;
-                self.activity = "Thinking".into();
+                self.stream.block_start = true;
+                self.set_activity("listening".into());
             }
-            Event::Usage(u) => {
-                self.cost += api::cost(&self.model, &u).unwrap_or(0.0);
-                self.context = u.context();
+            Event::Activity(a) => self.set_activity(a),
+            Event::Usage { usage, cost, main } => {
+                self.cost += cost.unwrap_or(0.0);
+                if main {
+                    self.context = usage.context();
+                }
             }
             Event::Done => self.finish(None),
-            Event::Cancelled => self.finish(Some(("Cancelled.", DIM))),
+            Event::Cancelled => self.finish(Some(("Stopped.", DIM))),
             Event::Error(e) => self.finish(Some((&format!("Error: {e}"), RED))),
         }
     }
 
     fn finish(&mut self, note: Option<(&str, &'static str)>) {
         self.flush();
-        self.md.reset();
-        self.busy = None;
-        self.ask = None;
+        self.stream.md.reset();
+        self.work = None;
+        self.prompts.clear();
         if let Some((msg, style)) = note {
             self.note(msg, style);
         }
@@ -333,14 +401,31 @@ impl App {
         }
     }
 
+    // ---- keys -----------------------------------------------------------
+
     fn on_key(&mut self, k: KeyEvent) {
         if k.kind == KeyEventKind::Release {
             return;
         }
-        if self.ask.is_some() {
-            return self.on_ask_key(k);
-        }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        match self.prompts.front() {
+            Some(Prompt::Approve { .. }) => return self.on_approve_key(k),
+            Some(Prompt::Question { options, .. }) => {
+                if let KeyCode::Char(c @ '1'..='9') = k.code {
+                    let i = c as usize - '1' as usize;
+                    if self.input.is_empty() && i < options.len() {
+                        let answer = options[i].clone();
+                        return self.answer(answer);
+                    }
+                }
+                if k.code == KeyCode::Esc || (ctrl && k.code == KeyCode::Char('c')) {
+                    self.answer(String::new());
+                    return self.cancel();
+                }
+            }
+            None => {}
+        }
+
         let alt = k.modifiers.contains(KeyModifiers::ALT);
         let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         let text_cols = self.cols.saturating_sub(6);
@@ -362,7 +447,9 @@ impl App {
             KeyCode::Enter => {
                 if !self.input.continues_line() {
                     let text = self.input.take();
-                    if !text.trim().is_empty() {
+                    if matches!(self.prompts.front(), Some(Prompt::Question { .. })) {
+                        self.answer(text);
+                    } else if !text.trim().is_empty() {
                         self.submit(text);
                     }
                 }
@@ -384,7 +471,7 @@ impl App {
         }
     }
 
-    fn on_ask_key(&mut self, k: KeyEvent) {
+    fn on_approve_key(&mut self, k: KeyEvent) {
         let answer = match k.code {
             KeyCode::Char('y' | 'Y' | '1') | KeyCode::Enter => Answer::Yes,
             KeyCode::Char('a' | 'A' | '2') => Answer::Always,
@@ -393,17 +480,28 @@ impl App {
                 self.cancel();
                 Answer::No
             }
+            KeyCode::BackTab => {
+                let mode = &self.agent.mode;
+                return mode.set(mode.get().next());
+            }
             _ => return,
         };
-        if let Some((_, reply)) = self.ask.take() {
+        if let Some(Prompt::Approve { reply, .. }) = self.prompts.pop_front() {
             let _ = reply.send(answer);
+        }
+    }
+
+    /// Answers the question at the front of the queue.
+    fn answer(&mut self, text: String) {
+        if let Some(Prompt::Question { reply, .. }) = self.prompts.pop_front() {
+            let _ = reply.send(text);
         }
     }
 
     fn ctrl_c(&mut self) {
         if !self.input.is_empty() {
             self.input.clear();
-        } else if self.busy.is_some() {
+        } else if self.work.is_some() {
             self.cancel();
         } else if self.quit_armed.is_some_and(|t| t.elapsed() < QUIT_WINDOW) {
             self.quit = true;
@@ -413,29 +511,35 @@ impl App {
     }
 
     fn cancel(&mut self) {
-        if self.busy.is_some() {
+        if self.work.is_some() {
             self.agent.cancel.store(true, Ordering::Relaxed);
-            self.activity = "Cancelling".into();
+            self.set_activity("stopping".into());
         }
     }
 
+    // ---- input ----------------------------------------------------------
+
     fn submit(&mut self, text: String) {
-        if let Some(cmd) = text.trim().strip_prefix('/') {
+        let trimmed = text.trim();
+        if let Some(cmd) = trimmed.strip_prefix('/') {
             return self.command(cmd);
         }
-        if let Some(note) = text.trim().strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
+        if let Some(note) = trimmed.strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
             return self.remember(note);
         }
-        if self.busy.is_some() {
+        if self.work.is_some() {
             self.queued = Some(text);
             return;
         }
         self.gap();
         self.emit(|cols, out| view::user(&text, cols, out));
-        self.block_start = true;
-        self.busy = Some(Instant::now());
-        self.activity = "Thinking".into();
-        let _ = self.agent.commands.send(Command::Send(text));
+        self.stream.block_start = true;
+        self.work = Some(Work::new());
+        let cmd = match trimmed.strip_prefix('!') {
+            Some(shell) => Command::Shell(shell.trim().to_string()),
+            None => Command::Send(text),
+        };
+        let _ = self.agent.commands.send(cmd);
     }
 
     fn remember(&mut self, note: &str) {
@@ -452,24 +556,47 @@ impl App {
         let (name, arg) = cmd.split_once(' ').map_or((cmd, ""), |(n, a)| (n, a.trim()));
         match name {
             "help" => self.note(HELP, ""),
+            "exit" | "quit" => self.quit = true,
             "memory" => {
                 let files = crate::prompt::memory_files();
-                let mut msg = String::from("Instruction files (AGENTS.md / CLAUDE.md):\n");
-                for f in &files {
-                    msg.push_str(&format!("  {}\n", f.display()));
-                }
-                if files.is_empty() {
-                    msg.push_str("  none yet\n");
-                }
-                msg.push_str("Start a message with # to add a note to ./AGENTS.md.");
+                let list: Vec<String> = files.iter().map(|f| format!("  {}", f.display())).collect();
+                let list = if list.is_empty() { "  none yet".to_string() } else { list.join("\n") };
+                let msg = format!(
+                    "Instruction files (AGENTS.md / CLAUDE.md):\n{list}\nStart a message with # to add a note."
+                );
                 self.note(&msg, "");
             }
-            "exit" | "quit" => self.quit = true,
+            "skills" => {
+                let msg = if self.skills.is_empty() {
+                    "No skills found. Put them in .claude/skills/<name>/SKILL.md.".to_string()
+                } else {
+                    format!("Skills (run with /name):\n  {}", self.skills.join("\n  "))
+                };
+                self.note(&msg, "");
+            }
+            "mcp" => {
+                let msg = if self.mcp.is_empty() {
+                    "No MCP servers. Add them to .mcp.json or \"mcp_servers\" in the config.".to_string()
+                } else {
+                    format!("MCP servers:\n  {}", self.mcp.join("\n  "))
+                };
+                self.note(&msg, "");
+            }
+            "stats" => {
+                let children = self.agent.tools.get().map(|t| t.child_pids()).unwrap_or_default();
+                let report = stats::report(self.started.elapsed(), &children);
+                self.note(&report, "");
+            }
             "cost" => {
                 let msg = format!("${:.4} so far · {} tokens in context", self.cost, self.context);
                 self.note(&msg, "");
             }
             "model" if arg.is_empty() => self.note(&format!("Model: {}", self.model), ""),
+            "model" => {
+                self.model = arg.to_string();
+                let _ = self.agent.commands.send(Command::Model(self.model.clone()));
+                self.note(&format!("Model set to {}.", self.model), DIM);
+            }
             "rename" if arg.is_empty() => {
                 let msg = match &self.name {
                     Some(n) => format!("This session is \"{n}\". /rename NAME to change it."),
@@ -482,17 +609,23 @@ impl App {
                 self.name = Some(arg.to_string());
                 self.note(&format!("Renamed to \"{arg}\". Resume it later with: claude-jr -r \"{arg}\""), DIM);
             }
-            "model" => {
-                self.model = arg.to_string();
-                let _ = self.agent.commands.send(Command::Model(self.model.clone()));
-                self.note(&format!("Model set to {}.", self.model), DIM);
-            }
-            "clear" if self.busy.is_some() => self.note("Wait for the current turn to finish.", RED),
+            "clear" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
             "clear" => {
                 let _ = self.agent.commands.send(Command::Clear);
                 self.context = 0;
                 self.name = None;
                 self.note("Started a new conversation.", DIM);
+            }
+            _ if self.skills.iter().any(|s| s == name) => {
+                if self.work.is_some() {
+                    return self.note("Wait for the current turn to finish.", RED);
+                }
+                self.gap();
+                self.emit(|cols, out| view::user(&format!("/{cmd}"), cols, out));
+                self.stream.block_start = true;
+                self.work = Some(Work::new());
+                let skill = Command::Skill { name: name.to_string(), args: arg.to_string() };
+                let _ = self.agent.commands.send(skill);
             }
             _ => self.note(&format!("Unknown command /{name}. Try /help."), RED),
         }
@@ -500,54 +633,42 @@ impl App {
 
     // ---- live area ------------------------------------------------------
 
-    /// The bottom area: partial streaming lines, status, input or approval
-    /// prompt, footer. Returns its lines and the cursor position.
+    /// The bottom area: partial streaming lines, status, prompt or input box,
+    /// footer. Returns its lines and the cursor position.
     fn live(&self) -> (Vec<String>, Option<(usize, usize)>) {
         let cols = self.cols;
         let mut out = Vec::new();
-        if !self.thinking.is_empty() {
-            view::thinking(&text::clean(&self.thinking), cols, &mut out);
+        if !self.stream.thinking.is_empty() {
+            view::thinking(&text::clean(&self.stream.thinking), cols, &mut out);
         }
-        if !self.text.is_empty() {
-            let lead = if self.block_start { span("● ", ORANGE) } else { span("  ", "") };
-            let mut md = self.md;
-            md.line(&text::clean(&self.text), cols, lead, &mut out);
+        if !self.stream.text.is_empty() {
+            let lead = if self.stream.block_start { span("● ", ORANGE) } else { span("  ", "") };
+            let mut md = self.stream.md;
+            md.line(&text::clean(&self.stream.text), cols, lead, &mut out);
         }
-        if let Some(since) = self.busy.filter(|_| self.ask.is_none()) {
-            let elapsed = since.elapsed();
-            out.push(view::status(&self.activity, elapsed.as_secs(), elapsed.as_millis(), cols));
+        if let Some(w) = self.work.as_ref().filter(|_| self.prompts.is_empty()) {
+            if !out.is_empty() || !self.last_blank {
+                out.push(String::new());
+            }
+            out.push(view::status(&w.activity, w.since.elapsed(), w.streamed / 4, cols));
         }
         out.push(String::new());
 
-        let cursor = match &self.ask {
-            Some((label, _)) => {
-                view::ask(label, cols, &mut out);
+        let cursor = match self.prompts.front() {
+            Some(Prompt::Approve { label, .. }) => {
+                view::approve(label, cols, &mut out);
                 None
             }
+            Some(Prompt::Question { question, options, .. }) => {
+                view::question(question, options, cols, &mut out);
+                Some(view::input_box(&self.input, "type an answer, or press a number", cols, &mut out))
+            }
             None => {
-                let hint = if self.busy.is_some() { "type to queue a message" } else { "ask anything, or /help" };
+                let hint = if self.work.is_some() { "type to queue a message" } else { "ask anything, or /help" };
                 Some(view::input_box(&self.input, hint, cols, &mut out))
             }
         };
-
-        let queued;
-        let left = if self.quit_armed.is_some_and(|t| t.elapsed() < QUIT_WINDOW) {
-            span("press ctrl-c again to quit", DIM)
-        } else if let Some(q) = &self.queued {
-            queued = format!("queued: {}", q.lines().next().unwrap_or(""));
-            span(&queued, DIM)
-        } else {
-            match self.agent.mode.get() {
-                Mode::Default => span("shift+tab to change mode", DIM),
-                Mode::AcceptEdits => span("⏵⏵ accept edits on (shift+tab to cycle)", ORANGE),
-                Mode::Plan => span("⏸ plan mode on (shift+tab to cycle)", CYAN),
-                Mode::Bypass => span("⏵⏵ skip permissions on (shift+tab to cycle)", RED),
-            }
-        };
-        let sandbox = if crate::sandbox::active() { "sandbox · " } else { "" };
-        let name = self.name.as_deref().map(|n| format!("{sandbox}{n} · ")).unwrap_or_else(|| sandbox.to_string());
-        let right = format!("{name}{} · {}k tokens · ${:.2}", self.model, self.context / 1000, self.cost);
-        out.push(view::footer(left, &right, cols));
+        out.push(self.footer());
 
         // Never taller than the screen, or the cursor math breaks.
         let max = self.rows.max(2) - 1;
@@ -555,8 +676,58 @@ impl App {
         out.drain(..extra);
         (out, cursor.map(|(r, c)| (r.saturating_sub(extra), c)))
     }
+
+    fn footer(&self) -> String {
+        let queued;
+        let mut left = Vec::new();
+        if self.quit_armed.is_some_and(|t| t.elapsed() < QUIT_WINDOW) {
+            left.push(span("press ctrl-c again to quit", DIM));
+        } else if let Some(q) = &self.queued {
+            queued = format!("queued: {}", q.lines().next().unwrap_or(""));
+            left.push(span(&queued, DIM));
+        } else {
+            match self.agent.mode.get() {
+                Mode::Default => {}
+                Mode::AcceptEdits => left.push(span("⏵⏵ accept edits", ORANGE)),
+                Mode::Plan => left.push(span("⏸ plan mode", CYAN)),
+                Mode::Auto => left.push(span("◆ auto mode", GREEN)),
+                Mode::Bypass => left.push(span("⏵⏵ skip permissions", RED)),
+            }
+            let hint = if self.work.is_some() { "esc to stop" } else { "shift+tab to change mode" };
+            if !left.is_empty() {
+                left.push(span(" · ", DIM));
+            }
+            left.push(span(hint, DIM));
+        }
+
+        let window = crate::api::Caps::of(&self.model).window;
+        let mut right = Vec::new();
+        if crate::sandbox::active() {
+            right.push("sandbox".to_string());
+        }
+        if let Some(n) = &self.name {
+            right.push(n.clone());
+        }
+        right.push(self.model.clone());
+        right.push(format!("{}/{}", tokens(self.context), tokens(window)));
+        right.push(format!("${:.2}", self.cost));
+        let jobs = self.agent.tools.get().map_or(0, |t| t.running_jobs());
+        if jobs > 0 {
+            right.push(format!("{jobs} job{}", if jobs == 1 { "" } else { "s" }));
+        }
+        view::footer(&left, &right.join(" · "), self.cols)
+    }
 }
 
 fn size(bytes: usize) -> String {
     if bytes < 1024 { format!("{bytes} B") } else { format!("{:.1} KB", bytes as f64 / 1024.0) }
+}
+
+/// 950 -> "950", 12_400 -> "12k", 1_000_000 -> "1M".
+fn tokens(n: u64) -> String {
+    match n {
+        0..1000 => n.to_string(),
+        1000..1_000_000 => format!("{}k", n / 1000),
+        _ => format!("{}M", n / 1_000_000),
+    }
 }

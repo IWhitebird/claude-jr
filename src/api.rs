@@ -13,6 +13,7 @@ const VERSION: &str = "2026-10-21";
 const BETA_FALLBACK: &str = "server-side-fallback-2026-07-01";
 const BETA_UPDATES: &str = "thinking-display-updates-2026-08-18";
 const BETA_COMPACT: &str = "compact-2026-01-12";
+const BETA_MCP: &str = "mcp-client-2025-11-20";
 const MAX_ATTEMPTS: u32 = 5;
 
 /// What a model supports beyond the basic Messages API.
@@ -24,6 +25,8 @@ pub struct Caps {
     pub updates: bool,
     /// Server-side compaction near the context limit.
     pub compact: bool,
+    /// Context window in tokens.
+    pub window: u64,
 }
 
 impl Caps {
@@ -36,7 +39,8 @@ impl Caps {
             | "claude-sonnet-4-6" => (false, false, true),
             _ => (false, false, false),
         };
-        Caps { fallback, updates, compact }
+        let window = if model.starts_with("claude-haiku-4") { 200_000 } else { 1_000_000 };
+        Caps { fallback, updates, compact, window }
     }
 
     fn betas(self) -> String {
@@ -87,6 +91,9 @@ pub struct Request<'a> {
     pub context_management: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<Value>,
+    /// Remote MCP servers for the API's connector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<&'a RawValue>,
 }
 
 impl<'a> Request<'a> {
@@ -103,6 +110,7 @@ impl<'a> Request<'a> {
             fallbacks: caps.fallback.then_some("default"),
             context_management: caps.compact.then(|| json!({ "edits": [{ "type": "compact_20260112" }] })),
             output_config: effort.map(|e| json!({ "effort": e })),
+            mcp_servers: None,
         }
     }
 }
@@ -179,7 +187,10 @@ impl Client {
         mut on: impl FnMut(Chunk),
     ) -> Result<Reply> {
         let head = serde_json::to_vec(req)?;
-        let betas = Caps::of(req.model).betas();
+        let mut betas = Caps::of(req.model).betas();
+        if req.mcp_servers.is_some() {
+            betas = if betas.is_empty() { BETA_MCP.to_string() } else { format!("{betas},{BETA_MCP}") };
+        }
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -319,7 +330,7 @@ fn read_sse(r: impl BufRead, cancel: &AtomicBool, on: &mut impl FnMut(Chunk)) ->
             }
             "content_block_start" => {
                 let block = ev["content_block"].take();
-                if block["type"] == "tool_use" {
+                if block["type"] == "tool_use" || block["type"] == "mcp_tool_use" {
                     on(Chunk::ToolStart(block["name"].as_str().unwrap_or("")));
                 }
                 content.push(block);

@@ -3,6 +3,7 @@
 use super::input::Input;
 use super::text::*;
 use crate::tools::Diff;
+use std::time::Duration;
 
 const MAX_DIFF_LINES: usize = 30;
 const MAX_INPUT_ROWS: usize = 8;
@@ -90,33 +91,78 @@ pub fn input_box(input: &Input, hint: &str, cols: usize, out: &mut Vec<String>) 
     (top + 1 + cur_row - first, 4 + cur_col)
 }
 
-pub fn ask(label: &str, cols: usize, out: &mut Vec<String>) {
-    let inner = cols.saturating_sub(4);
-    let question = fit(&format!("Allow {}?", clean(label)), inner);
-    let keys = fit("y yes · a always (this session) · n no", inner);
+pub fn approve(label: &str, cols: usize, out: &mut Vec<String>) {
+    let question = format!("Allow {}?", clean(label));
+    boxed(&[(&question, BOLD), ("y yes · a always (this session) · n no", DIM)], cols, out);
+}
+
+/// A question from the model, with numbered options.
+pub fn question(question: &str, options: &[String], cols: usize, out: &mut Vec<String>) {
+    let question = clean(question);
+    let numbered: Vec<String> = options.iter().enumerate().map(|(i, o)| format!("{}. {}", i + 1, clean(o))).collect();
+    let mut rows: Vec<(&str, &'static str)> = vec![(&question, BOLD)];
+    rows.extend(numbered.iter().map(|o| (o.as_str(), "")));
+    boxed(&rows, cols, out);
+}
+
+/// Text in an orange box, each entry word-wrapped to fit.
+fn boxed(rows: &[(&str, &'static str)], cols: usize, out: &mut Vec<String>) {
+    let inner = cols.saturating_sub(4).max(4);
     out.push(format!("{ORANGE}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))));
-    for (text, style) in [(question, BOLD), (keys, DIM)] {
-        let pad = inner.saturating_sub(width(&text));
-        out.push(format!("{ORANGE}│{RESET} {style}{text}{RESET}{} {ORANGE}│{RESET}", " ".repeat(pad)));
+    for (text, style) in rows {
+        let mut lines = Vec::new();
+        wrap(&[span(text, style)], inner, span("", ""), span("", ""), &mut lines);
+        for line in lines {
+            let pad = inner.saturating_sub(width(&strip(&line)));
+            out.push(format!("{ORANGE}│{RESET} {line}{} {ORANGE}│{RESET}", " ".repeat(pad)));
+        }
     }
     out.push(format!("{ORANGE}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))));
 }
 
-pub fn status(activity: &str, secs: u64, millis: u128, cols: usize) -> String {
-    const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frame = SPINNER[(millis / 100) as usize % SPINNER.len()];
-    let tail = format!(" ({secs}s · esc to cancel)");
-    let act = fit(&clean(activity), cols.saturating_sub(width(&tail) + 4));
-    format!("{ORANGE}{frame} {act}…{RESET}{DIM}{tail}{RESET}")
+/// Drops escape codes, to measure styled text.
+fn strip(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut esc = false;
+    for c in s.chars() {
+        match c {
+            '\x1b' => esc = true,
+            'm' if esc => esc = false,
+            _ if esc => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The working line: a breathing dot, what's happening, how long, and a
+/// rough count of tokens written so far.
+pub fn status(activity: &str, elapsed: Duration, tokens: usize, cols: usize) -> String {
+    const BREATH: [char; 4] = ['·', '•', '●', '•'];
+    let dot = BREATH[(elapsed.as_millis() / 300) as usize % BREATH.len()];
+    let secs = elapsed.as_secs();
+    let mut tail = if secs < 60 { format!(" · {secs}s") } else { format!(" · {}m {:02}s", secs / 60, secs % 60) };
+    if tokens > 0 {
+        tail.push_str(&format!(" · ~{tokens} tokens"));
+    }
+    let act = fit(&clean(activity), cols.saturating_sub(width(&tail) + 3));
+    format!("{ORANGE}{dot} {act}{RESET}{DIM}{tail}{RESET}")
 }
 
 /// One line: `left` dimmed on the left, `right` dimmed on the right.
-/// One line: `left` in its own style on the left, `right` dimmed on the right.
-pub fn footer(left: Span, right: &str, cols: usize) -> String {
+/// One line: styled pieces on the left, `right` dimmed on the right.
+pub fn footer(left: &[Span], right: &str, cols: usize) -> String {
     let right = fit(right, cols.saturating_sub(2));
-    let text = fit(left.text, cols.saturating_sub(width(&right) + 3));
-    let pad = cols.saturating_sub(width(&text) + width(&right) + 2);
-    format!(" {}{text}{RESET}{}{DIM}{right}{RESET}", left.style, " ".repeat(pad))
+    let mut room = cols.saturating_sub(width(&right) + 3);
+    let (mut line, mut used) = (String::from(" "), 1);
+    for s in left {
+        let text = fit(s.text, room);
+        room = room.saturating_sub(width(&text));
+        used += width(&text);
+        line.push_str(&format!("{}{text}{RESET}", s.style));
+    }
+    let pad = cols.saturating_sub(used + width(&right) + 1);
+    format!("{line}{}{DIM}{right}{RESET}", " ".repeat(pad))
 }
 
 /// The mascot as pixel art: each text row shows two pixel rows using half

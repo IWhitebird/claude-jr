@@ -50,6 +50,7 @@ dependencies = [
  "crossterm",
  "serde",
  "serde_json",
+ "signal-hook",
  "unicode-width",
  "ureq",
 ]

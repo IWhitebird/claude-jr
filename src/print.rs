@@ -2,7 +2,7 @@
 
 use crate::agent::{self, Command, Event};
 use std::io::Write;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Receiver};
 
 /// Returns true if the turn finished without an error.
 pub fn run(cfg: agent::Config, prompt: String) -> bool {
@@ -10,14 +10,20 @@ pub fn run(cfg: agent::Config, prompt: String) -> bool {
     let agent = agent::spawn(cfg, move |e| {
         let _ = tx.send(e);
     });
-    if agent.commands.send(Command::Send(prompt)).is_err() {
-        return false;
+    crate::signals::watch(agent.tools.clone(), false);
+    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx);
+    if let Some(tools) = agent.tools.get() {
+        tools.shutdown();
     }
+    ok
+}
 
+/// Prints events until the turn ends.
+fn print(events: Receiver<Event>) -> bool {
     let mut out = std::io::stdout().lock();
     // Whether stdout / stderr were left in the middle of a line.
     let (mut mid_out, mut mid_err) = (false, false);
-    for ev in rx {
+    for ev in events {
         match ev {
             Event::Text(t) => {
                 let _ = out.write_all(t.as_bytes());
@@ -44,16 +50,23 @@ pub fn run(cfg: agent::Config, prompt: String) -> bool {
                 }
             }
             Event::Notice(msg) => eprintln!("{msg}"),
+            // Nobody is there to answer; the agent was told so (interactive: false).
             Event::Ask { reply, .. } => {
                 let _ = reply.send(agent::Answer::No);
             }
-            Event::Done => return true,
-            Event::Cancelled => return true,
+            Event::Question { reply, .. } => {
+                let _ = reply.send(String::new());
+            }
+            Event::Done | Event::Cancelled => return true,
             Event::Error(e) => {
                 eprintln!("error: {e}");
                 return false;
             }
-            Event::Ready { .. } | Event::ToolStart(_) | Event::ToolInput(_) | Event::Usage(_) => {}
+            Event::Ready { .. }
+            | Event::ToolStart(_)
+            | Event::ToolInput(_)
+            | Event::Activity(_)
+            | Event::Usage { .. } => {}
         }
     }
     false

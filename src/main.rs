@@ -6,6 +6,7 @@ mod print;
 mod prompt;
 mod sandbox;
 mod session;
+mod signals;
 mod tools;
 mod ui;
 
@@ -118,6 +119,9 @@ fn run() -> Result<ExitCode, String> {
         mode: if args.yes { Mode::Bypass } else { Mode::Default },
         allow: file.allow,
         resume: args.resume,
+        auto_model: file.auto_model.unwrap_or_else(|| "claude-haiku-5-5".into()),
+        mcp: file.mcp_servers,
+        interactive,
     };
 
     match args.prompt {

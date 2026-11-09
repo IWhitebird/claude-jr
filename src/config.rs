@@ -4,10 +4,13 @@
 //   "model": "claude-sonnet-5-5",
 //   "effort": "high",
 //   "allow": ["bash:cargo *", "bash:git status", "edit"],
-//   "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": ["/home/me/.m2"] }
+//   "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": ["/home/me/.m2"] },
+//   "mcp_servers": { "files": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] } }
 // }
 
+use crate::tools::mcp::ServerConfig;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Deserialize, Default)]
@@ -15,10 +18,15 @@ use std::path::PathBuf;
 pub struct Config {
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The model auto mode uses to review commands (default: claude-haiku-5-5).
+    pub auto_model: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// MCP servers, in the same shape as .mcp.json's "mcpServers".
+    #[serde(default)]
+    pub mcp_servers: BTreeMap<String, ServerConfig>,
 }
 
 #[derive(Deserialize, Default)]
@@ -43,6 +51,8 @@ impl Config {
             let file: Config = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             cfg.model = file.model.or(cfg.model);
             cfg.effort = file.effort.or(cfg.effort);
+            cfg.auto_model = file.auto_model.or(cfg.auto_model);
+            cfg.mcp_servers.extend(file.mcp_servers);
             cfg.allow.extend(file.allow);
             cfg.sandbox.enabled |= file.sandbox.enabled;
             cfg.sandbox.read.extend(file.sandbox.read);
