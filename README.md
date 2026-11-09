@@ -347,6 +347,7 @@ bench/
 | Idle and busy CPU, memory | `bench/cpu.sh` |
 | The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
 | Resizing leaves nothing twice (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
+| SWE-bench Verified, one task at a time in Docker | `bench/swe/run.py --dry-run` (setup at the top of the file) |
 | Memory budget over a long session | `bench/mem.sh` |
 | In a small container | `CPUS=0.05 MEMORY=16m bench/box.sh` |
 | A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |
