@@ -391,6 +391,7 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 
 #[cfg(test)]
 pub(crate) fn test_tools(name: &str) -> (Tools, PathBuf) {
+    test_home();
     let dir = test_dir(name);
     (Tools::new(dir.clone(), Vec::new(), mcp::Servers::default()), dir)
 }

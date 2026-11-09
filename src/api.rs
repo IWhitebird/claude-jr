@@ -339,46 +339,68 @@ impl Client {
     }
 }
 
-/// The request body as a list of byte slices read in order, so the history is
-/// sent from where it's stored instead of being copied into one buffer:
-/// `{"messages":[` m1 `,` m2 ... `],` + the rest of the request.
+/// The request body, read in order without copying the history into one
+/// buffer: `{"messages":[` m1 `,` m2 ... `],` + the rest of the request.
+/// Stored images are encoded from disk as they're read.
 struct Body<'a> {
-    parts: Vec<&'a [u8]>,
+    parts: Vec<Part<'a>>,
     len: usize,
     part: usize,
     offset: usize,
 }
 
+enum Part<'a> {
+    Bytes(&'a [u8]),
+    Image(crate::images::Encoder),
+}
+
 impl<'a> Body<'a> {
     fn new<M: AsRef<str>>(head: &'a [u8], messages: &'a [M]) -> Self {
+        use crate::images::{Encoder, Piece};
         let mut parts = Vec::with_capacity(messages.len() * 2 + 2);
-        parts.push(&b"{\"messages\":["[..]);
+        parts.push(Part::Bytes(b"{\"messages\":["));
         for (i, m) in messages.iter().enumerate() {
             if i > 0 {
-                parts.push(b",");
+                parts.push(Part::Bytes(b","));
             }
-            parts.push(m.as_ref().as_bytes());
+            for piece in crate::images::pieces(m.as_ref()) {
+                parts.push(match piece {
+                    Piece::Text(t) => Part::Bytes(t),
+                    Piece::Image(path) => Part::Image(Encoder::open(&path)),
+                });
+            }
         }
-        parts.push(b"],");
-        parts.push(&head[1..]); // the request object without its opening brace
-        let len = parts.iter().map(|p| p.len()).sum();
+        parts.push(Part::Bytes(b"],"));
+        parts.push(Part::Bytes(&head[1..])); // the request object without its opening brace
+        let len = parts
+            .iter()
+            .map(|p| match p {
+                Part::Bytes(b) => b.len(),
+                Part::Image(e) => e.len,
+            })
+            .sum();
         Body { parts, len, part: 0, offset: 0 }
     }
 }
 
 impl std::io::Read for Body<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        while let Some(p) = self.parts.get(self.part) {
-            let rest = &p[self.offset..];
-            if rest.is_empty() {
-                self.part += 1;
-                self.offset = 0;
-                continue;
+        while let Some(p) = self.parts.get_mut(self.part) {
+            let n = match p {
+                Part::Bytes(b) => {
+                    let rest = &b[self.offset..];
+                    let n = rest.len().min(buf.len());
+                    buf[..n].copy_from_slice(&rest[..n]);
+                    self.offset += n;
+                    n
+                }
+                Part::Image(e) => e.read(buf)?,
+            };
+            if n > 0 {
+                return Ok(n);
             }
-            let n = rest.len().min(buf.len());
-            buf[..n].copy_from_slice(&rest[..n]);
-            self.offset += n;
-            return Ok(n);
+            self.part += 1;
+            self.offset = 0;
         }
         Ok(0)
     }

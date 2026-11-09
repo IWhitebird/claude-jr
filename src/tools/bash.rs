@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 
 /// Recent output kept per background job.
 const JOB_TAIL: usize = 64 * 1024;
+/// Finished jobs kept around (with their output) for the jobs tool.
+const KEEP_FINISHED: usize = 8;
 
 pub static BASH: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
@@ -227,8 +229,18 @@ impl Jobs {
     fn start(&self, cmd: &str, cwd: &std::path::Path) -> Output {
         let mut child = spawn(&format!("exec 2>&1\n{cmd}"), cwd)?;
         let mut list = self.0.list.lock().unwrap();
+        // Drop the oldest finished jobs and their output; running ones stay.
+        let finished = list.iter().filter(|j| j.status.lock().unwrap().is_some()).count();
+        let mut extra = finished.saturating_sub(KEEP_FINISHED - 1);
+        list.retain(|j| {
+            let done = j.status.lock().unwrap().is_some();
+            let drop = done && extra > 0;
+            extra -= usize::from(drop);
+            !drop
+        });
+        let id = list.last().map_or(1, |j| j.id + 1);
         let job = Arc::new(Job {
-            id: list.len() + 1,
+            id,
             command: cmd.to_string(),
             pid: child.id(),
             started: Instant::now(),
