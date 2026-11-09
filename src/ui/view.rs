@@ -179,47 +179,69 @@ pub fn footer(left: &[Span], right: &str, cols: usize) -> String {
     format!("{line}{}{DIM}{right}{RESET}", " ".repeat(pad))
 }
 
-/// The mascot as pixel art: each text row shows two pixel rows using half
-/// blocks. Same design as assets/logo.svg, smaller.
-const MASCOT: [&[u8; 12]; 8] = [
-    b"...GGssGG...",
-    b".....ss.....",
-    b"..OOOOOOOO..",
-    b".OOOOOOOOOO.",
-    b".OOKKOOKKOO.",
-    b".OOKKOOKKOO.",
-    b".OPOOKKOOPO.",
-    b"..DD....DD..",
-];
+/// The mascot as pixel art, from assets/mascot.txt (the same pixels as the
+/// README logo). Each text row shows two pixel rows using half blocks.
+pub fn mascot() -> Vec<String> {
+    const ART: &str = include_str!("../../assets/mascot.txt");
+    let rows: Vec<&[u8]> = ART.lines().filter(|l| !l.starts_with('#') && !l.is_empty()).map(str::as_bytes).collect();
 
-/// 256-color palette index for a mascot pixel; None is see-through.
-fn pixel(c: u8) -> Option<u8> {
+    // Crop to the pixels actually drawn.
+    let used = |r: &&[u8]| r.iter().any(|&c| c != b'.');
+    let (top, bottom) = (rows.iter().position(used).unwrap_or(0), rows.iter().rposition(used).unwrap_or(0));
+    let cols = |r: &[u8]| r.iter().position(|&c| c != b'.');
+    let left = rows.iter().filter_map(|r| cols(r)).min().unwrap_or(0);
+    let right = rows.iter().filter_map(|r| r.iter().rposition(|&c| c != b'.')).max().unwrap_or(0);
+    let mut art: Vec<&[u8]> = rows[top..=bottom].iter().map(|r| &r[left..=right]).collect();
+    let blank = vec![b'.'; right - left + 1];
+    if art.len() % 2 == 1 {
+        art.push(&blank);
+    }
+
+    let truecolor = std::env::var("COLORTERM").is_ok_and(|c| c == "truecolor" || c == "24bit");
+    art.chunks(2)
+        .map(|pair| {
+            let mut line = String::new();
+            for (&t, &b) in pair[0].iter().zip(pair[1]) {
+                let (fg, bg) = (pixel(t), pixel(b));
+                let code = |rgb: (u8, u8, u8), layer: u8| {
+                    if truecolor {
+                        format!("{layer}8;2;{};{};{}", rgb.0, rgb.1, rgb.2)
+                    } else {
+                        format!("{layer}8;5;{}", nearest_256(rgb))
+                    }
+                };
+                match (fg, bg) {
+                    (None, None) => line.push(' '),
+                    (Some(t), None) => line.push_str(&format!("\x1b[{}m▀{RESET}", code(t, 3))),
+                    (None, Some(b)) => line.push_str(&format!("\x1b[{}m▄{RESET}", code(b, 3))),
+                    (Some(t), Some(b)) => line.push_str(&format!("\x1b[{};{}m▀{RESET}", code(t, 3), code(b, 4))),
+                }
+            }
+            line
+        })
+        .collect()
+}
+
+/// Colors from assets/logo.svg; None is see-through.
+fn pixel(c: u8) -> Option<(u8, u8, u8)> {
     Some(match c {
-        b'O' => 173, // orange
-        b'D' => 130, // darker orange
-        b'K' => 235, // eyes, mouth
-        b'W' => 231, // eye shine
-        b'P' => 217, // cheeks
-        b'G' => 107, // leaves
-        b's' => 65,  // stem
+        b'O' => (0xD9, 0x77, 0x57), // orange
+        b'D' => (0xB9, 0x58, 0x3A), // darker orange
+        b'K' => (0x2B, 0x21, 0x1C), // eyes, mouth
+        b'W' => (0xFF, 0xFF, 0xFF), // eye shine
+        b'P' => (0xF2, 0xA4, 0x8B), // cheeks
+        b'G' => (0x8D, 0xBF, 0x5A), // leaves
+        b's' => (0x5E, 0x8A, 0x3A), // stem
         _ => return None,
     })
 }
 
-pub fn mascot() -> [String; 4] {
-    std::array::from_fn(|row| {
-        let (top, bottom) = (MASCOT[row * 2], MASCOT[row * 2 + 1]);
-        let mut line = String::new();
-        for (&t, &b) in top.iter().zip(bottom.iter()) {
-            match (pixel(t), pixel(b)) {
-                (None, None) => line.push(' '),
-                (Some(t), None) => line.push_str(&format!("\x1b[38;5;{t}m▀{RESET}")),
-                (None, Some(b)) => line.push_str(&format!("\x1b[38;5;{b}m▄{RESET}")),
-                (Some(t), Some(b)) => line.push_str(&format!("\x1b[38;5;{t};48;5;{b}m▀{RESET}")),
-            }
-        }
-        line
-    })
+/// The closest color in the 256-color palette's 6x6x6 cube, for terminals
+/// without 24-bit color.
+fn nearest_256((r, g, b): (u8, u8, u8)) -> u8 {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let idx = |v: u8| (0..6).min_by_key(|&i| (LEVELS[i] as i32 - v as i32).abs()).unwrap_or(0) as u8;
+    16 + 36 * idx(r) + 6 * idx(g) + idx(b)
 }
 
 #[cfg(test)]

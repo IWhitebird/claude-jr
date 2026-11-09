@@ -1,0 +1,19 @@
+# The claude-jr mascot, one character per pixel. Drawn in the terminal
+# header (src/ui/view.rs) and in assets/logo.svg (scripts/logo.py), so the
+# two always match. Edit this file, then run: python3 scripts/logo.py
+#
+#   O orange   D darker orange   K eyes, mouth   W eye shine
+#   P cheeks   G leaves          s stem          . see-through
+................
+....GGG..GGG....
+.....GGssGG.....
+.......ss.......
+...OOOOOOOOOO...
+..OOOOOOOOOOOO..
+..OOWKOOOOWKOO..
+..OOKKOOOOKKOO..
+..OPOOOOOOOOPO..
+..OOOOKOOKOOOO..
+..OOOOOKKOOOOO..
+..DDDDDDDDDDDD..
+...DD......DD...

@@ -239,21 +239,27 @@ impl App {
             _ => cwd,
         };
         let version = env!("CARGO_PKG_VERSION");
-        let [m0, m1, m2, m3] = view::mascot();
-        // A blank line between the shell prompt and the mascot.
-        self.commits.push(String::new());
         let sandbox = if crate::sandbox::active() {
             format!("{ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}")
         } else {
             String::new()
         };
-        self.commits.extend([
-            format!(" {m0}  {BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
-            format!(" {m1}  {DIM}{} · {cwd}{RESET}", self.model),
-            format!(" {m2}  {DIM}/help for commands · shift+tab to change mode{RESET}"),
-            format!(" {m3}  {sandbox}"),
-            String::new(),
-        ]);
+        let text = [
+            format!("{BOLD_ORANGE}claude-jr{RESET} {DIM}{version}{RESET}"),
+            format!("{DIM}{} · {cwd}{RESET}", self.model),
+            format!("{DIM}/help for commands · shift+tab to change mode{RESET}"),
+            sandbox,
+        ];
+        // A blank line between the shell prompt and the mascot, then the
+        // mascot with the text beside its middle rows.
+        self.commits.push(String::new());
+        let art = view::mascot();
+        let offset = art.len().saturating_sub(text.len()) / 2;
+        for (i, row) in art.iter().enumerate() {
+            let words = i.checked_sub(offset).and_then(|k| text.get(k)).map_or("", String::as_str);
+            self.commits.push(format!(" {row}   {words}"));
+        }
+        self.commits.push(String::new());
         self.last_blank = true;
     }
 
