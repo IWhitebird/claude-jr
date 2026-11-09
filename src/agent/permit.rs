@@ -75,6 +75,13 @@ git push, force push, history rewrites, hard resets; sending files, secrets or e
 over the network; sudo, system packages and system settings; killing processes the agent didn't \
 start; anything destructive or hard to undo that the user didn't ask for. When unsure, BLOCK.";
 
+/// Whether an edit-level call may skip asking in accept-edits and auto modes:
+/// inside the project, and not a place that changes what runs or what the
+/// agent trusts (git hooks, settings, memory notes).
+fn auto_edit_ok(name: &str, subject: &str) -> bool {
+    name != "memory" && !permission::outside_project(subject) && !permission::sensitive(subject)
+}
+
 enum Verdict {
     Allow,
     Block(String),
@@ -88,7 +95,7 @@ impl Core {
         let access = tools::access(name);
         let mode = self.mode.get();
         let subject = ctx.tools.subject(name, input);
-        let inside_project = !permission::outside_project(&subject);
+        let inside_project = auto_edit_ok(name, &subject);
         match (mode, access) {
             (_, Access::Free) | (Mode::Bypass, _) => return Ok(()),
             (Mode::AcceptEdits | Mode::Auto, Access::Edit) if inside_project => return Ok(()),
@@ -174,6 +181,17 @@ mod tests {
         assert!(matches!(parse_verdict("  allow\n"), Verdict::Allow));
         assert!(matches!(parse_verdict("BLOCK: pushes to remote"), Verdict::Block(r) if r == "pushes to remote"));
         assert!(matches!(parse_verdict("I think this is fine"), Verdict::Unsure));
+    }
+
+    #[test]
+    fn auto_edits_skip_sensitive_paths() {
+        assert!(auto_edit_ok("edit", "src/main.rs"));
+        assert!(!auto_edit_ok("edit", ".git/hooks/pre-commit"));
+        assert!(!auto_edit_ok("write", ".mcp.json"));
+        assert!(!auto_edit_ok("write", ".claude/settings.json"));
+        assert!(!auto_edit_ok("edit", "/etc/hosts"));
+        assert!(!auto_edit_ok("edit", "../x"));
+        assert!(!auto_edit_ok("memory", "add: uses pnpm"));
     }
 
     #[test]

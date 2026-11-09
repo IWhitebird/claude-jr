@@ -19,6 +19,9 @@ found or did, including file paths and anything the other agent needs to act on.
 
 impl Core {
     pub fn subagent(&self, ctx: &Ctx, input: &Value) -> Output {
+        if !ctx.main {
+            return Err("subagents can't start subagents".into());
+        }
         let task = input["description"].as_str().unwrap_or("subagent");
         let prompt = input["prompt"].as_str().ok_or("missing prompt")?;
         let tools = ctx.tools.child();

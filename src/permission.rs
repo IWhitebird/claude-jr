@@ -10,6 +10,15 @@ pub fn outside_project(subject: &str) -> bool {
     subject.starts_with('/') || subject.starts_with("..")
 }
 
+/// True for files an edit must never get through on trust: git internals
+/// (hooks, config), and the agent's own settings and MCP server config.
+pub fn sensitive(subject: &str) -> bool {
+    subject.split('/').any(|c| {
+        let c = c.to_ascii_lowercase();
+        matches!(c.as_str(), ".git" | ".claude" | ".mcp.json" | ".claude-jr.json")
+    })
+}
+
 pub struct Rules(Vec<String>);
 
 impl Rules {
@@ -29,7 +38,7 @@ impl Rules {
             let (name, pattern) = rule.split_once(':').unwrap_or((rule, ""));
             name == tool
                 && match pattern {
-                    "" if matches!(tool, "write" | "edit") => !outside_project(subject),
+                    "" if matches!(tool, "write" | "edit") => !outside_project(subject) && !sensitive(subject),
                     "" => true,
                     p if compound => p == subject,
                     p => glob(p, subject),
@@ -40,7 +49,7 @@ impl Rules {
     /// The rule "always allow" adds: this exact command for bash, this exact file for
     /// write/edit outside the project, the whole tool otherwise.
     pub fn always(tool: &str, subject: &str) -> String {
-        if tool == "bash" || (matches!(tool, "write" | "edit") && outside_project(subject)) {
+        if tool == "bash" || (matches!(tool, "write" | "edit") && (outside_project(subject) || sensitive(subject))) {
             format!("{tool}:{subject}")
         } else {
             tool.to_string()
@@ -105,6 +114,33 @@ mod tests {
         assert!(r.allows("edit", "/etc/hosts"));
         assert!(!r.allows("edit", "/etc/passwd"));
         assert_eq!(Rules::always("edit", "src/a.rs"), "edit");
+    }
+
+    #[test]
+    fn sensitive_paths() {
+        for p in [
+            ".git/hooks/pre-commit",
+            ".git/config",
+            "a/.git/config",
+            ".mcp.json",
+            ".claude-jr.json",
+            ".claude/settings.json",
+            ".GIT/config",
+        ] {
+            assert!(sensitive(p), "{p}");
+        }
+        for p in ["src/main.rs", ".gitignore", ".github/ci.yml", "mcp.json"] {
+            assert!(!sensitive(p), "{p}");
+        }
+        // A bare rule doesn't cover them; an exact-path rule does.
+        let r = Rules::new(vec!["edit".into(), "write".into()]);
+        assert!(!r.allows("edit", ".git/hooks/pre-commit"));
+        assert!(!r.allows("write", ".mcp.json"));
+        assert!(r.allows("edit", "src/a.rs"));
+        assert_eq!(Rules::always("edit", ".mcp.json"), "edit:.mcp.json");
+        let r = Rules::new(vec![Rules::always("edit", ".mcp.json")]);
+        assert!(r.allows("edit", ".mcp.json"));
+        assert!(!r.allows("edit", ".git/config"));
     }
 
     #[test]

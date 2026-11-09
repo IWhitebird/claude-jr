@@ -14,9 +14,9 @@ const MAX_BYTES: usize = 8 * 1024;
 pub static MEMORY: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
         "name": "memory",
-        "description": "Your notes about this user and project, kept across sessions and shown to you at the \\
-            start of each one. Add a short note when you learn something durable: a preference the user states, \\
-            a project convention, a command that works, a mistake to avoid. Remove notes that turn out wrong or \\
+        "description": "Your notes about this user and project, kept across sessions and shown to you at the \
+            start of each one. Add a short note when you learn something durable: a preference the user states, \
+            a project convention, a command that works, a mistake to avoid. Remove notes that turn out wrong or \
             outdated. Don't save what's already in the code or the instruction files, or details of the current task.",
         "input_schema": {
             "type": "object",
@@ -84,6 +84,13 @@ pub fn update(input: &Value) -> Output {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn description_reads_correctly() {
+        let d = MEMORY.get();
+        assert!(!d.contains("\\\\"), "{d}");
+        assert!(d.contains("shown to you at the start of each one"));
+    }
 
     #[test]
     fn add_and_remove() {

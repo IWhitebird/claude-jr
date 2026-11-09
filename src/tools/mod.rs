@@ -41,8 +41,9 @@ pub enum Access {
 
 pub fn access(name: &str) -> Access {
     match name {
-        "read" | "todo" | "ask_user" | "skill" | "agent" | "jobs" | "memory" => Access::Free,
-        "write" | "edit" => Access::Edit,
+        "read" | "todo" | "ask_user" | "skill" | "agent" | "jobs" => Access::Free,
+        // Notes are loaded into every future session's system prompt.
+        "write" | "edit" | "memory" => Access::Edit,
         _ => Access::Exec, // bash and MCP tools
     }
 }
@@ -64,6 +65,8 @@ pub struct Diff {
 /// its own shell and read history but the same skills and MCP servers.
 pub struct Tools {
     root: PathBuf,
+    /// A subagent's tools: no memory.
+    sub: bool,
     /// The shell's working directory; `cd` carries over between calls.
     cwd: Mutex<PathBuf>,
     /// Files read so far, with their modified time at that moment.
@@ -83,6 +86,7 @@ impl Tools {
         Tools {
             cwd: Mutex::new(root.clone()),
             root,
+            sub: false,
             seen: Mutex::default(),
             jobs: bash::Jobs::default(),
             running: Mutex::default(),
@@ -97,6 +101,7 @@ impl Tools {
         Tools {
             cwd: Mutex::new(self.root.clone()),
             root: self.root.clone(),
+            sub: true,
             seen: Mutex::default(),
             jobs: bash::Jobs::default(),
             running: Mutex::default(),
@@ -146,6 +151,9 @@ impl Tools {
             "write" | "edit" | "read" => {
                 let p = input["path"].as_str().unwrap_or("");
                 let full = self.resolve(p);
+                if let Some(real) = self.escapes(&full) {
+                    return real.display().to_string();
+                }
                 // Outside the project: the full resolved path, never the raw text.
                 full.strip_prefix(&self.root).unwrap_or(&full).display().to_string()
             }
@@ -195,6 +203,7 @@ impl Tools {
             "jobs" => bash::jobs(self, input, cancel),
             "todo" => todo::update(self, input),
             "skill" => skill::load(&self.skills, input),
+            "memory" if self.sub => Err("subagents can't change memory".into()),
             "memory" => memory::update(input),
             n if mcp::is_mcp(n) => self.mcp.call(n, input, cancel),
             _ => Err(format!("unknown tool: {name}")),
@@ -252,6 +261,30 @@ impl Tools {
     fn resolve(&self, p: &str) -> PathBuf {
         let p = Path::new(p);
         normalize(&if p.is_absolute() { p.to_path_buf() } else { self.root.join(p) })
+    }
+}
+
+impl Tools {
+    /// If `full` (already normalized) is inside the project by its text but
+    /// really leads outside through a symlink, the real path. The deepest
+    /// existing ancestor is resolved; the part that doesn't exist yet can't
+    /// be a link.
+    fn escapes(&self, full: &Path) -> Option<PathBuf> {
+        full.strip_prefix(&self.root).ok()?;
+        let root = self.root.canonicalize().ok()?;
+        let mut existing = full;
+        let mut rest = Vec::new();
+        let real = loop {
+            if let Ok(r) = existing.canonicalize() {
+                break r;
+            }
+            rest.push(existing.file_name()?);
+            existing = existing.parent()?;
+        };
+        if real.starts_with(&root) {
+            return None;
+        }
+        Some(rest.iter().rev().fold(real, |p, c| p.join(c)))
     }
 }
 
@@ -421,6 +454,44 @@ mod tests {
         let rules = crate::permission::Rules::new(vec!["edit:src/*".into()]);
         assert!(rules.allows("edit", &subject("src/a.css")));
         assert!(!rules.allows("edit", &subject("src/../../etc/passwd")));
+    }
+
+    #[test]
+    fn symlinks_out_of_the_project_count_as_outside() {
+        let (t, dir) = test_tools("symlink");
+        let out = test_dir("symlink-target");
+        std::fs::write(out.join("f.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(&out, dir.join("link")).unwrap();
+        std::fs::create_dir(dir.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("inner")).unwrap();
+        let subject = |p: &str| t.subject("edit", &json!({ "path": p }));
+        let canon = out.canonicalize().unwrap();
+        assert_eq!(PathBuf::from(subject("link/f.txt")), canon.join("f.txt"));
+        assert_eq!(PathBuf::from(subject("link/new/deep.txt")), canon.join("new/deep.txt"));
+        assert!(crate::permission::outside_project(&subject("link/f.txt")));
+        // A link that stays inside the project is fine.
+        assert_eq!(subject("inner/a.txt"), "inner/a.txt");
+        assert_eq!(subject("fresh/a.txt"), "fresh/a.txt");
+    }
+
+    #[test]
+    fn memory_asks_and_subagents_cannot_use_it() {
+        let (t, _dir) = test_tools("memory_access");
+        assert_eq!(access("memory"), Access::Edit);
+        let input = json!({ "action": "add", "note": "uses pnpm" });
+        assert_eq!(t.subject("memory", &input), "add: uses pnpm");
+        assert!(t.child().run("memory", &input, &AtomicBool::new(false)).is_err());
+        for main in [true, false] {
+            let defs = t.child().definitions(main, false);
+            let names: Vec<String> = serde_json::from_str::<Vec<Value>>(defs.get())
+                .unwrap()
+                .iter()
+                .map(|d| d["name"].as_str().unwrap().to_string())
+                .collect();
+            for n in ["agent", "memory", "ask_user"] {
+                assert_eq!(names.iter().any(|x| x == n), main, "{n} main={main}");
+            }
+        }
     }
 
     #[test]
