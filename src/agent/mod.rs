@@ -62,6 +62,9 @@ pub enum Command {
     Remember(String),
     /// Use this API key from now on ("" to forget it).
     SetKey(String),
+    /// None: list the points /rewind can go back to. Some(turn): go back to
+    /// before that turn, restoring files and cutting the conversation.
+    Rewind(Option<usize>),
 }
 
 pub enum Answer {
@@ -82,6 +85,13 @@ pub enum Event {
     },
     /// Something worth telling the user that isn't an error.
     Notice(String),
+    /// Where /rewind can go: (turn, what you typed), newest first.
+    RewindPoints(Vec<(usize, String)>),
+    /// Went back to before `prompt`; `files` were restored.
+    Rewound {
+        prompt: String,
+        files: usize,
+    },
     Text(String),
     /// Progress notes the model writes between tool calls.
     Thinking(String),
@@ -185,6 +195,7 @@ impl Agent {
         let tools = Arc::new(Tools::new(root, skill::discover(), servers));
         let notify = emit.clone();
         tools.on_job_finished(Box::new(move |msg| notify(Event::Notice(msg))));
+        tools.checkpoints.open(session.checkpoint_dir());
         let _ = shared_tools.set(tools.clone());
 
         let core = Core {
@@ -237,6 +248,7 @@ impl Agent {
                 Command::Clear => {
                     self.messages.clear();
                     self.session = Session::new();
+                    self.tools.checkpoints.open(self.session.checkpoint_dir());
                     self.system = crate::prompt::system();
                     self.told_plan = false;
                 }
@@ -244,6 +256,18 @@ impl Agent {
                 Command::Effort(e) => *self.core.effort.lock().unwrap() = e,
                 Command::Rename(name) => self.session.rename(&self.system, &name),
                 Command::SetKey(key) => self.core.client.set_key(key),
+                Command::Rewind(None) => {
+                    let points: Vec<(usize, String)> = self
+                        .messages
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .filter_map(|(i, m)| m.prompt().map(|p| (i, p)))
+                        .take(9)
+                        .collect();
+                    (self.core.emit)(Event::RewindPoints(points));
+                }
+                Command::Rewind(Some(turn)) => self.rewind(turn),
                 Command::Remember(note) => {
                     let text = format!("<system-reminder>The user saved this to memory: {note}</system-reminder>");
                     self.push_user(json!({ "type": "text", "text": text }));
@@ -255,6 +279,9 @@ impl Agent {
     fn send(&mut self, text: String) {
         self.core.cancel.store(false, Ordering::Relaxed);
         *self.core.request.lock().unwrap() = text.clone();
+        // This turn starts at the message about to be added (or merged into).
+        let turn = self.messages.len() - usize::from(self.messages.last().is_some_and(|m| m.user));
+        self.tools.checkpoints.begin_turn(turn);
         // Image files mentioned in the message (dragged in, or pasted with
         // ctrl+v) go in as images, before the text.
         for path in crate::images::paths_in(&text) {
@@ -286,6 +313,21 @@ impl Agent {
         let end = self.core.turn(&ctx, &mut self.messages);
         self.session.save(&self.system, &self.messages);
         emit(end);
+    }
+
+    /// Back to before `turn`: files the agent changed since then are restored
+    /// and the conversation is cut there (cutting from the end keeps it valid).
+    fn rewind(&mut self, turn: usize) {
+        let Some(prompt) = self.messages.get(turn).and_then(Msg::prompt) else {
+            return (self.core.emit)(Event::Error("nothing to rewind to there".into()));
+        };
+        let files = match self.tools.checkpoints.restore_from(turn) {
+            Ok(n) => n,
+            Err(e) => return (self.core.emit)(Event::Error(e)),
+        };
+        self.messages.truncate(turn);
+        self.session.truncate(&self.system, turn);
+        (self.core.emit)(Event::Rewound { prompt, files });
     }
 
     fn shell(&mut self, cmd: &str) {

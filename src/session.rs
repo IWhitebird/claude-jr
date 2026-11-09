@@ -33,6 +33,19 @@ impl Msg {
         Some(Msg { user, json })
     }
 
+    /// The text the user typed, if this message started a turn (not tool
+    /// results, reminders or shell output).
+    pub fn prompt(&self) -> Option<String> {
+        if !self.user {
+            return None;
+        }
+        let content = self.content();
+        if content.iter().any(|b| b["type"] == "tool_result") {
+            return None;
+        }
+        content.iter().filter_map(|b| b["text"].as_str()).find(|t| !t.starts_with('<')).map(String::from)
+    }
+
     pub fn content(&self) -> Vec<Value> {
         let v: Value = serde_json::from_str(self.json.get()).unwrap_or_default();
         match v.get("content") {
@@ -74,6 +87,7 @@ pub struct Summary {
     pub name: Option<String>,
     pub messages: usize,
     pub first_prompt: String,
+    pub modified: SystemTime,
 }
 
 pub struct Session {
@@ -87,14 +101,20 @@ pub struct Session {
 /// Lines starting with this hold session metadata, not messages.
 const META: &str = "{\"meta\":";
 
+/// A metadata line: `{"meta":{"name":"..."}}` or `{"meta":{"truncate":12}}`.
+/// They're replayed in order when a session is loaded.
 #[derive(Serialize, Deserialize)]
 struct Meta {
     meta: MetaFields,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct MetaFields {
-    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// Keep only the first this-many messages (/rewind, /compact).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    truncate: Option<usize>,
 }
 
 impl Session {
@@ -110,10 +130,9 @@ impl Session {
             Pick::Named(want) => files
                 .into_iter()
                 .rev()
-                .find(|p| stem(p) == *want || read(p).is_some_and(|(_, name, _)| name.as_deref() == Some(want)))?,
+                .find(|p| stem(p) == *want || read(p).is_some_and(|r| r.name.as_deref() == Some(want)))?,
         };
-        let (system, name, lines) = read(&path)?;
-        let messages: Vec<Msg> = lines.iter().filter_map(|l| Msg::parse(l)).collect();
+        let Read { system, name, messages } = read(&path)?;
         let saved = messages.len();
         Some(Loaded { session: Session { path, file: None, saved, name }, system, messages })
     }
@@ -123,14 +142,10 @@ impl Session {
         files()
             .iter()
             .filter_map(|p| {
-                let (_, name, lines) = read(p)?;
-                let messages: Vec<&String> = lines.iter().filter(|l| !l.starts_with(META)).collect();
-                let first_prompt = messages
-                    .first()
-                    .and_then(|l| Msg::parse(l))
-                    .and_then(|m| m.content().into_iter().find_map(|b| b["text"].as_str().map(String::from)))
-                    .unwrap_or_default();
-                Some(Summary { id: stem(p), name, messages: messages.len(), first_prompt })
+                let Read { name, messages, .. } = read(p)?;
+                let first_prompt = messages.iter().find_map(Msg::prompt).unwrap_or_default();
+                let modified = fs::metadata(p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+                Some(Summary { id: stem(p), name, messages: messages.len(), first_prompt, modified })
             })
             .collect()
     }
@@ -157,12 +172,28 @@ impl Session {
 
     /// Names the session; the newest name wins when it's loaded again.
     pub fn rename(&mut self, system: &str, name: &str) {
-        let meta = Meta { meta: MetaFields { name: name.to_string() } };
-        let Ok(mut line) = serde_json::to_vec(&meta) else { return };
-        line.push(b'\n');
-        if self.append(system, &line) {
+        if self.meta(system, MetaFields { name: Some(name.to_string()), ..Default::default() }) {
             self.name = Some(name.to_string());
         }
+    }
+
+    /// Records that the conversation was cut back to its first `len` messages.
+    pub fn truncate(&mut self, system: &str, len: usize) {
+        if len < self.saved && self.meta(system, MetaFields { truncate: Some(len), ..Default::default() }) {
+            self.saved = len;
+        }
+    }
+
+    /// The folder for this session's /rewind copies.
+    pub fn checkpoint_dir(&self) -> PathBuf {
+        let parent = self.path.parent().map(Path::to_path_buf).unwrap_or_default();
+        parent.join("checkpoints").join(stem(&self.path))
+    }
+
+    fn meta(&mut self, system: &str, fields: MetaFields) -> bool {
+        let Ok(mut line) = serde_json::to_vec(&Meta { meta: fields }) else { return false };
+        line.push(b'\n');
+        self.append(system, &line)
     }
 
     fn append(&mut self, system: &str, bytes: &[u8]) -> bool {
@@ -196,18 +227,29 @@ fn files() -> Vec<PathBuf> {
     files
 }
 
-/// A session file's system prompt, latest name, and remaining lines.
-fn read(path: &Path) -> Option<(String, Option<String>, Vec<String>)> {
+struct Read {
+    system: String,
+    name: Option<String>,
+    messages: Vec<Msg>,
+}
+
+/// Replays a session file: header, then messages and metadata in order.
+fn read(path: &Path) -> Option<Read> {
     let mut lines = BufReader::new(File::open(path).ok()?).lines().map_while(Result::ok);
     let header: Header = serde_json::from_str(&lines.next()?).ok()?;
-    let rest: Vec<String> = lines.collect();
-    let name = rest
-        .iter()
-        .filter(|l| l.starts_with(META))
-        .filter_map(|l| serde_json::from_str::<Meta>(l).ok())
-        .map(|m| m.meta.name)
-        .next_back();
-    Some((header.system, name, rest))
+    let (mut name, mut messages) = (None, Vec::new());
+    for line in lines {
+        if !line.starts_with(META) {
+            messages.extend(Msg::parse(&line));
+            continue;
+        }
+        let Ok(Meta { meta }) = serde_json::from_str::<Meta>(&line) else { continue };
+        if let Some(n) = meta.truncate {
+            messages.truncate(n);
+        }
+        name = meta.name.or(name);
+    }
+    Some(Read { system: header.system, name, messages })
 }
 
 fn stem(p: &Path) -> String {

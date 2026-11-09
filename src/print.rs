@@ -50,6 +50,7 @@ fn print(events: Receiver<Event>) -> bool {
                 }
             }
             Event::Notice(msg) => eprintln!("{msg}"),
+            Event::RewindPoints(_) | Event::Rewound { .. } => {}
             // Nobody is there to answer; the agent was told so (interactive: false).
             Event::Ask { reply, .. } => {
                 let _ = reply.send(agent::Answer::No);

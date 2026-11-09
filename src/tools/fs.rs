@@ -170,6 +170,7 @@ pub fn write(t: &Tools, input: &Value) -> Output {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    t.checkpoints.before_change(&path);
     fs::write(&path, content).map_err(|e| format!("{}: {e}", path.display()))?;
     remember(t, &path);
     Ok(format!("Wrote {} lines to {}", content.lines().count(), path.display()))
@@ -201,6 +202,7 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
         ));
     }
     let text = if all { text.replace(old, new) } else { text.replacen(old, new, 1) };
+    t.checkpoints.before_change(&path);
     fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     remember(t, &path);
     let s = if count == 1 { "" } else { "s" };

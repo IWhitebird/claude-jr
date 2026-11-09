@@ -5,6 +5,7 @@
 // so its state sits behind small locks and every method takes `&self`.
 
 mod bash;
+pub mod checkpoint;
 mod fs;
 pub mod mcp;
 pub mod skill;
@@ -72,6 +73,8 @@ pub struct Tools {
     todos: Mutex<Vec<todo::Todo>>,
     skills: Arc<Vec<Skill>>,
     pub mcp: Arc<mcp::Servers>,
+    /// Originals of changed files, for /rewind. Shared with subagents.
+    pub checkpoints: Arc<checkpoint::Checkpoints>,
 }
 
 impl Tools {
@@ -85,6 +88,7 @@ impl Tools {
             todos: Mutex::default(),
             skills: Arc::new(skills),
             mcp: Arc::new(mcp),
+            checkpoints: Arc::default(),
         }
     }
 
@@ -98,6 +102,7 @@ impl Tools {
             todos: Mutex::default(),
             skills: self.skills.clone(),
             mcp: self.mcp.clone(),
+            checkpoints: self.checkpoints.clone(),
         }
     }
 

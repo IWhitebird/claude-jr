@@ -37,6 +37,7 @@ const HELP: &str = "/clear          start a new conversation
 /model [name]   show or change the model
 /effort [level] low, medium, high, xhigh, max, or default
 /rename [name]  name this session (resume with claude-jr -r NAME)
+/rewind         go back to before an earlier message, undoing file changes
 /memory         instruction files in use
 /skills         available skills (run one with /name)
 /mcp            connected MCP servers
@@ -174,6 +175,8 @@ enum Prompt {
     },
     /// The API key, typed or pasted; shown masked.
     Key,
+    /// /rewind: (turn, what you typed), newest first.
+    Rewind(Vec<(usize, String)>),
 }
 
 /// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
@@ -442,6 +445,25 @@ impl App {
                 (self.name, self.skills, self.mcp) = (name, skills, mcp);
             }
             Event::Notice(msg) => self.note(&msg, DIM),
+            Event::RewindPoints(points) if points.is_empty() => self.note("Nothing to rewind to yet.", DIM),
+            Event::RewindPoints(points) => self.prompts.push_front(Prompt::Rewind(points)),
+            Event::Rewound { prompt, files } => {
+                let restored = match files {
+                    0 => "No files needed restoring".to_string(),
+                    1 => "Restored 1 file".to_string(),
+                    n => format!("Restored {n} files"),
+                };
+                let first = prompt.lines().next().unwrap_or("");
+                self.note(
+                    &format!(
+                        "Rewound to before \"{first}\". {restored}; changes made by shell commands aren't undone."
+                    ),
+                    DIM,
+                );
+                // Your message is back in the input box to edit and send again.
+                self.input.clear();
+                self.input.insert(&prompt);
+            }
             Event::Text(t) => {
                 if let Some(w) = &mut self.work {
                     w.streamed += t.len();
@@ -546,6 +568,21 @@ impl App {
                     self.answer(String::new());
                     return self.cancel();
                 }
+            }
+            Some(Prompt::Rewind(points)) => {
+                match k.code {
+                    KeyCode::Char(c @ '1'..='9') => {
+                        if let Some(&(turn, _)) = points.get(c as usize - '1' as usize) {
+                            self.prompts.pop_front();
+                            let _ = self.agent.commands.send(Command::Rewind(Some(turn)));
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.prompts.pop_front();
+                    }
+                    _ => {}
+                }
+                return;
             }
             Some(Prompt::Key) => match k.code {
                 KeyCode::Enter => return self.save_key(),
@@ -752,6 +789,10 @@ impl App {
                     self.prompts.push_front(Prompt::Key);
                 }
             }
+            "rewind" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
+            "rewind" => {
+                let _ = self.agent.commands.send(Command::Rewind(None));
+            }
             "logout" => {
                 let _ = crate::config::delete_api_key();
                 let _ = self.agent.commands.send(Command::SetKey(String::new()));
@@ -877,6 +918,13 @@ impl App {
             Some(Prompt::Question { question, options, .. }) => {
                 view::question(question, options, cols, &mut out);
                 Some(view::input_box(&self.input, "type an answer, or press a number", cols, &mut out))
+            }
+            Some(Prompt::Rewind(points)) => {
+                let items: Vec<String> =
+                    points.iter().map(|(_, p)| p.lines().next().unwrap_or("").to_string()).collect();
+                let hint = "press a number to go back to before that message · esc to cancel";
+                view::picker("Rewind: restores the files the agent changed since then", &items, hint, cols, &mut out);
+                None
             }
             Some(Prompt::Key) => {
                 view::key_prompt(cols, &mut out);

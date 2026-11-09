@@ -105,6 +105,15 @@ pub fn question(question: &str, options: &[String], cols: usize, out: &mut Vec<S
     boxed(&rows, cols, out);
 }
 
+/// A numbered list in a box, for pickers (/rewind, /resume).
+pub fn picker(title: &str, items: &[String], hint: &str, cols: usize, out: &mut Vec<String>) {
+    let numbered: Vec<String> = items.iter().enumerate().map(|(i, t)| format!("{}. {}", i + 1, clean(t))).collect();
+    let mut rows: Vec<(&str, &'static str)> = vec![(title, BOLD)];
+    rows.extend(numbered.iter().map(|t| (t.as_str(), "")));
+    rows.push((hint, DIM));
+    boxed(&rows, cols, out);
+}
+
 pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
     let path = crate::config::config_dir().join("credentials");
     let where_ = format!("It's saved to {}, readable only by you.", path.display());
