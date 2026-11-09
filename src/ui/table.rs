@@ -1,5 +1,6 @@
-// Markdown tables drawn with box characters and aligned columns. Rows come
-// in one line at a time, so the UI collects them until the table ends.
+// Markdown tables drawn with box characters, aligned columns and a line
+// between rows, the way Claude Code shows them. Rows come in one line at a
+// time, so the UI collects them until the table ends.
 
 use super::text::{BOLD, GREY, RESET, Span, span, width, wrap};
 
@@ -108,7 +109,8 @@ pub fn render(rows: &[String], cols: usize, lead: Span, out: &mut Vec<String>) -
             }
             lines.push(line);
         }
-        if i == 0 && table.len() > 1 {
+        // A line under every row but the last, like Claude Code's tables.
+        if i + 1 < table.len() {
             lines.push(border("├", "┼", "┤"));
         }
     }
@@ -154,6 +156,7 @@ mod tests {
                 "  │ name      │   size │",
                 "  ├───────────┼────────┤",
                 "  │ claude-jr │ 2.8 MB │",
+                "  ├───────────┼────────┤",
                 "  │ pi        │ 109 MB │",
                 "  └───────────┴────────┘",
             ]

@@ -137,11 +137,11 @@ pub fn pieces(json: &str) -> Vec<Piece<'_>> {
         let Some(len) = rest[path_start..].find(END) else { break };
         let path = PathBuf::from(&rest[path_start..path_start + len]);
         if path.parent() != Some(dir.as_path()) {
-            out.push(Piece::Text(rest[..path_start].as_bytes()));
+            out.push(Piece::Text(&rest.as_bytes()[..path_start]));
             rest = &rest[path_start..];
             continue;
         }
-        out.push(Piece::Text(rest[..at + "\"data\":\"".len()].as_bytes()));
+        out.push(Piece::Text(&rest.as_bytes()[..at + "\"data\":\"".len()]));
         out.push(Piece::Image(path));
         rest = &rest[path_start + len + END.len() - 1..]; // keep the closing quote
     }
