@@ -152,7 +152,10 @@ def main():
     if args.ids:
         ids = args.ids.split(",")
     else:
-        ids = random.Random(args.seed).sample(sorted(tasks), 1 if args.dry_run else args.n)
+        # A fixed shuffle, so a bigger --n continues the same list.
+        ids = sorted(tasks)
+        random.Random(args.seed).shuffle(ids)
+        ids = ids[:1 if args.dry_run else args.n]
 
     env = dict(os.environ, CLAUDE_JR_MODEL=args.model)
     mock = None
