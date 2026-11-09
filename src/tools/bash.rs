@@ -540,4 +540,152 @@ mod tests {
         t.push(b"gh");
         assert_eq!(t.since(6), ("gh".into(), 0, 8));
     }
+
+    fn tool(t: &Tools, name: &str, input: Value) -> Output {
+        t.run(name, &input, &AtomicBool::new(false))
+    }
+
+    fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+        for _ in 0..200 {
+            if f() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    #[test]
+    fn the_jobs_tool_lists_reads_waits_and_kills() {
+        let (t, _dir) = test_tools("bash-jobs-tool");
+        assert_eq!(tool(&t, "jobs", json!({})).unwrap(), "No background jobs.");
+        assert_eq!(tool(&t, "jobs", json!({"action": "output"})).unwrap_err(), "missing id");
+        assert_eq!(tool(&t, "jobs", json!({"action": "output", "id": 9})).unwrap_err(), "no job 9");
+
+        tool(&t, "bash", json!({"command": "echo ready; sleep 30", "background": true})).unwrap();
+        let listed = tool(&t, "jobs", json!({"action": "list"})).unwrap();
+        assert!(listed.starts_with("1: echo ready; sleep 30 (running for "), "{listed}");
+        assert_eq!(t.jobs(), [(1, "echo ready; sleep 30".to_string(), true)]);
+        assert_eq!(t.running_jobs(), 1);
+
+        // Wait until the output has what we're looking for; later calls only show what is new.
+        let out = tool(&t, "jobs", json!({"action": "wait", "id": 1, "until": "ready", "timeout": 20})).unwrap();
+        assert!(out.starts_with("job 1 (echo ready; sleep 30): running for ") && out.ends_with("\nready\n"), "{out}");
+        let again = tool(&t, "jobs", json!({"action": "output", "id": 1})).unwrap();
+        assert!(again.ends_with("\n(no new output)"), "{again}");
+        assert_eq!(tool(&t, "jobs", json!({"action": "dance", "id": 1})).unwrap_err(), "unknown action: dance");
+        assert!(t.child_pids().len() == 1);
+
+        let killed = tool(&t, "jobs", json!({"action": "kill", "id": 1})).unwrap();
+        assert!(killed.contains("): killed"), "{killed}");
+        assert_eq!(t.jobs(), [(1, "echo ready; sleep 30".to_string(), false)]);
+        assert_eq!(t.running_jobs(), 0);
+        assert!(!t.kill_job(7));
+        assert!(t.child_pids().is_empty());
+    }
+
+    #[test]
+    fn jobs_can_be_killed_by_the_ui_and_on_shutdown() {
+        let (t, _dir) = test_tools("bash-jobs-kill");
+        tool(&t, "bash", json!({"command": "sleep 30", "background": true})).unwrap();
+        tool(&t, "bash", json!({"command": "sleep 31", "background": true})).unwrap();
+        assert_eq!(t.running_jobs(), 2);
+        assert!(t.kill_job(1));
+        wait_until("job 1 to end", || t.running_jobs() == 1);
+        t.shutdown();
+        wait_until("shutdown to stop the rest", || t.running_jobs() == 0);
+        let status: Vec<bool> = t.jobs().iter().map(|j| j.2).collect();
+        assert_eq!(status, [false, false]);
+    }
+
+    #[test]
+    fn a_job_that_waits_can_be_cancelled() {
+        let (t, _dir) = test_tools("bash-jobs-wait");
+        tool(&t, "bash", json!({"command": "sleep 30", "background": true})).unwrap();
+        let cancel = AtomicBool::new(true);
+        let started = Instant::now();
+        let out = t.run("jobs", &json!({"action": "wait", "id": 1, "timeout": 60}), &cancel).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(out.contains("): running for "), "{out}");
+        // A finished job is reported at once, with its exit status.
+        tool(&t, "bash", json!({"command": "echo done; exit 3", "background": true})).unwrap();
+        let out = tool(&t, "jobs", json!({"action": "wait", "id": 2, "timeout": 20})).unwrap();
+        assert!(out.contains("): exit 3\ndone"), "{out}");
+        t.shutdown();
+    }
+
+    #[test]
+    fn only_the_newest_finished_jobs_are_kept() {
+        let (t, _dir) = test_tools("bash-jobs-prune");
+        for i in 1..=12 {
+            tool(&t, "bash", json!({"command": format!("echo {i}"), "background": true})).unwrap();
+            wait_until("the job to finish", || t.running_jobs() == 0);
+        }
+        let ids: Vec<usize> = t.jobs().iter().map(|j| j.0).collect();
+        assert_eq!(ids, [5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(tool(&t, "jobs", json!({"action": "output", "id": 1})).unwrap_err(), "no job 1");
+        // Each one that finished was reported once.
+        let mut reported = 0;
+        wait_until("all reports", || {
+            reported += t.finished_jobs().len();
+            reported >= 12
+        });
+    }
+
+    #[test]
+    fn a_job_that_outgrows_its_buffer_says_how_much_was_lost() {
+        let (t, _dir) = test_tools("bash-jobs-tail");
+        let cmd = "head -c 70000 /dev/zero | tr '\\0' z; echo END; sleep 30";
+        tool(&t, "bash", json!({"command": cmd, "background": true})).unwrap();
+        // END is the last thing printed, so once it shows, all 70 KB have arrived.
+        let out = tool(&t, "jobs", json!({"action": "wait", "id": 1, "until": "END", "timeout": 20})).unwrap();
+        assert!(out.contains("\n... [") && out.contains(" earlier bytes not kept] ...\n"), "{}", &out[..200]);
+        assert!(out.ends_with("zzzEND\n"));
+        t.shutdown();
+    }
+
+    #[test]
+    fn tail_keeps_the_end_and_counts_what_was_dropped() {
+        let mut tail = Tail::new(10);
+        tail.push(b"abcdef");
+        assert_eq!(tail.since(0), ("abcdef".to_string(), 0, 6));
+        tail.push(b"ghijklmn");
+        // 14 bytes arrived, the last 10 are kept.
+        assert_eq!(tail.since(0), ("efghijklmn".to_string(), 4, 14));
+        assert_eq!(tail.since(6), ("ghijklmn".to_string(), 0, 14));
+        tail.push(&[b'x'; 30]);
+        assert_eq!(tail.since(14), ("xxxxxxxxxx".to_string(), 20, 44));
+        assert_eq!(tail.since(44), (String::new(), 0, 44));
+    }
+
+    #[test]
+    fn capped_output_keeps_both_ends() {
+        let mut c = Capped::new(10);
+        c.push(b"abc");
+        assert_eq!(c.text(), "abc");
+        c.push(b"defghijklmnopqrstuvwxyz");
+        assert_eq!(c.text(), "abcde\n\n... [16 bytes omitted] ...\n\nvwxyz");
+        let mut one_big = Capped::new(4);
+        one_big.push(b"0123456789");
+        assert_eq!(one_big.text(), "01\n\n... [6 bytes omitted] ...\n\n89");
+    }
+
+    #[test]
+    fn long_command_output_is_cut_in_the_middle() {
+        let (t, _dir) = test_tools("bash-long-output");
+        let out = tool(&t, "bash", json!({"command": "head -c 120000 /dev/zero | tr '\\0' q"})).unwrap();
+        assert!(out.contains("bytes omitted"), "{}", &out[..100]);
+        assert!(out.len() < MAX_BYTES + 100);
+        assert!(out.starts_with("qqq") && out.ends_with("qqq"));
+        assert_eq!(tool(&t, "bash", json!({})).unwrap_err(), "missing command");
+    }
+
+    #[test]
+    fn user_shell_runs_without_a_model() {
+        let (t, dir) = test_tools("bash-user-shell");
+        let cancel = AtomicBool::new(false);
+        assert_eq!(t.user_shell("pwd", &cancel).unwrap().trim_end(), dir.canonicalize().unwrap().to_str().unwrap());
+        assert!(t.user_shell("exit 5", &cancel).unwrap_err().contains("Exit code 5"));
+        assert_eq!(t.user_shell("true", &cancel).unwrap(), "(no output)");
+    }
 }

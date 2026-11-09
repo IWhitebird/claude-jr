@@ -501,4 +501,124 @@ mod tests {
         assert!(!t.label("bash", &input).contains("rm"));
         assert!(t.full_label("bash", &input).contains("rm -rf /tmp/x"));
     }
+
+    fn run(t: &Tools, name: &str, input: Value) -> Output {
+        t.run(name, &input, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn what_each_tool_needs_and_what_can_overlap() {
+        for n in ["read", "todo", "ask_user", "skill", "agent", "jobs"] {
+            assert_eq!(access(n), Access::Free, "{n}");
+        }
+        for n in ["write", "edit", "memory"] {
+            assert_eq!(access(n), Access::Edit, "{n}");
+        }
+        for n in ["bash", "mcp__srv__tool", "anything-new"] {
+            assert_eq!(access(n), Access::Exec, "{n}");
+        }
+        for n in ["read", "agent", "skill", "mcp__a__b"] {
+            assert!(parallel_safe(n), "{n}");
+        }
+        for n in ["bash", "write", "edit", "ask_user", "memory", "jobs", "todo"] {
+            assert!(!parallel_safe(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn unknown_and_memory_calls_are_dispatched() {
+        let (t, _dir) = test_tools("mod-dispatch");
+        assert_eq!(run(&t, "nope", json!({})).unwrap_err(), "unknown tool: nope");
+        assert_eq!(run(&t, "memory", json!({"action": "add", "note": "  "})).unwrap_err(), "the note is empty");
+        assert_eq!(run(&t, "skill", json!({"name": "missing"})).unwrap_err(), "no skill named missing");
+        assert_eq!(run(&t, "mcp__none__tool", json!({})).unwrap_err(), "unknown MCP tool mcp__none__tool");
+    }
+
+    #[test]
+    fn subjects_and_labels_for_every_tool() {
+        let (t, _dir) = test_tools("mod-labels");
+        assert_eq!(t.subject("agent", &json!({"description": "find usages"})), "find usages");
+        assert_eq!(t.subject("skill", &json!({"name": "release"})), "release");
+        assert_eq!(t.subject("jobs", &json!({"action": "kill", "id": 3})), "kill 3");
+        assert_eq!(t.subject("todo", &json!({})), "");
+        assert_eq!(t.subject("mcp__gh__issue", &json!({"title": "x"})), "title: x");
+
+        assert_eq!(t.label("ask_user", &json!({})), "Question");
+        assert_eq!(t.label("todo", &json!({})), "Todos");
+        assert_eq!(t.label("bash", &json!({"command": "npm run dev", "background": true})), "Bash(npm run dev) &");
+        assert_eq!(t.label("mcp__gh__issue", &json!({"title": "x"})), "gh: issue(title: x)");
+        assert_eq!(t.label("edit", &json!({"path": "src/a.rs"})), "Edit(src/a.rs)");
+        // The short label keeps the first line, cut at 80 characters.
+        let long = "x".repeat(100);
+        assert_eq!(
+            t.label("bash", &json!({"command": format!("{long}\nsecond")})),
+            format!("Bash({}\u{2026})", "x".repeat(80))
+        );
+        assert_eq!(t.full_label("bash", &json!({"command": "a\nb"})), "Bash(a\nb)");
+    }
+
+    #[test]
+    fn definitions_carry_streaming_and_optional_web_tools() {
+        let (t, _dir) = test_tools("mod-defs");
+        let defs =
+            |main: bool, web: bool| -> Vec<Value> { serde_json::from_str(t.definitions(main, web).get()).unwrap() };
+        let plain = defs(true, false);
+        assert!(plain.iter().all(|d| d["name"] != "web_search"));
+        assert!(plain.iter().all(|d| d["eager_input_streaming"] == true), "our own tools stream their input");
+        let web = defs(true, true);
+        assert_eq!(web.len(), plain.len() + 2);
+        let search = web.iter().find(|d| d["name"] == "web_search").unwrap();
+        assert_eq!(search["type"], "web_search_20260209");
+        assert!(search.get("eager_input_streaming").is_none(), "server tools don't take the field");
+        assert!(web.iter().any(|d| d["name"] == "web_fetch"));
+        // Subagents get the basics only.
+        let sub: Vec<String> = defs(false, false).iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
+        assert_eq!(sub, ["read", "write", "edit", "bash", "jobs", "todo"]);
+    }
+
+    #[test]
+    fn images_come_back_as_blocks_or_a_reason() {
+        let (t, dir) = test_tools("mod-images");
+        std::fs::write(dir.join("ok.png"), b"abc").unwrap();
+        let out = run(&t, "read", json!({"path": "ok.png"})).unwrap();
+        let content = result_content(out);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[1]["text"], format!("Image: {}", dir.join("ok.png").display()));
+
+        let big = dir.join("big.png");
+        std::fs::File::create(&big).unwrap().set_len(crate::images::MAX_BYTES + 1).unwrap();
+        let err = run(&t, "read", json!({"path": "big.png"})).unwrap_err();
+        assert_eq!(err, format!("{} is 5 MB; images can be at most 5 MB", big.display()));
+
+        // An image that vanished after being read becomes a plain error string.
+        let gone = result_content(format!("{IMAGE}{}", dir.join("gone.png").display()));
+        assert!(gone.as_str().unwrap().contains("gone.png"), "{gone}");
+        assert_eq!(result_content("plain".into()), json!("plain"));
+    }
+
+    #[test]
+    fn summaries_are_short() {
+        let ok = |s: &str| Ok(s.to_string());
+        assert_eq!(summary("bash", &ok("a\nb\nc")), "a\nb\nc");
+        assert_eq!(summary("bash", &ok("1\n2\n3\n4\n5\n")), "1\n2\n3\n\u{2026} +2 lines");
+        assert_eq!(summary("bash", &Err("boom\n".into())), "boom");
+        assert_eq!(summary("read", &ok("     1\ta\n     2\tb\n")), "Read 2 lines");
+        assert_eq!(summary("read", &ok("     1\ta\n")), "Read 1 line");
+        let todos: String = (1..=25).map(|i| format!("{i}\n")).collect();
+        let s = summary("todo", &ok(&todos));
+        assert_eq!(s.lines().count(), 21);
+        assert!(s.ends_with("\u{2026} +5 lines"));
+        assert_eq!(summary("ask_user", &ok("The user answered: yes")), "yes");
+    }
+
+    #[test]
+    fn paths_and_text_helpers() {
+        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
+        assert_eq!(normalize(Path::new("a/b/../../..")), PathBuf::from(""));
+        assert_eq!(normalize(Path::new("/..")), PathBuf::from("/"));
+        assert_eq!(shorten("hello", 5), "hello");
+        assert_eq!(shorten("h\u{e9}llo w\u{f6}rld", 6), "h\u{e9}llo \u{2026}");
+        assert_eq!(capitalize("bash"), "Bash");
+        assert_eq!(capitalize(""), "");
+    }
 }

@@ -247,4 +247,161 @@ mod tests {
         assert_eq!(content[0]["type"], "image");
         assert_eq!(content[0]["source"]["media_type"], "image/png");
     }
+
+    use std::fs;
+
+    fn run(t: &super::super::Tools, name: &str, input: serde_json::Value) -> super::super::Output {
+        t.run(name, &input, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn previews_show_the_change_without_making_it() {
+        let (t, dir) = test_tools("fs-preview");
+        fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+
+        let d = t.preview("write", &json!({"path": "a.txt", "content": "new"})).unwrap();
+        assert_eq!((d.line, d.old.as_str(), d.new.as_str()), (1, "one\ntwo\nthree\n", "new"));
+        let d = t.preview("write", &json!({"path": "fresh.txt", "content": "new"})).unwrap();
+        assert_eq!(d.old, "", "a new file has no old text");
+        assert!(!dir.join("fresh.txt").exists());
+
+        let d = t.preview("edit", &json!({"path": "a.txt", "old_string": "three", "new_string": "3"})).unwrap();
+        assert_eq!((d.line, d.old.as_str(), d.new.as_str()), (3, "three", "3"));
+        assert!(t.preview("edit", &json!({"path": "a.txt", "old_string": "nope", "new_string": "3"})).is_none());
+        assert!(t.preview("edit", &json!({"path": "gone.txt", "old_string": "x", "new_string": "3"})).is_none());
+        assert!(t.preview("edit", &json!({"path": "a.txt", "new_string": "3"})).is_none());
+        assert!(t.preview("write", &json!({"path": "a.txt"})).is_none(), "no content, no preview");
+        assert!(t.preview("write", &json!({"content": "x"})).is_none(), "no path");
+        assert!(t.preview("read", &json!({"path": "a.txt"})).is_none());
+
+        // Files past 1 MB are still changed, just not previewed.
+        let big = dir.join("big.txt");
+        fs::File::create(&big).unwrap().set_len(1024 * 1024 + 1).unwrap();
+        assert!(t.preview("write", &json!({"path": "big.txt", "content": "x"})).is_none());
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn reading_pages_through_a_file() {
+        let (t, dir) = test_tools("fs-read");
+        let lines: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+        fs::write(dir.join("ten.txt"), &lines).unwrap();
+
+        let out = run(&t, "read", json!({"path": "ten.txt", "offset": 3, "limit": 2})).unwrap();
+        assert_eq!(out, "     3\tline 3\n     4\tline 4\n\n(file continues after line 4; use offset to read more)");
+        let out = run(&t, "read", json!({"path": "ten.txt", "offset": 9})).unwrap();
+        assert_eq!(out, "     9\tline 9\n    10\tline 10\n");
+        let err = run(&t, "read", json!({"path": "ten.txt", "offset": 11})).unwrap_err();
+        assert_eq!(err, "offset 11 is past the end of the file (10 lines)");
+        // Offset 0 counts as the first line.
+        assert!(
+            run(&t, "read", json!({"path": "ten.txt", "offset": 0, "limit": 1}))
+                .unwrap()
+                .starts_with("     1\tline 1\n")
+        );
+    }
+
+    #[test]
+    fn reading_odd_files() {
+        let (t, dir) = test_tools("fs-read-odd");
+        fs::write(dir.join("empty.txt"), "").unwrap();
+        assert_eq!(run(&t, "read", json!({"path": "empty.txt"})).unwrap(), "(empty file)");
+
+        fs::create_dir(dir.join("folder")).unwrap();
+        let err = run(&t, "read", json!({"path": "folder"})).unwrap_err();
+        assert_eq!(err, format!("{} is a directory. Use bash ls.", dir.join("folder").display()));
+
+        fs::write(dir.join("blob.bin"), b"abc\0def").unwrap();
+        let err = run(&t, "read", json!({"path": "blob.bin"})).unwrap_err();
+        assert!(err.ends_with("looks like a binary file"), "{err}");
+
+        let err = run(&t, "read", json!({"path": "missing.txt"})).unwrap_err();
+        assert!(err.contains("missing.txt: ") && err.contains("No such file"), "{err}");
+        assert_eq!(run(&t, "read", json!({})).unwrap_err(), "missing path");
+
+        // Windows line endings are trimmed; a long line is cut with an ellipsis.
+        fs::write(dir.join("crlf.txt"), "a\r\nb\r\n").unwrap();
+        assert_eq!(run(&t, "read", json!({"path": "crlf.txt"})).unwrap(), "     1\ta\n     2\tb\n");
+        fs::write(dir.join("long.txt"), "x".repeat(2500)).unwrap();
+        let out = run(&t, "read", json!({"path": "long.txt"})).unwrap();
+        assert_eq!(out.trim_end(), format!("     1\t{}\u{2026}", "x".repeat(2000)));
+        // Invalid UTF-8 is replaced, not an error.
+        fs::write(dir.join("latin.txt"), b"caf\xe9\n").unwrap();
+        assert_eq!(run(&t, "read", json!({"path": "latin.txt"})).unwrap(), "     1\tcaf\u{fffd}\n");
+    }
+
+    #[test]
+    fn a_big_file_stops_at_the_line_or_byte_limit() {
+        let (t, dir) = test_tools("fs-read-big");
+        let many: String = (0..2500).map(|i| format!("{i}\n")).collect();
+        fs::write(dir.join("many.txt"), many).unwrap();
+        let out = run(&t, "read", json!({"path": "many.txt"})).unwrap();
+        assert!(out.ends_with("\n(file continues after line 2000; use offset to read more)"));
+        assert_eq!(out.lines().filter(|l| l.as_bytes().get(6) == Some(&b'\t')).count(), 2000);
+
+        // 1000 lines of 100 bytes: the 50 KB budget runs out first.
+        let wide: String = (0..1000).map(|_| format!("{}\n", "w".repeat(100))).collect();
+        fs::write(dir.join("wide.txt"), wide).unwrap();
+        let out = run(&t, "read", json!({"path": "wide.txt"})).unwrap();
+        let shown = out.lines().filter(|l| l.as_bytes().get(6) == Some(&b'\t')).count();
+        assert_eq!(shown, 475);
+        assert!(out.contains(&format!("(file continues after line {shown};")));
+    }
+
+    #[test]
+    fn writing_and_editing_report_their_problems() {
+        let (t, dir) = test_tools("fs-write-edit");
+        assert_eq!(run(&t, "write", json!({"path": "x.txt"})).unwrap_err(), "missing content");
+        assert_eq!(run(&t, "write", json!({"content": "x"})).unwrap_err(), "missing path");
+        // Creates parent folders and counts lines.
+        let out = run(&t, "write", json!({"path": "deep/er/x.txt", "content": "a\nb\n"})).unwrap();
+        assert_eq!(out, format!("Wrote 2 lines to {}", dir.join("deep/er/x.txt").display()));
+        assert_eq!(fs::read_to_string(dir.join("deep/er/x.txt")).unwrap(), "a\nb\n");
+        // Overwriting needs a read first.
+        let again = json!({"path": "deep/er/x.txt", "content": "c"});
+        assert!(run(&t, "write", again.clone()).is_ok(), "this agent wrote it, so it knows its content");
+        // A file the agent never saw can't be replaced blindly.
+        fs::write(dir.join("other.txt"), "mine").unwrap();
+        assert!(run(&t, "write", json!({"path": "other.txt", "content": "c"})).unwrap_err().contains("not been read"));
+        let err = run(&t, "write", json!({"path": "folder/../deep", "content": "c"})).unwrap_err();
+        assert!(err.contains("deep"), "{err}");
+
+        let edit = |old: &str, new: &str| json!({"path": "other.txt", "old_string": old, "new_string": new});
+        assert!(
+            run(&t, "edit", json!({"path": "nope.txt", "old_string": "a", "new_string": "b"}))
+                .unwrap_err()
+                .contains("does not exist. Use write")
+        );
+        run(&t, "read", json!({"path": "other.txt"})).unwrap();
+        assert_eq!(run(&t, "edit", edit("", "x")).unwrap_err(), "old_string is empty");
+        assert_eq!(run(&t, "edit", edit("mine", "mine")).unwrap_err(), "old_string and new_string are the same");
+        assert_eq!(run(&t, "edit", json!({"path": "other.txt", "new_string": "x"})).unwrap_err(), "missing old_string");
+        assert_eq!(run(&t, "edit", json!({"path": "other.txt", "old_string": "x"})).unwrap_err(), "missing new_string");
+        assert_eq!(run(&t, "edit", json!({"old_string": "x", "new_string": "y"})).unwrap_err(), "missing path");
+        let ok = run(&t, "edit", edit("mine", "yours")).unwrap();
+        assert_eq!(ok, format!("Edited {} (1 replacement)", dir.join("other.txt").display()));
+        assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "yours");
+        // Its own edit doesn't make the file stale.
+        run(&t, "edit", edit("yours", "ours")).unwrap();
+        fs::write(dir.join("rep.txt"), "a a a").unwrap();
+        run(&t, "read", json!({"path": "rep.txt"})).unwrap();
+        let all = json!({"path": "rep.txt", "old_string": "a", "new_string": "b", "replace_all": true});
+        assert!(run(&t, "edit", all).unwrap().ends_with("(3 replacements)"));
+        assert_eq!(fs::read_to_string(dir.join("rep.txt")).unwrap(), "b b b");
+    }
+
+    #[test]
+    fn changes_are_checkpointed_for_rewind() {
+        let (t, dir) = test_tools("fs-checkpoint");
+        t.checkpoints.open(dir.join(".ckpt"));
+        t.checkpoints.begin_turn(0);
+        fs::write(dir.join("a.txt"), "before").unwrap();
+        run(&t, "read", json!({"path": "a.txt"})).unwrap();
+        run(&t, "edit", json!({"path": "a.txt", "old_string": "before", "new_string": "after"})).unwrap();
+        run(&t, "write", json!({"path": "new.txt", "content": "created"})).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "after");
+        assert_eq!(t.checkpoints.restore_from(0), Ok(2));
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "before");
+        assert!(!dir.join("new.txt").exists());
+    }
 }
