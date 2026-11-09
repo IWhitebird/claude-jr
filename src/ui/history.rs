@@ -1,7 +1,7 @@
 // What was written to scrollback, kept as source (not as finished lines) so
 // it can be drawn again at a new width when the terminal is resized. Only the
-// most recent couple of screens' worth is kept: enough to refill the screen,
-// a few KB, never the whole conversation.
+// most recent ~1000 lines are kept: enough to refill the scrollback after a
+// resize, never the whole conversation.
 
 use super::md::Markdown;
 use super::text::{ORANGE, Span, clean, span};

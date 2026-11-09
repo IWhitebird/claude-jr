@@ -41,6 +41,8 @@ const APPROVE_GUARD: Duration = Duration::from_millis(400);
 fn armed(since: Instant, now: Instant) -> bool {
     now.duration_since(since) >= APPROVE_GUARD
 }
+/// Lines of history kept to redraw after a resize.
+const HISTORY_LINES: usize = 1000;
 
 const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /model [name]   pick a model from the list, or set one by id
@@ -139,9 +141,9 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
             term.clear(true)?;
             app.history.clear();
         } else if std::mem::take(&mut app.resized) {
-            // The terminal rewrapped what's on screen at its old width; start
-            // the screen over and draw recent history at the new one.
-            term.clear(false)?;
+            // The terminal keeps an old-width copy in its scrollback; wipe
+            // that too and draw the kept history again at the new width.
+            term.clear(true)?;
             app.redraw_history();
         }
         let (live, cursor) = app.live();
@@ -329,7 +331,7 @@ impl App {
         if let Some(last) = self.commits[before..].last() {
             self.last_blank = text::is_blank(last);
         }
-        self.history.push(block, lines, self.rows * 2);
+        self.history.push(block, lines, HISTORY_LINES.max(self.rows * 2));
     }
 
     /// A blank line before a new block, unless there already is one.
@@ -372,12 +374,9 @@ impl App {
     }
 
     /// The terminal changed size: the screen is cleared and the kept history
-    /// drawn again at the new width, as much as fits.
+    /// drawn again at the new width.
     fn redraw_history(&mut self) {
-        let mut lines = self.history.render(self.cols);
-        let room = self.rows.saturating_sub(6);
-        let skip = lines.len().saturating_sub(room);
-        self.commits = lines.split_off(skip);
+        self.commits = self.history.render(self.cols);
         self.last_blank = self.commits.last().is_none_or(|l| text::is_blank(l));
     }
 
