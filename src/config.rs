@@ -54,6 +54,9 @@ impl Config {
     pub fn load() -> Result<Config, String> {
         let mut cfg = Config::default();
         for path in [config_dir().join("config.json"), PathBuf::from(".claude-jr.json")] {
+            if path.as_os_str() == ".claude-jr.json" && !is_trusted() {
+                continue;
+            }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let file: Config = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             cfg.model = file.model.or(cfg.model);
@@ -70,6 +73,39 @@ impl Config {
         }
         Ok(cfg)
     }
+}
+
+fn trusted_file() -> PathBuf {
+    config_dir().join("trusted")
+}
+
+/// Whichever of the project files that can change settings exist in the current folder.
+pub fn project_files() -> Vec<&'static str> {
+    [".claude-jr.json", ".mcp.json"].into_iter().filter(|f| std::path::Path::new(f).exists()).collect()
+}
+
+/// Has the user said to trust the current folder's project files?
+pub fn is_trusted() -> bool {
+    let Ok(dir) = std::env::current_dir().and_then(|d| d.canonicalize()) else { return false };
+    let Ok(text) = std::fs::read_to_string(trusted_file()) else { return false };
+    text.lines().any(|l| std::path::Path::new(l) == dir)
+}
+
+/// Adds the current folder to the trusted list.
+pub fn trust() -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let dir = std::env::current_dir().and_then(|d| d.canonicalize()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
+    let path = trusted_file();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    f.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    writeln!(f, "{}", dir.display()).map_err(|e| e.to_string())
 }
 
 fn home() -> PathBuf {
@@ -148,5 +184,26 @@ pub fn delete_api_key() -> std::io::Result<()> {
     match std::fs::remove_file(credentials()) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The current folder is process-wide, so both cases share one test.
+    #[test]
+    fn project_config_needs_trust() {
+        crate::tools::test_home();
+        let old = std::env::current_dir().unwrap();
+        let dir = crate::tools::test_dir("trust");
+        std::fs::write(dir.join(".claude-jr.json"), r#"{"mode":"bypass"}"#).unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        assert!(!is_trusted());
+        assert_eq!(Config::load().unwrap().mode, None);
+        trust().unwrap();
+        assert!(is_trusted());
+        assert_eq!(Config::load().unwrap().mode.as_deref(), Some("bypass"));
+        std::env::set_current_dir(old).unwrap();
     }
 }

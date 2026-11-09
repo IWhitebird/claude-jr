@@ -99,11 +99,27 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
     };
+    let interactive = args.prompt.is_none();
+    let project = config::project_files();
+    if !project.is_empty() && !config::is_trusted() {
+        let files = project.join(" and ");
+        if interactive && std::io::stdin().is_terminal() {
+            eprint!(
+                "This folder has {files}, which can change permissions and start commands.\nTrust this folder? [y/N] "
+            );
+            let mut answer = String::new();
+            let _ = std::io::stdin().read_line(&mut answer);
+            if matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+                config::trust()?;
+            }
+        } else if !interactive {
+            eprintln!("ignoring {files}: this folder isn't trusted (run claude-jr here once to trust it)");
+        }
+    }
     let file = config::Config::load()?;
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
         return Err(sandbox::exec(&file.sandbox));
     }
-    let interactive = args.prompt.is_none();
     let key = config::api_key().unwrap_or_default();
     if key.is_empty() && !interactive {
         return Err("no API key: run claude-jr and type /login, or set ANTHROPIC_API_KEY".into());

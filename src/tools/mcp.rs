@@ -55,8 +55,7 @@ pub fn configured(extra: &BTreeMap<String, ServerConfig>) -> BTreeMap<String, Se
         #[serde(rename = "mcpServers", default)]
         servers: BTreeMap<String, ServerConfig>,
     }
-    let mut all = std::fs::read_to_string(".mcp.json")
-        .ok()
+    let mut all = if crate::config::is_trusted() { std::fs::read_to_string(".mcp.json").ok() } else { None }
         .and_then(|t| serde_json::from_str::<McpJson>(&t).ok())
         .map(|m| m.servers)
         .unwrap_or_default();
