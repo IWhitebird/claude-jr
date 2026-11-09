@@ -169,7 +169,7 @@ the network unless your request plausibly needs them.
 | `todo` | a task list for longer work, shown as it changes |
 | `memory` | notes the agent keeps about you and the project, loaded every session |
 | `skill` | loads a skill's instructions |
-| `web_search`, `web_fetch` | Anthropic's server-side tools: nothing runs locally |
+| `web_search`, `web_fetch` | Anthropic's server-side tools: nothing runs locally, and they are not asked about first (see MCP below); set `"web_tools": false` to turn them off |
 | MCP tools | whatever your MCP servers provide |
 
 Reads, subagents, skills and MCP calls in the same reply run at the same time.
@@ -211,6 +211,15 @@ task matches it, or you run it with `/release`.
 - **Remote servers** (`url`) are handed to the API's MCP connector, so
   Anthropic calls them and they cost nothing locally. The URL must be
   reachable from the internet.
+
+Remote MCP tools and web search/fetch run on Anthropic's servers inside one
+request, so claude-jr only sees them after they have run: they are not
+approved one by one, and plan mode does not stop them. Each call is still
+listed in the transcript with its arguments, and failures are marked. To avoid
+this, use local servers (every call goes through the normal permission check),
+leave out `url` servers, and set `"web_tools": false` in the config. Remote
+servers come only from your own config or from a trusted folder's `.mcp.json`;
+an untrusted folder's `.mcp.json` is ignored.
 
 ## Sandbox
 

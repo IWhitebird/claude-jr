@@ -249,44 +249,112 @@ pub fn job_notes(tools: &Tools) -> Option<String> {
 }
 
 /// Tools that run on Anthropic's side (web search and fetch, remote MCP)
-/// arrive as finished blocks in the stream; show them like local ones.
+/// arrive as finished blocks in the stream, after they have already run, so
+/// there is no approval step. Every one is shown, with its arguments.
 fn show_server_tool(ctx: &Ctx, b: &Value) {
-    {
-        let kind = b["type"].as_str().unwrap_or("");
-        let label = match kind {
-            "server_tool_use" if b["name"] == "web_search" => {
-                format!("Search({})", b["input"]["query"].as_str().unwrap_or(""))
-            }
-            "server_tool_use" if b["name"] == "web_fetch" => {
-                format!("Fetch({})", b["input"]["url"].as_str().unwrap_or(""))
-            }
-            "mcp_tool_use" => {
-                format!("{}: {} (remote)", b["server_name"].as_str().unwrap_or("mcp"), b["name"].as_str().unwrap_or(""))
-            }
-            _ => String::new(),
-        };
-        if !label.is_empty() {
-            return (ctx.emit)(Event::Tool { label, diff: None });
-        }
-        let out = match kind {
-            // A list of results on success, an object with error_code on failure.
-            "web_search_tool_result" => match &b["content"] {
-                Value::Array(results) => Ok(format!("{} results", results.len())),
-                e => Err(format!("search failed: {}", e["error_code"].as_str().unwrap_or("error"))),
-            },
-            "web_fetch_tool_result" => match b["content"]["type"].as_str() {
-                Some("web_fetch_result") => {
-                    Ok(format!("Fetched {}", b["content"]["url"].as_str().unwrap_or("the page")))
-                }
-                _ => Err(format!("fetch failed: {}", b["content"]["error_code"].as_str().unwrap_or("error"))),
-            },
-            "mcp_tool_result" => {
-                let text: Vec<&str> =
-                    b["content"].as_array().into_iter().flatten().filter_map(|p| p["text"].as_str()).collect();
-                if b["is_error"] == true { Err(text.join("\n")) } else { Ok(text.join("\n")) }
-            }
-            _ => return,
-        };
+    if let Some(label) = server_label(b) {
+        return (ctx.emit)(Event::Tool { label, diff: None });
+    }
+    if let Some(out) = server_result(b) {
         (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary("server", &out) });
+    }
+}
+
+/// One line, no control characters, at most 200 characters.
+fn clean(s: &str) -> String {
+    let flat: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.char_indices().nth(200) {
+        Some((i, _)) => format!("{}...", &flat[..i]),
+        None => flat,
+    }
+}
+
+/// The transcript line for a server-side call: the tool and its arguments.
+fn server_label(b: &Value) -> Option<String> {
+    let name = b["name"].as_str().unwrap_or("");
+    let label = match b["type"].as_str()? {
+        "server_tool_use" => match name {
+            "web_search" => format!("Search({})", clean(b["input"]["query"].as_str().unwrap_or(""))),
+            "web_fetch" => format!("Fetch({})", clean(b["input"]["url"].as_str().unwrap_or(""))),
+            other => format!("{} (server) {}", clean(other), clean(&tools::mcp::summarize_args(&b["input"]))),
+        },
+        "mcp_tool_use" => format!(
+            "{}: {} (remote) {}",
+            clean(b["server_name"].as_str().unwrap_or("mcp")),
+            clean(name),
+            clean(&tools::mcp::summarize_args(&b["input"]))
+        ),
+        _ => return None,
+    };
+    Some(label.trim_end().to_string())
+}
+
+/// The outcome of a server-side call, if the block is a result.
+fn server_result(b: &Value) -> Option<Result<String, String>> {
+    let kind = b["type"].as_str()?;
+    let code = |c: &Value| clean(c["error_code"].as_str().unwrap_or("error"));
+    Some(match kind {
+        // A list of results on success, an object with error_code on failure.
+        "web_search_tool_result" => match &b["content"] {
+            Value::Array(results) => Ok(format!("{} results", results.len())),
+            e => Err(format!("search failed: {}", code(e))),
+        },
+        "web_fetch_tool_result" => match b["content"]["type"].as_str() {
+            Some("web_fetch_result") => {
+                Ok(format!("Fetched {}", clean(b["content"]["url"].as_str().unwrap_or("the page"))))
+            }
+            _ => Err(format!("fetch failed: {}", code(&b["content"]))),
+        },
+        "mcp_tool_result" => {
+            let text = match &b["content"] {
+                Value::String(s) => s.clone(),
+                Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                _ => String::new(),
+            };
+            if b["is_error"] == true { Err(if text.is_empty() { "error".into() } else { text }) } else { Ok(text) }
+        }
+        // Any other server tool's result: say whether it failed.
+        k if k.ends_with("_tool_result") => {
+            let what = k.trim_end_matches("_tool_result");
+            match b["content"]["error_code"].as_str() {
+                Some(c) => Err(format!("{what} failed: {}", clean(c))),
+                None => Ok(format!("{what} done")),
+            }
+        }
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_calls_are_labelled_with_arguments() {
+        let mcp =
+            json!({"type":"mcp_tool_use","server_name":"linear","name":"create_issue","input":{"title":"a\nb","n":2}});
+        assert_eq!(server_label(&mcp).unwrap(), "linear: create_issue (remote) n: 2, title: a b");
+        let search = json!({"type":"server_tool_use","name":"web_search","input":{"query":"rust\u{1b}[0m"}});
+        assert_eq!(server_label(&search).unwrap(), "Search(rust [0m)");
+        let other = json!({"type":"server_tool_use","name":"code_execution","input":{"code":"1+1"}});
+        assert_eq!(server_label(&other).unwrap(), "code_execution (server) code: 1+1");
+        assert!(server_label(&json!({"type":"text"})).is_none());
+        assert_eq!(clean(&"x".repeat(300)).len(), 203);
+    }
+
+    #[test]
+    fn server_results_report_failures() {
+        let ok = json!({"type":"mcp_tool_result","content":[{"type":"text","text":"done"}]});
+        assert_eq!(server_result(&ok), Some(Ok("done".into())));
+        let bad = json!({"type":"mcp_tool_result","is_error":true,"content":"denied"});
+        assert_eq!(server_result(&bad), Some(Err("denied".into())));
+        let empty = json!({"type":"mcp_tool_result","is_error":true});
+        assert_eq!(server_result(&empty), Some(Err("error".into())));
+        let fetch = json!({"type":"web_fetch_tool_result","content":{"type":"web_fetch_tool_error","error_code":"unavailable"}});
+        assert_eq!(server_result(&fetch), Some(Err("fetch failed: unavailable".into())));
+        let other = json!({"type":"code_execution_tool_result","content":{"error_code":"timeout"}});
+        assert_eq!(server_result(&other), Some(Err("code_execution failed: timeout".into())));
+        assert!(server_result(&json!({"type":"text"})).is_none());
     }
 }
