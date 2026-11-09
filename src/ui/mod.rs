@@ -34,6 +34,13 @@ const TICK: Duration = Duration::from_millis(300);
 /// Key presses are drawn at once.
 const FRAME: Duration = Duration::from_millis(33);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
+/// How long an approval prompt ignores answer keys after it appears.
+const APPROVE_GUARD: Duration = Duration::from_millis(400);
+
+/// Keys pressed this soon after an approval appears were typed for something else.
+fn armed(since: Instant, now: Instant) -> bool {
+    now.duration_since(since) >= APPROVE_GUARD
+}
 
 const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /model [name]   pick a model from the list, or set one by id
@@ -221,6 +228,8 @@ struct App {
     last_blank: bool,
     work: Option<Work>,
     prompts: VecDeque<Prompt>,
+    /// When the front prompt became the front one.
+    prompt_since: Instant,
     /// Messages typed while the agent was busy (or before a key), sent in order.
     queued: VecDeque<String>,
     cost: f64,
@@ -258,6 +267,7 @@ impl App {
             last_blank: true,
             work: None,
             prompts: VecDeque::new(),
+            prompt_since: Instant::now(),
             queued: VecDeque::new(),
             cost: 0.0,
             context: 0,
@@ -452,6 +462,14 @@ impl App {
     // ---- events ---------------------------------------------------------
 
     fn handle(&mut self, m: Msg) {
+        let was_approve = matches!(self.prompts.front(), Some(Prompt::Approve { .. }));
+        self.dispatch(m);
+        if !was_approve && matches!(self.prompts.front(), Some(Prompt::Approve { .. })) {
+            self.prompt_since = Instant::now();
+        }
+    }
+
+    fn dispatch(&mut self, m: Msg) {
         match m {
             Msg::Agent(e) => self.on_agent(e),
             Msg::Term(TermEvent::Key(k)) => self.on_key(k),
@@ -749,8 +767,13 @@ impl App {
     }
 
     fn on_approve_key(&mut self, k: KeyEvent) {
+        let ctrl_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
+        let always = matches!(k.code, KeyCode::Esc | KeyCode::BackTab) || ctrl_c;
+        if !always && !armed(self.prompt_since, Instant::now()) {
+            return;
+        }
         let answer = match k.code {
-            KeyCode::Char('y' | 'Y' | '1') | KeyCode::Enter => Answer::Yes,
+            KeyCode::Char('y' | 'Y' | '1') => Answer::Yes,
             KeyCode::Char('a' | 'A' | '2') => Answer::Always,
             KeyCode::Char('n' | 'N' | '3') | KeyCode::Esc => Answer::No,
             KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -766,6 +789,7 @@ impl App {
         if let Some(Prompt::Approve { reply, .. }) = self.prompts.pop_front() {
             let _ = reply.send(answer);
         }
+        self.prompt_since = Instant::now();
     }
 
     /// Answers the question at the front of the queue.
@@ -1279,5 +1303,20 @@ fn tokens(n: u64) -> String {
         0..1000 => n.to_string(),
         1000..1_000_000 => format!("{}k", n / 1000),
         _ => format!("{}M", n / 1_000_000),
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    #[test]
+    fn approval_keys_wait_for_the_guard() {
+        let t = Instant::now();
+        let at = |ms| t + Duration::from_millis(ms);
+        assert!(!armed(t, at(0)));
+        assert!(!armed(t, at(399)));
+        assert!(armed(t, at(400)));
+        assert!(armed(t, at(2000)));
     }
 }
