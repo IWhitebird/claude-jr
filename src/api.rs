@@ -471,7 +471,7 @@ fn read_sse(mut r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mu
         match r.read_until(b'\n', &mut raw) {
             Ok(0) if raw.is_empty() => break,
             Ok(_) => {}
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
+            Err(e) if timed_out(&e) => {
                 if raw.len() != before {
                     last_byte = Instant::now();
                 }
@@ -560,6 +560,16 @@ fn read_sse(mut r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mu
         return Err(Retryable("the stream ended before any reply".into()).into());
     }
     bail!("the stream ended early")
+}
+
+/// A read that hit its time limit. ureq reports its own timeouts as
+/// `ErrorKind::Other` wrapping `ureq::Error::Timeout`.
+fn timed_out(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{TimedOut, WouldBlock};
+    matches!(e.kind(), TimedOut | WouldBlock)
+        || e.get_ref()
+            .and_then(|i| i.downcast_ref::<ureq::Error>())
+            .is_some_and(|u| matches!(u, ureq::Error::Timeout(_)))
 }
 
 /// Applies a delta to its block: strings are appended, anything else replaces.
@@ -755,5 +765,49 @@ data: {"type":"message_stop"}
         assert!(run(b"data: {\"type\":\"ping\"}\n").is::<Retryable>());
         let text = b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"x\"}}\n";
         assert!(!run(text).is::<Retryable>());
+    }
+
+    #[test]
+    fn reading_resumes_after_read_timeouts() {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            let chunk = |s: &mut std::net::TcpStream, d: &str| {
+                s.write_all(format!("{:x}\r\n{d}\r\n", d.len()).as_bytes()).unwrap();
+                s.flush().unwrap();
+            };
+            s.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n")
+                .unwrap();
+            chunk(&mut s, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n");
+            sleep(Duration::from_secs(4));
+            chunk(
+                &mut s,
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel",
+            );
+            sleep(Duration::from_millis(3500));
+            chunk(
+                &mut s,
+                "lo\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+            );
+            s.write_all(b"0\r\n\r\n").unwrap();
+        });
+        let client = Client::new("k".into(), Some(base));
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new("claude-opus-5-5", None, "", &tools);
+        let mut text = String::new();
+        let reply = client
+            .stream(&req, &[] as &[&str], &AtomicBool::new(false), |c| {
+                if let Chunk::Text(t) = c {
+                    text.push_str(t)
+                }
+            })
+            .expect("the stream should survive read timeouts");
+        assert_eq!(text, "hello");
+        assert_eq!(reply.stop_reason, "end_turn");
+        server.join().unwrap();
     }
 }
