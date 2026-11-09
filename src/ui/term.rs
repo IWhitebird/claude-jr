@@ -74,10 +74,13 @@ impl Term {
         self.last = None;
     }
 
-    /// Wipes the screen and the terminal's scrollback, for /clear. The next
-    /// draw starts from the top-left corner.
-    pub fn clear(&mut self) -> io::Result<()> {
-        self.out.write_all(b"\x1b[?2026h\x1b[2J\x1b[3J\x1b[H\x1b[?2026l")?;
+    /// Wipes the screen, and with `scrollback` the terminal's history too
+    /// (/clear). The next draw starts from the top-left corner.
+    pub fn clear(&mut self, scrollback: bool) -> io::Result<()> {
+        let codes: &[u8] = if scrollback { b"\x1b[2J\x1b[3J\x1b[H" } else { b"\x1b[2J\x1b[H" };
+        self.out.write_all(b"\x1b[?2026h")?;
+        self.out.write_all(codes)?;
+        self.out.write_all(b"\x1b[?2026l")?;
         self.out.flush()?;
         self.row = 0;
         if let Some(a) = &mut self.anchor {

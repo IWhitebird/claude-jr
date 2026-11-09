@@ -5,6 +5,7 @@
 // While the agent works it also wakes every 300 ms for the status dot, and
 // the terminal is only written to when the picture actually changed.
 
+mod history;
 mod input;
 mod md;
 mod stats;
@@ -15,6 +16,7 @@ mod view;
 
 use crate::agent::{self, Answer, Command, Event, Mode};
 use crossterm::event::{self as ct, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use history::{Block, History};
 use input::Input;
 use md::Markdown;
 use std::collections::VecDeque;
@@ -24,7 +26,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 use term::Term;
-use text::{BOLD_ORANGE, CYAN, DIM, GREEN, ORANGE, RED, RESET, Span, span};
+use text::{BOLD_ORANGE, CYAN, DIM, GREEN, ORANGE, RED, RESET, span};
 
 /// How often the status dot moves while the agent works.
 const TICK: Duration = Duration::from_millis(300);
@@ -127,7 +129,13 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
             continue;
         }
         if std::mem::take(&mut app.clear_screen) {
-            term.clear()?;
+            term.clear(true)?;
+            app.history.clear();
+        } else if std::mem::take(&mut app.resized) {
+            // The terminal rewrapped what's on screen at its old width; start
+            // the screen over and draw recent history at the new one.
+            term.clear(false)?;
+            app.redraw_history();
         }
         let (live, cursor) = app.live();
         term.draw(&mut app.commits, live, cursor)?;
@@ -205,6 +213,10 @@ struct App {
     stream: Stream,
     /// Lines waiting to be written into scrollback.
     commits: Vec<String>,
+    /// The last screens' worth of what was written, to redraw after a resize.
+    history: History,
+    /// The terminal was resized: redraw the screen at the new width.
+    resized: bool,
     /// Whether the last line written to scrollback was blank.
     last_blank: bool,
     work: Option<Work>,
@@ -241,6 +253,8 @@ impl App {
             input: Input::default(),
             stream: Stream { block_start: true, ..Stream::default() },
             commits: Vec::new(),
+            history: History::default(),
+            resized: false,
             last_blank: true,
             work: None,
             prompts: VecDeque::new(),
@@ -283,43 +297,46 @@ impl App {
         ];
         // A blank line between the shell prompt and the mascot, then the
         // mascot with the text beside its middle rows.
-        self.commits.push(String::new());
         let art = view::mascot();
         let offset = art.len().saturating_sub(text.len()) / 2;
+        let mut lines = vec![String::new()];
         for (i, row) in art.iter().enumerate() {
             let words = i.checked_sub(offset).and_then(|k| text.get(k)).map_or("", String::as_str);
-            self.commits.push(format!(" {row}   {words}"));
+            lines.push(format!(" {row}   {words}"));
         }
-        self.commits.push(String::new());
-        self.last_blank = true;
+        lines.push(String::new());
+        self.add(Block::Lines(lines));
     }
 
     // ---- scrollback -----------------------------------------------------
 
-    /// Runs a renderer that appends to scrollback, keeping `last_blank` right.
-    fn emit(&mut self, f: impl FnOnce(usize, &mut Vec<String>)) {
+    /// Draws a block into scrollback and remembers it for redrawing after a
+    /// resize (only the last couple of screens' worth is kept).
+    fn add(&mut self, block: Block) {
         let before = self.commits.len();
-        f(self.cols, &mut self.commits);
+        block.render(self.cols, &mut self.commits);
+        let lines = self.commits.len() - before;
         if let Some(last) = self.commits[before..].last() {
             self.last_blank = text::is_blank(last);
         }
+        self.history.push(block, lines, self.rows * 2);
     }
 
     /// A blank line before a new block, unless there already is one.
     fn gap(&mut self) {
         if !self.last_blank {
-            self.commits.push(String::new());
-            self.last_blank = true;
+            self.add(Block::Blank);
         }
     }
 
-    fn lead(&mut self) -> Span<'static> {
-        if std::mem::take(&mut self.stream.block_start) {
+    /// Whether the next line starts a block (and so gets the ● marker, after
+    /// a blank line).
+    fn take_lead(&mut self) -> bool {
+        let start = std::mem::take(&mut self.stream.block_start);
+        if start {
             self.gap();
-            span("● ", ORANGE)
-        } else {
-            span("  ", "")
         }
+        start
     }
 
     fn commit_text_line(&mut self, line: &str) {
@@ -327,10 +344,11 @@ impl App {
             return self.stream.table.push(line.to_string());
         }
         self.commit_table();
-        let lead = self.lead();
-        let mut md = self.stream.md;
-        self.emit(|cols, out| md.line(&text::clean(line), cols, lead, out));
-        self.stream.md = md;
+        let lead = self.take_lead();
+        let md = self.stream.md;
+        let line = text::clean(line);
+        self.stream.md = md.after(&line);
+        self.add(Block::Text { line, lead, md });
     }
 
     fn commit_thinking_line(&mut self, line: &str) {
@@ -340,7 +358,17 @@ impl App {
         if std::mem::take(&mut self.stream.block_start) {
             self.gap();
         }
-        self.emit(|cols, out| view::thinking(&text::clean(line), cols, out));
+        self.add(Block::Thinking(text::clean(line)));
+    }
+
+    /// The terminal changed size: the screen is cleared and the kept history
+    /// drawn again at the new width, as much as fits.
+    fn redraw_history(&mut self) {
+        let mut lines = self.history.render(self.cols);
+        let room = self.rows.saturating_sub(6);
+        let skip = lines.len().saturating_sub(room);
+        self.commits = lines.split_off(skip);
+        self.last_blank = self.commits.last().is_none_or(|l| text::is_blank(l));
     }
 
     /// A long paragraph that's still streaming would be re-wrapped and
@@ -380,9 +408,10 @@ impl App {
             return;
         }
 
-        let rest = text[cut..].trim_start().to_string();
-        self.lead(); // the blank line and ● marker, as for any committed line
-        self.emit(|_, out| out.extend(rows));
+        let (head, rest) = (head.to_string(), text[cut..].trim_start().to_string());
+        let md = self.stream.md;
+        let lead = self.take_lead(); // the blank line and ● marker, as for any committed line
+        self.add(Block::Text { line: text::clean(&head), lead, md });
         self.stream.text = rest;
     }
 
@@ -392,16 +421,8 @@ impl App {
             return;
         }
         let rows = std::mem::take(&mut self.stream.table);
-        let lead = self.lead();
-        let mut md = self.stream.md;
-        self.emit(|cols, out| {
-            if !table::render(&rows, cols, lead, out) {
-                for (i, row) in rows.iter().enumerate() {
-                    let l = if i == 0 { lead } else { span("  ", "") };
-                    md.line(&text::clean(row), cols, l, out);
-                }
-            }
-        });
+        let lead = self.take_lead();
+        self.add(Block::Table { rows, lead, md: self.stream.md });
     }
 
     /// Commits any partial line still being streamed.
@@ -419,7 +440,7 @@ impl App {
 
     fn note(&mut self, msg: &str, style: &'static str) {
         self.gap();
-        self.emit(|cols, out| view::note(msg, style, cols, out));
+        self.add(Block::Note { msg: msg.to_string(), style });
     }
 
     fn set_activity(&mut self, activity: String) {
@@ -437,7 +458,10 @@ impl App {
             Msg::Term(TermEvent::Paste(s)) if !matches!(self.prompts.front(), Some(Prompt::Approve { .. })) => {
                 self.input.insert(&s.replace("\r\n", "\n").replace('\r', "\n"));
             }
-            Msg::Term(TermEvent::Resize(c, r)) => (self.cols, self.rows) = (c as usize, r as usize),
+            Msg::Term(TermEvent::Resize(c, r)) => {
+                (self.cols, self.rows) = (c as usize, r as usize);
+                self.resized = true;
+            }
             Msg::Term(_) => {}
         }
     }
@@ -480,7 +504,7 @@ impl App {
                 self.note(&format!("Resumed {which} ({messages} messages)."), DIM);
                 if let Some((prompt, reply)) = recap {
                     self.gap();
-                    self.emit(|cols, out| view::user(&prompt, cols, out));
+                    self.add(Block::User(text::clean(&prompt)));
                     let short: Vec<&str> = reply.lines().filter(|l| !l.trim().is_empty()).take(6).collect();
                     self.stream.block_start = true;
                     for line in short {
@@ -548,19 +572,15 @@ impl App {
                 self.flush();
                 self.gap();
                 self.set_activity("running".into());
-                self.emit(|cols, out| {
-                    view::tool(&label, cols, out);
-                    if let Some(d) = &diff {
-                        view::diff(d, cols, out);
-                    }
-                });
+                // Only the changed lines are kept, not whole files.
+                self.add(Block::Tool { label, diff: diff.as_ref().map(view::trim_diff) });
             }
             Event::Ask { label, reply } => self.prompts.push_back(Prompt::Approve { label, reply }),
             Event::Question { question, options, reply } => {
                 self.prompts.push_back(Prompt::Question { question, options, reply });
             }
             Event::ToolResult { ok, summary } => {
-                self.emit(|cols, out| view::result(ok, &summary, cols, out));
+                self.add(Block::Result { ok, summary });
                 self.stream.block_start = true;
                 self.set_activity("listening".into());
             }
@@ -871,7 +891,7 @@ impl App {
             return;
         }
         self.gap();
-        self.emit(|cols, out| view::user(&text, cols, out));
+        self.add(Block::User(text::clean(&text)));
         self.stream.block_start = true;
         self.work = Some(Work::new());
         let cmd = match shell {
@@ -1023,6 +1043,7 @@ impl App {
                 // the next draw, and the header starts the page again.
                 self.clear_screen = true;
                 self.commits.clear();
+                self.history.clear();
                 self.stream = Stream { block_start: true, ..Stream::default() };
                 (self.context, self.name) = (0, None);
                 self.queued.clear();
@@ -1034,7 +1055,7 @@ impl App {
                     return self.note("Wait for the current turn to finish.", RED);
                 }
                 self.gap();
-                self.emit(|cols, out| view::user(&format!("/{cmd}"), cols, out));
+                self.add(Block::User(format!("/{cmd}")));
                 self.stream.block_start = true;
                 self.work = Some(Work::new());
                 let skill = Command::Skill { name: name.to_string(), args: arg.to_string() };

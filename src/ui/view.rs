@@ -39,6 +39,19 @@ pub fn note(text: &str, style: &'static str, cols: usize, out: &mut Vec<String>)
     }
 }
 
+/// Just the changed part of an edit, for keeping in the redraw history:
+/// shared lines at the start and end dropped, and at most KEEP_DIFF_LINES on
+/// each side (more than `diff` shows, so its "+N lines" count stays right).
+pub fn trim_diff(d: &Diff) -> Diff {
+    let old: Vec<&str> = d.old.lines().collect();
+    let new: Vec<&str> = d.new.lines().collect();
+    let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let end = old[start..].iter().rev().zip(new[start..].iter().rev()).take_while(|(a, b)| a == b).count();
+    const KEEP_DIFF_LINES: usize = 200;
+    let keep = |lines: &[&str]| lines.iter().take(KEEP_DIFF_LINES).map(|l| format!("{l}\n")).collect::<String>();
+    Diff { line: d.line + start, old: keep(&old[start..old.len() - end]), new: keep(&new[start..new.len() - end]) }
+}
+
 /// The changed lines between `old` and `new`, with line numbers. Lines the two
 /// share at the start and end are left out.
 pub fn diff(d: &Diff, cols: usize, out: &mut Vec<String>) {

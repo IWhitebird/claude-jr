@@ -27,6 +27,12 @@ impl Markdown {
             && list_item(t).is_none()
     }
 
+    /// The state after `raw`: the same, unless it opens or closes a code block.
+    pub fn after(self, raw: &str) -> Markdown {
+        let fence = raw.trim_start().starts_with("```");
+        Markdown { in_code: self.in_code != fence }
+    }
+
     pub fn in_code(&self) -> bool {
         self.in_code
     }
