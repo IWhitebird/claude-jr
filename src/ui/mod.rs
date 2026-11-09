@@ -10,7 +10,7 @@ mod term;
 mod text;
 mod view;
 
-use crate::agent::{self, Answer, Command, Event};
+use crate::agent::{self, Answer, Command, Event, Mode};
 use crate::api;
 use crossterm::event::{self as ct, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use input::Input;
@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 use term::Term;
-use text::{BOLD_ORANGE, DIM, GREY, ORANGE, RED, RESET, span};
+use text::{BOLD_ORANGE, CYAN, DIM, ORANGE, RED, RESET, span};
 
 const TICK: Duration = Duration::from_millis(100);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
@@ -32,6 +32,7 @@ const HELP: &str = "/clear          start a new conversation
 /exit           quit
 
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
+shift+tab cycles modes: normal → accept edits → plan → skip permissions
 esc cancels · ctrl-c clears the input, twice quits · up/down for history";
 
 enum Msg {
@@ -339,6 +340,10 @@ impl App {
                 }
             }
             KeyCode::Esc => self.cancel(),
+            KeyCode::BackTab => {
+                let mode = &self.agent.mode;
+                mode.set(mode.get().next());
+            }
             KeyCode::Backspace => self.input.backspace(),
             KeyCode::Delete => self.input.delete(),
             KeyCode::Left => self.input.left(),
@@ -459,15 +464,22 @@ impl App {
             }
         };
 
+        let queued;
         let left = if self.quit_armed.is_some_and(|t| t.elapsed() < QUIT_WINDOW) {
-            "press ctrl-c again to quit".to_string()
+            span("press ctrl-c again to quit", DIM)
         } else if let Some(q) = &self.queued {
-            format!("queued: {}", q.lines().next().unwrap_or(""))
+            queued = format!("queued: {}", q.lines().next().unwrap_or(""));
+            span(&queued, DIM)
         } else {
-            String::new()
+            match self.agent.mode.get() {
+                Mode::Default => span("shift+tab to change mode", DIM),
+                Mode::AcceptEdits => span("⏵⏵ accept edits on (shift+tab to cycle)", ORANGE),
+                Mode::Plan => span("⏸ plan mode on (shift+tab to cycle)", CYAN),
+                Mode::Bypass => span("⏵⏵ skip permissions on (shift+tab to cycle)", RED),
+            }
         };
         let right = format!("{} · {}k tokens · ${:.2}", self.model, self.context / 1000, self.cost);
-        out.push(format!("{GREY}{}{RESET}", view::footer(&left, &right, cols)));
+        out.push(view::footer(left, &right, cols));
 
         // Never taller than the screen, or the cursor math breaks.
         let max = self.rows.max(2) - 1;

@@ -8,16 +8,48 @@ use crate::tools::{self, Diff, Tools};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-#[derive(Clone, Copy, PartialEq)]
+/// How tool calls get approved. Shift+Tab cycles through these in order.
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Mode {
-    Ask,
-    Allow,
-    Deny,
+    /// Ask before write, edit and bash, unless a rule allows it.
+    Default,
+    /// Edits and writes go through; bash still asks.
+    AcceptEdits,
+    /// Read-only: no edits or writes, bash still asks. The model is told to plan.
+    Plan,
+    /// Everything runs without asking.
+    Bypass,
 }
+
+impl Mode {
+    const ALL: [Mode; 4] = [Mode::Default, Mode::AcceptEdits, Mode::Plan, Mode::Bypass];
+
+    pub fn next(self) -> Mode {
+        Mode::ALL[(self as usize + 1) % Mode::ALL.len()]
+    }
+}
+
+/// The mode, shared between the UI (which changes it) and the agent (which
+/// reads it before each tool call), so a change applies right away.
+pub struct SharedMode(AtomicU8);
+
+impl SharedMode {
+    pub fn get(&self) -> Mode {
+        Mode::ALL[self.0.load(Ordering::Relaxed) as usize % Mode::ALL.len()]
+    }
+
+    pub fn set(&self, m: Mode) {
+        self.0.store(m as u8, Ordering::Relaxed);
+    }
+}
+
+const PLAN_ON: &str = "<system-reminder>Plan mode is on. Explore and explain, but don't change any files. \
+End with a concrete plan for the user to approve.</system-reminder>";
+const PLAN_OFF: &str = "<system-reminder>Plan mode is off. You can make changes now.</system-reminder>";
 
 pub struct Config {
     pub key: String,
@@ -76,21 +108,25 @@ pub enum Event {
 pub struct Handle {
     pub commands: Sender<Command>,
     pub cancel: Arc<AtomicBool>,
+    pub mode: Arc<SharedMode>,
 }
 
 pub fn spawn(cfg: Config, emit: impl Fn(Event) + Send + 'static) -> Handle {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
-    let flag = cancel.clone();
-    thread::spawn(move || Agent::start(cfg, flag, Box::new(emit)).run(rx));
-    Handle { commands: tx, cancel }
+    let mode = Arc::new(SharedMode(AtomicU8::new(cfg.mode as u8)));
+    let (flag, shared) = (cancel.clone(), mode.clone());
+    thread::spawn(move || Agent::start(cfg, flag, shared, Box::new(emit)).run(rx));
+    Handle { commands: tx, cancel, mode }
 }
 
 struct Agent {
     client: Client,
     model: String,
     effort: Option<String>,
-    mode: Mode,
+    mode: Arc<SharedMode>,
+    /// Whether the model was last told that plan mode is on.
+    told_plan: bool,
     rules: Rules,
     system: String,
     tool_defs: Box<RawValue>,
@@ -102,7 +138,7 @@ struct Agent {
 }
 
 impl Agent {
-    fn start(cfg: Config, cancel: Arc<AtomicBool>, emit: Box<dyn Fn(Event) + Send>) -> Agent {
+    fn start(cfg: Config, cancel: Arc<AtomicBool>, mode: Arc<SharedMode>, emit: Box<dyn Fn(Event) + Send>) -> Agent {
         let root = std::env::current_dir().unwrap_or_else(|_| ".".into());
         let (session, system, messages) = match cfg.resume.then(Session::latest).flatten() {
             Some((session, system, messages)) => (session, system, messages),
@@ -112,7 +148,8 @@ impl Agent {
             client: Client::new(cfg.key, cfg.base_url),
             model: cfg.model,
             effort: cfg.effort,
-            mode: cfg.mode,
+            mode,
+            told_plan: false,
             rules: Rules::new(cfg.allow),
             system,
             tool_defs: tools::definitions(),
@@ -133,6 +170,12 @@ impl Agent {
                 Command::Send(text) => {
                     self.cancel.store(false, Ordering::Relaxed);
                     self.push_user(json!({ "type": "text", "text": text }));
+                    let plan = self.mode.get() == Mode::Plan;
+                    if plan != self.told_plan {
+                        let note = if plan { PLAN_ON } else { PLAN_OFF };
+                        self.push_user(json!({ "type": "text", "text": note }));
+                        self.told_plan = plan;
+                    }
                     let end = self.turn();
                     self.session.save(&self.system, &self.messages);
                     (self.emit)(end);
@@ -141,6 +184,7 @@ impl Agent {
                     self.messages.clear();
                     self.session = Session::new();
                     self.system = crate::prompt::system();
+                    self.told_plan = false;
                 }
                 Command::Model(m) => self.model = m,
             }
@@ -247,38 +291,37 @@ impl Agent {
         let diff = self.tools.preview(name, input);
         (self.emit)(Event::Tool { label: label.clone(), diff });
 
-        let out = if self.permitted(name, input, label) {
-            self.tools.run(name, input, &self.cancel)
-        } else {
-            Err("The user did not allow this tool call.".to_string())
+        let out = match self.permitted(name, input, label) {
+            Ok(()) => self.tools.run(name, input, &self.cancel),
+            Err(why) => Err(why.to_string()),
         };
         (self.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary(name, &out) });
         out
     }
 
-    fn permitted(&mut self, name: &str, input: &Value, label: String) -> bool {
-        if !tools::needs_permission(name) {
-            return true;
+    /// Ok if the call may run; otherwise the reason, which goes back to the model.
+    fn permitted(&mut self, name: &str, input: &Value, label: String) -> Result<(), &'static str> {
+        let edits = matches!(name, "write" | "edit");
+        match self.mode.get() {
+            _ if !tools::needs_permission(name) => return Ok(()),
+            Mode::Bypass => return Ok(()),
+            Mode::AcceptEdits if edits => return Ok(()),
+            Mode::Plan if edits => return Err("Plan mode is on: don't change files. Put the change in your plan."),
+            _ => {}
         }
         let subject = self.tools.subject(name, input);
         if self.rules.allows(name, &subject) {
-            return true;
+            return Ok(());
         }
-        match self.mode {
-            Mode::Allow => true,
-            Mode::Deny => false,
-            Mode::Ask => {
-                let (tx, rx) = mpsc::channel();
-                (self.emit)(Event::Ask { label, reply: tx });
-                match rx.recv() {
-                    Ok(Answer::Yes) => true,
-                    Ok(Answer::Always) => {
-                        self.rules.add(Rules::always(name, &subject));
-                        true
-                    }
-                    _ => false,
-                }
+        let (tx, rx) = mpsc::channel();
+        (self.emit)(Event::Ask { label, reply: tx });
+        match rx.recv() {
+            Ok(Answer::Yes) => Ok(()),
+            Ok(Answer::Always) => {
+                self.rules.add(Rules::always(name, &subject));
+                Ok(())
             }
+            _ => Err("The user did not allow this tool call."),
         }
     }
 }

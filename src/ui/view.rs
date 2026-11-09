@@ -111,11 +111,12 @@ pub fn status(activity: &str, secs: u64, millis: u128, cols: usize) -> String {
 }
 
 /// One line: `left` dimmed on the left, `right` dimmed on the right.
-pub fn footer(left: &str, right: &str, cols: usize) -> String {
+/// One line: `left` in its own style on the left, `right` dimmed on the right.
+pub fn footer(left: Span, right: &str, cols: usize) -> String {
     let right = fit(right, cols.saturating_sub(2));
-    let left = fit(left, cols.saturating_sub(width(&right) + 3));
-    let pad = cols.saturating_sub(width(&left) + width(&right) + 2);
-    format!(" {DIM}{left}{}{right}{RESET}", " ".repeat(pad))
+    let text = fit(left.text, cols.saturating_sub(width(&right) + 3));
+    let pad = cols.saturating_sub(width(&text) + width(&right) + 2);
+    format!(" {}{text}{RESET}{}{DIM}{right}{RESET}", left.style, " ".repeat(pad))
 }
 
 #[cfg(test)]

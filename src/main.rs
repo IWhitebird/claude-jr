@@ -18,7 +18,7 @@ const USAGE: &str = "usage: claude-jr [options] [-p PROMPT]
   -c, --continue       continue the last conversation in this directory
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
-  -y, --yes            allow write, edit and bash without asking
+  -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
   -h, --help           show this help
   -V, --version        show the version
 
@@ -54,7 +54,7 @@ fn parse_args() -> Result<Cli, String> {
             "-p" | "--print" => args.prompt = Some(value()?),
             "-m" | "--model" => args.model = Some(value()?),
             "-e" | "--effort" => args.effort = Some(value()?),
-            "-y" | "--yes" => args.yes = true,
+            "-y" | "--yes" | "--dangerously-skip-permissions" => args.yes = true,
             "-c" | "--continue" => args.resume = true,
             "-h" | "--help" => return Ok(Cli::Show(USAGE.into())),
             "-V" | "--version" => return Ok(Cli::Show(format!("claude-jr {}", env!("CARGO_PKG_VERSION")))),
@@ -98,11 +98,7 @@ fn run() -> Result<ExitCode, String> {
             .or(file.model)
             .unwrap_or_else(|| "claude-opus-5-5".into()),
         effort: args.effort.or(file.effort),
-        mode: match (args.yes, interactive) {
-            (true, _) => Mode::Allow,
-            (false, true) => Mode::Ask,
-            (false, false) => Mode::Deny,
-        },
+        mode: if args.yes { Mode::Bypass } else { Mode::Default },
         allow: file.allow,
         resume: args.resume,
     };
