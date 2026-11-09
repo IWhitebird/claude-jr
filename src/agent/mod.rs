@@ -313,7 +313,7 @@ impl Agent {
         self.core.cancel.store(false, Ordering::Relaxed);
         *self.core.request.lock().unwrap() = text.clone();
         // This turn starts at the message about to be added (or merged into).
-        let turn = self.messages.len() - usize::from(self.messages.last().is_some_and(|m| m.user));
+        let turn = self.messages.len() - usize::from(self.mergeable());
         self.tools.checkpoints.begin_turn(turn);
         // Image files mentioned in the message (dragged in, or pasted with
         // ctrl+v) go in as images, before the text.
@@ -485,11 +485,18 @@ impl Agent {
         emit(Event::Done);
     }
 
-    /// Adds to the last user message if there is one (after a failed or
-    /// cancelled request), so roles keep alternating. Only the newest message
-    /// changes, so the history stays append-only for the API.
+    /// Whether the last message is a user message that is not saved yet, so
+    /// more can be added to it without rewriting the file.
+    fn mergeable(&self) -> bool {
+        self.messages.last().is_some_and(|m| m.user) && !self.session.is_saved(self.messages.len())
+    }
+
+    /// Adds to the last user message if it is still unsaved (after a failed or
+    /// cancelled request), so roles keep alternating. A saved one is never
+    /// rewritten: the new block becomes its own message, which the API joins
+    /// to the one before it. The history stays append-only.
     fn push_user(&mut self, block: Value) {
-        if self.messages.last().is_some_and(|m| m.user) {
+        if self.mergeable() {
             let last = self.messages.pop().unwrap();
             let mut content = last.content();
             content.push(block);

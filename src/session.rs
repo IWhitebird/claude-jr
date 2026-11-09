@@ -46,6 +46,10 @@ impl Msg {
         content.iter().filter_map(|b| b["text"].as_str()).find(|t| !t.starts_with('<')).map(String::from)
     }
 
+    pub fn has_results(&self) -> bool {
+        self.content().iter().any(|b| b["type"] == "tool_result")
+    }
+
     pub fn content(&self) -> Vec<Value> {
         let v: Value = serde_json::from_str(self.json.get()).unwrap_or_default();
         match v.get("content") {
@@ -150,11 +154,12 @@ impl Session {
             .collect()
     }
 
-    /// Appends finished messages. A trailing user message is held back because
-    /// the next turn may still add to it.
+    /// Appends finished messages. A trailing user prompt is held back because
+    /// the next turn may still add to it. Tool results are written at once:
+    /// they are what tells a resumed session the tools ran.
     pub fn save(&mut self, system: &str, messages: &[Msg]) {
         let end = match messages.last() {
-            Some(m) if m.user => messages.len() - 1,
+            Some(m) if m.user && !m.has_results() => messages.len() - 1,
             _ => messages.len(),
         };
         if end <= self.saved {
@@ -175,6 +180,11 @@ impl Session {
         if self.meta(system, MetaFields { name: Some(name.to_string()), ..Default::default() }) {
             self.name = Some(name.to_string());
         }
+    }
+
+    /// Whether the first `len` messages are already in the file.
+    pub fn is_saved(&self, len: usize) -> bool {
+        len <= self.saved
     }
 
     /// Records that the conversation was cut back to its first `len` messages.
@@ -294,5 +304,25 @@ mod tests {
         assert_eq!(prompts, ["first", "again"]);
         assert!(Session::load(&Pick::Named(id)).is_some(), "found by id too");
         assert!(Session::list().iter().any(|s| s.name.as_deref() == Some("my work") && s.messages == 4));
+    }
+
+    #[test]
+    fn tool_results_are_saved_even_when_they_end_the_conversation() {
+        crate::tools::test_home();
+        let mut s = Session::new();
+        // Another test may have taken the same millisecond-stamped name.
+        s.path.set_file_name(format!("{}-results.jsonl", stem(&s.path)));
+        let id = stem(&s.path);
+        let messages = vec![
+            Msg::new("user", json!([{ "type": "text", "text": "run it" }])),
+            Msg::new("assistant", json!([{ "type": "tool_use", "id": "t1", "name": "bash", "input": {} }])),
+            Msg::new("user", json!([{ "type": "tool_result", "tool_use_id": "t1", "content": "hi" }])),
+        ];
+        // The turn stopped (error, cancel) right after the tools ran.
+        s.save("SYSTEM", &messages);
+        let loaded = Session::load(&Pick::Named(id)).expect("found by id");
+        assert_eq!(loaded.messages.len(), 3, "the real result was saved");
+        assert!(loaded.messages[2].user && loaded.messages[2].json.get().contains("\"hi\""));
+        assert!(s.is_saved(3));
     }
 }
