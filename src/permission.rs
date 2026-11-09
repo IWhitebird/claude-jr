@@ -2,7 +2,13 @@
 // calls whose subject (bash command or file path) matches the pattern, where
 // `*` matches anything. A bash command with shell operators in it is only
 // allowed by a rule that spells it out exactly, so `cargo *` can't approve
-// `cargo test; rm -rf ~`.
+// `cargo test; rm -rf ~`. For the write and edit tools, a bare rule only covers
+// files inside the project; outside files need a rule that names them.
+
+/// True for a file subject outside the project (absolute or `..`-relative).
+pub fn outside_project(subject: &str) -> bool {
+    subject.starts_with('/') || subject.starts_with("..")
+}
 
 pub struct Rules(Vec<String>);
 
@@ -23,6 +29,7 @@ impl Rules {
             let (name, pattern) = rule.split_once(':').unwrap_or((rule, ""));
             name == tool
                 && match pattern {
+                    "" if matches!(tool, "write" | "edit") => !outside_project(subject),
                     "" => true,
                     p if compound => p == subject,
                     p => glob(p, subject),
@@ -30,9 +37,14 @@ impl Rules {
         })
     }
 
-    /// The rule "always allow" adds: this exact command for bash, the whole tool otherwise.
+    /// The rule "always allow" adds: this exact command for bash, this exact file for
+    /// write/edit outside the project, the whole tool otherwise.
     pub fn always(tool: &str, subject: &str) -> String {
-        if tool == "bash" { format!("bash:{subject}") } else { tool.to_string() }
+        if tool == "bash" || (matches!(tool, "write" | "edit") && outside_project(subject)) {
+            format!("{tool}:{subject}")
+        } else {
+            tool.to_string()
+        }
     }
 }
 
@@ -80,6 +92,19 @@ mod tests {
         r.add(Rules::always("bash", "make && make test"));
         assert!(r.allows("bash", "make && make test"));
         assert!(!r.allows("bash", "make && make install"));
+    }
+
+    #[test]
+    fn edit_rules_stay_in_project() {
+        let r = Rules::new(vec!["edit".into()]);
+        assert!(r.allows("edit", "src/a.rs"));
+        assert!(!r.allows("edit", "/home/u/.bashrc"));
+
+        assert_eq!(Rules::always("edit", "/etc/hosts"), "edit:/etc/hosts");
+        let r = Rules::new(vec![Rules::always("edit", "/etc/hosts")]);
+        assert!(r.allows("edit", "/etc/hosts"));
+        assert!(!r.allows("edit", "/etc/passwd"));
+        assert_eq!(Rules::always("edit", "src/a.rs"), "edit");
     }
 
     #[test]

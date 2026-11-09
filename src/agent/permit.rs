@@ -5,7 +5,7 @@ use super::Answer;
 use super::Event;
 use super::turn::{Core, Ctx};
 use crate::api::{self, Request};
-use crate::permission::Rules;
+use crate::permission::{self, Rules};
 use crate::session::Msg;
 use crate::tools::{self, Access};
 use serde_json::value::RawValue;
@@ -88,10 +88,10 @@ impl Core {
         let access = tools::access(name);
         let mode = self.mode.get();
         let subject = ctx.tools.subject(name, input);
-        let inside_project = !subject.starts_with('/') && !subject.starts_with("..");
+        let inside_project = !permission::outside_project(&subject);
         match (mode, access) {
-            (_, Access::Free) | (Mode::Bypass, _) | (Mode::AcceptEdits, Access::Edit) => return Ok(()),
-            (Mode::Auto, Access::Edit) if inside_project => return Ok(()),
+            (_, Access::Free) | (Mode::Bypass, _) => return Ok(()),
+            (Mode::AcceptEdits | Mode::Auto, Access::Edit) if inside_project => return Ok(()),
             (Mode::Plan, Access::Edit) => {
                 return Err("Plan mode is on: don't change files. Put the change in your plan.".into());
             }
