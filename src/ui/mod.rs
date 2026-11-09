@@ -517,7 +517,7 @@ impl App {
 
     fn note(&mut self, msg: &str, style: &'static str) {
         self.gap();
-        self.add(Block::Note { msg: msg.to_string(), style });
+        self.add(Block::Note { msg: text::clean(msg), style });
     }
 
     fn set_activity(&mut self, activity: String) {
@@ -1277,9 +1277,13 @@ impl App {
         let mut lines: Vec<String> = self
             .subagents
             .iter()
-            .map(|(_, task, step)| format!(" {ORANGE}◆{RESET} {task}{DIM} · {step}{RESET}"))
+            .map(|(_, task, step)| {
+                let (task, step) = (text::clean(task), text::clean(step));
+                format!(" {ORANGE}◆{RESET} {task}{DIM} · {step}{RESET}")
+            })
             .collect();
         lines.extend(jobs.iter().filter(|j| j.2).map(|(id, cmd, _)| {
+            let cmd = text::clean(cmd);
             format!(" {GREEN}▶{RESET} job {id}{DIM} · {}{RESET}", cmd.lines().next().unwrap_or(""))
         }));
         let more = lines.len().saturating_sub(MAX);

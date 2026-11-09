@@ -17,11 +17,12 @@ pub fn user(text: &str, cols: usize, out: &mut Vec<String>) {
 }
 
 pub fn thinking(text: &str, cols: usize, out: &mut Vec<String>) {
-    wrap(&[span(text, ITALIC_DIM)], cols, span("  ", ""), span("  ", ""), out);
+    let text = clean(text);
+    wrap(&[span(&text, ITALIC_DIM)], cols, span("  ", ""), span("  ", ""), out);
 }
 
 pub fn tool(label: &str, cols: usize, out: &mut Vec<String>) {
-    out.push(format!("{ORANGE}●{RESET} {BOLD}{}{RESET}", fit(&clean(label), cols.saturating_sub(2))));
+    out.push(clip(format!("{ORANGE}●{RESET} {BOLD}{}{RESET}", fit(&clean_line(label), cols.saturating_sub(2))), cols));
 }
 
 pub fn result(ok: bool, summary: &str, cols: usize, out: &mut Vec<String>) {
@@ -29,12 +30,12 @@ pub fn result(ok: bool, summary: &str, cols: usize, out: &mut Vec<String>) {
     let text = clean(summary);
     for (i, line) in text.lines().enumerate() {
         let lead = if i == 0 { "  ⎿ " } else { "    " };
-        out.push(format!("{GREY}{lead}{RESET}{style}{}{RESET}", fit(line, cols.saturating_sub(4))));
+        out.push(clip(format!("{GREY}{lead}{RESET}{style}{}{RESET}", fit(line, cols.saturating_sub(4))), cols));
     }
 }
 
 pub fn note(text: &str, style: &'static str, cols: usize, out: &mut Vec<String>) {
-    for line in text.lines() {
+    for line in clean(text).lines() {
         wrap(&[span(line, style)], cols, span("  ", ""), span("  ", ""), out);
     }
 }
@@ -71,11 +72,12 @@ pub fn diff(d: &Diff, cols: usize, out: &mut Vec<String>) {
     let mut n = [first, first];
     for (line, sign, color) in rows.take(MAX_DIFF_LINES) {
         let k = usize::from(sign == '+');
-        out.push(format!("    {GREY}{:>num_w$}{RESET} {color}{sign} {}{RESET}", n[k], fit(&clean(line), text_w)));
+        let row = format!("    {GREY}{:>num_w$}{RESET} {color}{sign} {}{RESET}", n[k], fit(&clean_line(line), text_w));
+        out.push(clip(row, cols));
         n[k] += 1;
     }
     if total > MAX_DIFF_LINES {
-        out.push(format!("    {GREY}… +{} lines{RESET}", total - MAX_DIFF_LINES));
+        out.push(clip(format!("    {GREY}… +{} lines{RESET}", total - MAX_DIFF_LINES), cols));
     }
 }
 
@@ -87,20 +89,23 @@ pub fn input_box(input: &Input, hint: &str, cols: usize, out: &mut Vec<String>) 
     let first = cur_row.saturating_sub(MAX_INPUT_ROWS - 1);
     let top = out.len();
 
-    out.push(format!("{GREY}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))));
+    out.push(clip(format!("{GREY}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))), cols));
     if input.is_empty() {
-        let hint = fit(hint, text_w);
+        let hint = fit(&clean_line(hint), text_w);
         let pad = text_w.saturating_sub(width(&hint));
-        out.push(format!("{GREY}│{RESET} {ORANGE}>{RESET} {DIM}{hint}{RESET}{} {GREY}│{RESET}", " ".repeat(pad)));
+        let row = format!("{GREY}│{RESET} {ORANGE}>{RESET} {DIM}{hint}{RESET}{} {GREY}│{RESET}", " ".repeat(pad));
+        out.push(clip(row, cols));
     } else {
         for (i, r) in rows.iter().enumerate().skip(first).take(MAX_INPUT_ROWS) {
-            let text = &input.text()[r.clone()];
+            // Pasted text can hold control characters; they must not reach the terminal.
+            let text = clean(&input.text()[r.clone()]);
+            let text = text.as_str();
             let pad = text_w.saturating_sub(width(text));
             let lead = if i == 0 { format!("{ORANGE}>{RESET} ") } else { "  ".to_string() };
-            out.push(format!("{GREY}│{RESET} {lead}{text}{} {GREY}│{RESET}", " ".repeat(pad)));
+            out.push(clip(format!("{GREY}│{RESET} {lead}{text}{} {GREY}│{RESET}", " ".repeat(pad)), cols));
         }
     }
-    out.push(format!("{GREY}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))));
+    out.push(clip(format!("{GREY}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))), cols));
     (top + 1 + cur_row - first, 4 + cur_col)
 }
 
@@ -137,9 +142,10 @@ pub fn question(question: &str, options: &[String], cols: usize, out: &mut Vec<S
 /// A numbered list in a box, for pickers (/rewind, /resume).
 pub fn picker(title: &str, items: &[String], hint: &str, cols: usize, out: &mut Vec<String>) {
     let numbered: Vec<String> = items.iter().enumerate().map(|(i, t)| format!("{}. {}", i + 1, clean(t))).collect();
-    let mut rows: Vec<(&str, &'static str)> = vec![(title, BOLD)];
+    let (title, hint) = (clean(title), clean(hint));
+    let mut rows: Vec<(&str, &'static str)> = vec![(&title, BOLD)];
     rows.extend(numbered.iter().map(|t| (t.as_str(), "")));
-    rows.push((hint, DIM));
+    rows.push((&hint, DIM));
     boxed(&rows, cols, out);
 }
 
@@ -151,21 +157,22 @@ pub fn menu(items: &[(&str, &str)], at: usize, rows: usize, cols: usize, out: &m
     }
     let at = at.min(items.len() - 1);
     let first = (at + 1).saturating_sub(rows).min(items.len().saturating_sub(rows));
-    let name_w = items.iter().map(|(n, _)| width(n)).max().unwrap_or(0) + 1;
+    let name_w = items.iter().map(|(n, _)| width(&clean_line(n))).max().unwrap_or(0) + 1;
     for (i, (name, what)) in items.iter().enumerate().skip(first).take(rows) {
         let (mark, style) = if i == at { ("›", ORANGE) } else { (" ", "") };
-        let pad = " ".repeat(name_w - width(name));
-        let what = fit(&clean(what), cols.saturating_sub(name_w + 6));
-        out.push(format!(" {ORANGE}{mark}{RESET} {style}/{}{RESET}{pad} {DIM}{what}{RESET}", clean(name)));
+        let name = clean_line(name);
+        let pad = " ".repeat(name_w - width(&name));
+        let what = fit(&clean_line(what), cols.saturating_sub(name_w + 6));
+        out.push(clip(format!(" {ORANGE}{mark}{RESET} {style}/{name}{RESET}{pad} {DIM}{what}{RESET}"), cols));
     }
     let hidden = items.len() - items.len().min(first + rows);
     let hint = if hidden > 0 { format!("{hidden} more · ") } else { String::new() };
-    out.push(format!("   {DIM}{hint}up/down to pick · tab completes · enter runs{RESET}"));
+    out.push(clip(format!("   {DIM}{hint}up/down to pick · tab completes · enter runs{RESET}"), cols));
 }
 
 pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
     let path = crate::config::config_dir().join("credentials");
-    let where_ = format!("It's saved to {}, readable only by you.", path.display());
+    let where_ = clean(&format!("It's saved to {}, readable only by you.", path.display()));
     boxed(
         &[
             ("Paste your Anthropic API key", BOLD),
@@ -179,32 +186,17 @@ pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
 
 /// Text in an orange box, each entry word-wrapped to fit.
 fn boxed(rows: &[(&str, &'static str)], cols: usize, out: &mut Vec<String>) {
-    let inner = cols.saturating_sub(4).max(4);
-    out.push(format!("{ORANGE}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))));
+    let inner = cols.saturating_sub(4).max(1);
+    out.push(clip(format!("{ORANGE}╭{}╮{RESET}", "─".repeat(cols.saturating_sub(2))), cols));
     for (text, style) in rows {
         let mut lines = Vec::new();
         wrap(&[span(text, style)], inner, span("", ""), span("", ""), &mut lines);
         for line in lines {
             let pad = inner.saturating_sub(width(&strip(&line)));
-            out.push(format!("{ORANGE}│{RESET} {line}{} {ORANGE}│{RESET}", " ".repeat(pad)));
+            out.push(clip(format!("{ORANGE}│{RESET} {line}{} {ORANGE}│{RESET}", " ".repeat(pad)), cols));
         }
     }
-    out.push(format!("{ORANGE}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))));
-}
-
-/// Drops escape codes, to measure styled text.
-fn strip(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut esc = false;
-    for c in s.chars() {
-        match c {
-            '\x1b' => esc = true,
-            'm' if esc => esc = false,
-            _ if esc => {}
-            c => out.push(c),
-        }
-    }
-    out
+    out.push(clip(format!("{ORANGE}╰{}╯{RESET}", "─".repeat(cols.saturating_sub(2))), cols));
 }
 
 /// The working line: a breathing dot, what's happening, how long, and a
@@ -217,24 +209,23 @@ pub fn status(activity: &str, elapsed: Duration, tokens: usize, cols: usize) -> 
     if tokens > 0 {
         tail.push_str(&format!(" · ~{tokens} tokens"));
     }
-    let act = fit(&clean(activity), cols.saturating_sub(width(&tail) + 3));
-    format!("{ORANGE}{dot} {act}{RESET}{DIM}{tail}{RESET}")
+    let act = fit(&clean_line(activity), cols.saturating_sub(width(&tail) + 3));
+    clip(format!("{ORANGE}{dot} {act}{RESET}{DIM}{tail}{RESET}"), cols)
 }
 
-/// One line: `left` dimmed on the left, `right` dimmed on the right.
 /// One line: styled pieces on the left, `right` dimmed on the right.
 pub fn footer(left: &[Span], right: &str, cols: usize) -> String {
-    let right = fit(right, cols.saturating_sub(2));
+    let right = fit(&clean_line(right), cols.saturating_sub(2));
     let mut room = cols.saturating_sub(width(&right) + 3);
     let (mut line, mut used) = (String::from(" "), 1);
     for s in left {
-        let text = fit(s.text, room);
+        let text = fit(&clean_line(s.text), room);
         room = room.saturating_sub(width(&text));
         used += width(&text);
         line.push_str(&format!("{}{text}{RESET}", s.style));
     }
     let pad = cols.saturating_sub(used + width(&right) + 1);
-    format!("{line}{}{DIM}{right}{RESET}", " ".repeat(pad))
+    clip(format!("{line}{}{DIM}{right}{RESET}", " ".repeat(pad)), cols)
 }
 
 /// The mascot as pixel art, from assets/mascot.txt (the same pixels as the
@@ -351,5 +342,92 @@ mod tests {
         assert_eq!(cursor, (2, 6));
         assert_eq!(plain(&out[2]), "│ > hi             │");
         assert!(out.iter().skip(1).all(|l| width(&plain(l)) == 20));
+    }
+
+    const NASTY: &str = "a\x1b]0;title\x07b\x1b[2Jc\u{9b}31md\re";
+
+    fn assert_clean(lines: &[String], what: &str) {
+        for l in lines {
+            let p = plain(l);
+            for bad in ['\x1b', '\x07', '\r', '\u{9b}'] {
+                assert!(!p.contains(bad), "{what}: {bad:?} in {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn untrusted_text_loses_its_control_codes() {
+        let n = NASTY;
+        let mut input = Input::default();
+        input.insert(n);
+        let items = vec![n.to_string()];
+        let mut all: Vec<(&str, Vec<String>)> = Vec::new();
+        let mut run = |name, f: &dyn Fn(&mut Vec<String>)| {
+            let mut out = Vec::new();
+            f(&mut out);
+            all.push((name, out));
+        };
+        run("user", &|o| user(n, 40, o));
+        run("thinking", &|o| thinking(n, 40, o));
+        run("tool", &|o| tool(n, 40, o));
+        run("result", &|o| result(true, n, 40, o));
+        run("note", &|o| note(n, DIM, 40, o));
+        run("diff", &|o| diff(&Diff { line: 1, old: n.into(), new: format!("{n}x") }, 40, o));
+        run("input_box", &|o| {
+            input_box(&input, n, 40, o);
+        });
+        run("approve", &|o| approve(n, 40, o));
+        run("question", &|o| question(n, &items, 40, o));
+        run("picker", &|o| picker(n, &items, n, 40, o));
+        run("menu", &|o| menu(&[(n, n)], 0, 3, 40, o));
+        run("status", &|o| o.push(status(n, Duration::from_secs(3), 5, 40)));
+        run("footer", &|o| o.push(footer(&[span(n, DIM)], n, 40)));
+        for (name, out) in &all {
+            assert!(!out.is_empty(), "{name}");
+            assert_clean(out, name);
+        }
+        assert_eq!(clean(n), "a]0;titleb[2Jc31mde");
+    }
+
+    /// Renders every view at awkward widths: no panic, no line wider than the screen.
+    #[test]
+    fn nothing_is_wider_than_the_screen() {
+        let words = [
+            "supercalifragilisticexpialidocious_and_more",
+            "日本語のテキストが長く続きます日本語",
+            "😀😀😀😀😀😀😀😀😀😀😀😀",
+            "tab\tseparated\ttext with a few ordinary words in it",
+            "",
+        ];
+        let long = words.join("\n");
+        let items: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        let mut input = Input::default();
+        input.insert(&long);
+        let diff_in = Diff { line: 99, old: long.clone(), new: format!("{long}\n{long}") };
+        let names: Vec<(&str, &str)> = vec![("日本語", "tab\tぜんぶ"), ("😀😀", "x"), ("a", &words[0])];
+        for cols in [1usize, 2, 5, 10, 20, 40, 80] {
+            let mut out = Vec::new();
+            user(&long, cols, &mut out);
+            thinking(&long, cols, &mut out);
+            tool(&long, cols, &mut out);
+            result(true, &long, cols, &mut out);
+            result(false, &long, cols, &mut out);
+            note(&long, DIM, cols, &mut out);
+            diff(&diff_in, cols, &mut out);
+            input_box(&input, &long, cols, &mut out);
+            input_box(&Input::default(), &long, cols, &mut out);
+            approve(&format!("Bash({long})"), cols, &mut out);
+            question(&long, &items, cols, &mut out);
+            picker(&long, &items, &long, cols, &mut out);
+            menu(&names, 1, 2, cols, &mut out);
+            key_prompt(cols, &mut out);
+            out.push(status(&long, Duration::from_secs(125), 1234, cols));
+            out.push(footer(&[span(&long, DIM), span("⏵⏵ accept edits", ORANGE)], &long, cols));
+            out.push(footer(&[], "shift+tab to change mode", cols));
+            for l in &out {
+                assert!(!l.contains(['\n', '\t']), "{l:?}");
+                assert!(width(&plain(l)) <= cols, "cols {cols}: {:?} is {} wide", plain(l), width(&plain(l)));
+            }
+        }
     }
 }

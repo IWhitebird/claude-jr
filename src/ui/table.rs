@@ -2,7 +2,7 @@
 // between rows, the way Claude Code shows them. Rows come in one line at a
 // time, so the UI collects them until the table ends.
 
-use super::text::{BOLD, GREY, RESET, Span, span, width, wrap};
+use super::text::{BOLD, GREY, RESET, Span, clean, clip, span, width, wrap};
 
 /// The narrowest a column gets when the table is squeezed to fit.
 const MIN_COL: usize = 3;
@@ -43,7 +43,7 @@ fn cells(line: &str) -> Vec<String> {
     let line = line.trim();
     let line = line.strip_prefix('|').unwrap_or(line);
     let line = line.strip_suffix('|').unwrap_or(line);
-    line.split('|').map(|c| c.trim().replace("**", "").replace('`', "")).collect()
+    line.split('|').map(|c| clean(c).trim().replace("**", "").replace('`', "")).collect()
 }
 
 /// Draws the table. Returns false (drawing nothing) if it can't fit, so the
@@ -118,7 +118,7 @@ pub fn render(rows: &[String], cols: usize, lead: Span, out: &mut Vec<String>) -
 
     for (i, line) in lines.into_iter().enumerate() {
         let prefix = if i == 0 { format!("{}{}{RESET}", lead.style, lead.text) } else { "  ".to_string() };
-        out.push(format!("{prefix}{line}"));
+        out.push(clip(format!("{prefix}{line}"), cols));
     }
     true
 }
@@ -171,5 +171,20 @@ mod tests {
         assert!(out.iter().all(|l| width(&plain(l)) <= 30));
         assert!(out.len() > 6, "the long cell wraps onto more lines");
         assert!(!render(&rows, 10, span("  ", ""), &mut Vec::new()), "too narrow: give up");
+    }
+
+    #[test]
+    fn tiny_widths_and_control_codes() {
+        let rows = ["| a\x1b]0;t\x07b | 日本語日本語日本語 |", "|---|---|", "| \x1b[2J\u{9b}31m\rx | 😀😀😀😀😀😀 |"]
+            .map(String::from);
+        for cols in [1usize, 2, 5, 10, 14, 20, 40, 80] {
+            let mut out = Vec::new();
+            render(&rows, cols, span("● ", ""), &mut out);
+            for l in &out {
+                let p = plain(l);
+                assert!(width(&p) <= cols, "cols {cols}: {p:?}");
+                assert!(!p.contains(['\x1b', '\x07', '\r', '\u{9b}']), "{p:?}");
+            }
+        }
     }
 }

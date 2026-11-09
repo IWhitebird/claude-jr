@@ -21,6 +21,18 @@ pub fn run(cfg: agent::Config, prompt: String) -> bool {
     ok
 }
 
+/// Untrusted text with every control character removed except newline (and
+/// tab, if `keep_tab`): escape codes in model or tool output must not reach the
+/// terminal. C1 controls (U+0080..U+009F) count as control characters.
+fn safe(s: &str, keep_tab: bool) -> String {
+    s.chars().filter(|&c| c == '\n' || (keep_tab && c == '\t') || !c.is_control()).collect()
+}
+
+/// Same, for one-line labels: tabs become spaces too.
+fn label(s: &str) -> String {
+    safe(&s.replace('\t', " "), false)
+}
+
 /// Totals for CLAUDE_JR_REPORT.
 #[derive(Default, serde::Serialize)]
 struct Report {
@@ -53,11 +65,13 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
     for ev in events {
         match ev {
             Event::Text(t) => {
+                let t = safe(&t, true);
                 let _ = out.write_all(t.as_bytes());
                 let _ = out.flush();
                 mid_out = !t.ends_with('\n');
             }
             Event::Thinking(t) => {
+                let t = safe(&t, true);
                 eprint!("{t}");
                 mid_err = !t.ends_with('\n');
             }
@@ -69,16 +83,16 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
                     eprintln!();
                 }
             }
-            Event::Tool { label, .. } => eprintln!("● {label}"),
+            Event::Tool { label: label_text, .. } => eprintln!("● {}", label(&label_text)),
             Event::ToolResult { ok, summary } => {
                 let mark = if ok { "⎿" } else { "✗" };
-                for (i, line) in summary.lines().enumerate() {
+                for (i, line) in label(&summary).lines().enumerate() {
                     eprintln!("  {} {line}", if i == 0 { mark } else { " " });
                 }
             }
-            Event::Notice(msg) => eprintln!("{msg}"),
+            Event::Notice(msg) => eprintln!("{}", label(&msg)),
             Event::RewindPoints(_) | Event::Rewound { .. } | Event::Resumed { .. } => {}
-            Event::SubStart { task, .. } => eprintln!("● agent: {task}"),
+            Event::SubStart { task, .. } => eprintln!("● agent: {}", label(&task)),
             Event::SubStep { .. } | Event::SubEnd { .. } => {}
             // Nobody is there to answer; the agent was told so (interactive: false).
             Event::Ask { reply, .. } => {
@@ -89,7 +103,7 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
             }
             Event::Done | Event::Cancelled => return true,
             Event::Error(e) => {
-                eprintln!("error: {e}");
+                eprintln!("error: {}", label(&e));
                 return false;
             }
             Event::Usage { usage, cost, .. } => {
@@ -104,4 +118,17 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controls_are_removed() {
+        let n = "a\x1b]0;t\x07b\x1b[2Jc\u{9b}31md\re\tf\ng";
+        assert_eq!(safe(n, true), "a]0;tb[2Jc31mde\tf\ng");
+        assert_eq!(safe(n, false), "a]0;tb[2Jc31mdef\ng");
+        assert_eq!(label(n), "a]0;tb[2Jc31mde f\ng");
+    }
 }

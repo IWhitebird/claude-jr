@@ -31,6 +31,9 @@ pub fn width(s: &str) -> usize {
 
 /// Cuts plain text to `max` columns, ending with … when cut.
 pub fn fit(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if width(s) <= max {
         return s.to_string();
     }
@@ -71,8 +74,29 @@ pub fn fit_styled(s: &str, max: usize) -> String {
     out
 }
 
-/// Removes control characters (including escape codes) from untrusted text and
-/// expands tabs, so it can't move the cursor or break the layout.
+/// Drops escape codes, to measure styled text.
+pub fn strip(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut esc = false;
+    for c in s.chars() {
+        match c {
+            '\x1b' => esc = true,
+            'm' if esc => esc = false,
+            _ if esc => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Cuts a styled line to `max` columns if it is wider, and leaves it alone otherwise.
+pub fn clip(line: String, max: usize) -> String {
+    if width(&strip(&line)) <= max { line } else { fit_styled(&line, max) }
+}
+
+/// Removes control characters (C0, DEL, C1, so escape codes too) and text
+/// direction overrides from untrusted text and expands tabs, so it can't move
+/// the cursor, set the title or break the layout.
 pub fn clean(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -80,10 +104,17 @@ pub fn clean(s: &str) -> String {
             '\t' => out.push_str("    "),
             '\n' => out.push('\n'),
             c if c.is_control() => {}
+            // Direction overrides and isolates can reorder what is drawn.
+            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {}
             c => out.push(c),
         }
     }
     out
+}
+
+/// `clean` for text shown on one row: newlines become spaces.
+pub fn clean_line(s: &str) -> String {
+    clean(s).replace('\n', " ")
 }
 
 /// True if the line shows nothing but spaces.
@@ -104,12 +135,13 @@ pub fn is_blank(line: &str) -> bool {
 /// Word-wraps spans to `width` columns. The first row starts with `first`,
 /// later rows with `rest`. Words longer than a row are broken by character.
 pub fn wrap<'a>(spans: &[Span<'a>], width: usize, first: Span<'a>, rest: Span<'a>, out: &mut Vec<String>) {
+    let base = out.len();
     let mut w = Wrapper {
         out,
         line: String::new(),
         col: 0,
         start: 0,
-        width: width.max(4),
+        width: width.max(1),
         rest,
         open: "",
         space: None,
@@ -122,6 +154,11 @@ pub fn wrap<'a>(spans: &[Span<'a>], width: usize, first: Span<'a>, rest: Span<'a
         }
     }
     w.finish();
+    // A prefix wider than the row, or a wide character in a one-column row,
+    // can still overflow: cut those rows.
+    for line in &mut out[base..] {
+        *line = clip(std::mem::take(line), width.max(1));
+    }
 }
 
 struct Wrapper<'a, 'o> {
@@ -173,6 +210,8 @@ impl<'a> Wrapper<'a, '_> {
 
     fn word(&mut self, word: &'a str, style: &'static str) {
         if word.starts_with(char::is_whitespace) {
+            // A newline or tab inside a row would break it: show one space.
+            let word = if word.contains(char::is_control) { " " } else { word };
             // Indentation at the very start is kept; other spaces wait for the next word.
             if self.first_row && self.col == self.start {
                 self.put(word, style);
@@ -252,7 +291,19 @@ mod tests {
         assert_eq!(out, ["日本語", "のテキ", "スト"]);
         assert_eq!(fit("hello world", 6), "hello…");
         assert_eq!(clean("a\x1b[31mb\tc"), "a[31mb    c");
+        assert_eq!(clean("a\x1b]0;t\x07\u{9b}b\r\x7fc\u{202e}d"), "a]0;tbcd");
         assert!(is_blank("\x1b[2m  \x1b[0m"));
         assert!(!is_blank("\x1b[2m x\x1b[0m"));
+    }
+
+    #[test]
+    fn wrap_never_overflows() {
+        for w in [0usize, 1, 2, 3, 5, 10] {
+            let mut out = Vec::new();
+            wrap(&[span("日本語 😀😀 abcdefghij", BOLD)], w, span("● ", ""), span("  ", ""), &mut out);
+            assert!(out.iter().all(|l| width(&strip(l)) <= w.max(1)), "{w}: {out:?}");
+        }
+        assert_eq!(fit("abc", 0), "");
+        assert_eq!(width(&fit("日本語", 4)), 3);
     }
 }
