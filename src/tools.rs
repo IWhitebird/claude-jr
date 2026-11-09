@@ -19,7 +19,7 @@ const MAX_LINE_CHARS: usize = 2000;
 
 pub type Output = Result<String, String>;
 
-pub fn definitions() -> Vec<Value> {
+pub fn definitions() -> Box<serde_json::value::RawValue> {
     let tools = json!([
         {
             "name": "read",
@@ -81,7 +81,35 @@ pub fn definitions() -> Vec<Value> {
     for t in &mut tools {
         t["eager_input_streaming"] = json!(true);
     }
-    tools
+    // Serialized once; every request reuses the same bytes.
+    serde_json::value::to_raw_value(&tools).expect("tool definitions serialize")
+}
+
+/// Before and after text of a change, for showing a diff.
+pub struct Diff {
+    /// Line number in the file where `old` starts.
+    pub line: usize,
+    pub old: String,
+    pub new: String,
+}
+
+/// A few lines describing a tool result, for the UI.
+pub fn summary(name: &str, out: &Output) -> String {
+    let text = match out {
+        Ok(s) if name == "read" => {
+            let n = s.lines().filter(|l| l.as_bytes().get(6) == Some(&b'\t')).count();
+            return format!("Read {n} line{}", if n == 1 { "" } else { "s" });
+        }
+        Ok(s) | Err(s) => s.trim_end(),
+    };
+    let mut lines = text.lines();
+    let mut out: Vec<&str> = lines.by_ref().take(3).collect();
+    let rest = lines.count();
+    let more = format!("… +{rest} lines");
+    if rest > 0 {
+        out.push(&more);
+    }
+    out.join("\n")
 }
 
 pub fn needs_permission(name: &str) -> bool {
@@ -100,18 +128,48 @@ impl Tools {
         Tools { cwd: root.clone(), root, seen: HashMap::new() }
     }
 
+    /// What a call acts on: the command for bash, the path (relative to the
+    /// project root when inside it) for file tools. Permission rules match this.
+    pub fn subject(&self, name: &str, input: &Value) -> String {
+        if name == "bash" {
+            return input["command"].as_str().unwrap_or("").to_string();
+        }
+        let Some(p) = input["path"].as_str() else { return String::new() };
+        let full = self.resolve(p);
+        full.strip_prefix(&self.root).map(|r| r.display().to_string()).unwrap_or_else(|_| p.to_string())
+    }
+
     /// Short label for the UI, like `Edit(src/main.rs)`.
-    pub fn describe(&self, name: &str, input: &Value) -> String {
-        let arg = match name {
-            "bash" => input["command"].as_str().map(|c| shorten(c.lines().next().unwrap_or(""), 80)),
-            _ => input["path"].as_str().map(|p| {
-                let full = self.resolve(p);
-                full.strip_prefix(&self.root).map(|r| r.display().to_string()).unwrap_or(p.to_string())
-            }),
-        };
-        let mut label = name.to_string();
-        label[..1].make_ascii_uppercase();
-        format!("{label}({})", arg.unwrap_or_default())
+    pub fn label(&self, name: &str, input: &Value) -> String {
+        let subject = self.subject(name, input);
+        let arg = shorten(subject.lines().next().unwrap_or(""), 80);
+        let mut chars = name.chars();
+        let head: String = chars.next().map(|c| c.to_ascii_uppercase()).into_iter().chain(chars).collect();
+        format!("{head}({arg})")
+    }
+
+    /// The change an edit or write would make, without making it. Skipped for
+    /// files over 1 MB, which edit and write still handle.
+    pub fn preview(&self, name: &str, input: &Value) -> Option<Diff> {
+        const MAX_PREVIEW: u64 = 1024 * 1024;
+        let path = self.resolve(input["path"].as_str()?);
+        if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_PREVIEW) {
+            return None;
+        }
+        match name {
+            "write" => {
+                let old = fs::read_to_string(&path).unwrap_or_default();
+                Some(Diff { line: 1, old, new: input["content"].as_str()?.to_string() })
+            }
+            "edit" => {
+                let old = input["old_string"].as_str()?;
+                let text = fs::read_to_string(&path).ok()?;
+                let at = text.find(old)?;
+                let line = text[..at].bytes().filter(|&b| b == b'\n').count() + 1;
+                Some(Diff { line, old: old.to_string(), new: input["new_string"].as_str()?.to_string() })
+            }
+            _ => None,
+        }
     }
 
     pub fn run(&mut self, name: &str, input: &Value, cancel: &AtomicBool) -> Output {
@@ -243,10 +301,7 @@ impl Tools {
         let cmd = input["command"].as_str().ok_or("missing command")?;
         let timeout = Duration::from_secs(input["timeout"].as_u64().unwrap_or(120).clamp(1, 600));
         let cwd_file = std::env::temp_dir().join(format!("claude-jr-{}.cwd", std::process::id()));
-        let script = format!(
-            "exec 2>&1\n{{\n{cmd}\n}}\n__rc=$?\npwd > '{}'\nexit $__rc",
-            cwd_file.display()
-        );
+        let script = format!("exec 2>&1\n{{\n{cmd}\n}}\n__rc=$?\npwd > '{}'\nexit $__rc", cwd_file.display());
 
         let mut child = Command::new("bash")
             .arg("-c")
@@ -389,7 +444,8 @@ mod tests {
         let no = AtomicBool::new(false);
         fs::write(dir.join("a.txt"), "one\ntwo\ntwo\n").unwrap();
 
-        let edit = |old: &str, all: bool| json!({"path": "a.txt", "old_string": old, "new_string": "X", "replace_all": all});
+        let edit =
+            |old: &str, all: bool| json!({"path": "a.txt", "old_string": old, "new_string": "X", "replace_all": all});
         assert!(t.run("edit", &edit("one", false), &no).unwrap_err().contains("not been read"));
         assert!(t.run("read", &json!({"path": "a.txt"}), &no).unwrap().contains("     1\tone"));
         assert!(t.run("edit", &edit("two", false), &no).unwrap_err().contains("matches 2"));

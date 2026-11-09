@@ -1,6 +1,12 @@
-// System prompt: who the agent is, plus facts about the environment.
+// System prompt: behavior, environment facts, and project instructions.
+//
+// The prompt is built once per session and saved with it. It never changes
+// mid-session (that would invalidate the prompt cache and earlier thinking),
+// so it holds nothing that changes, like the model name.
 
+use std::fmt::Write as _;
 use std::path::Path;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BASE: &str = "You are claude-jr, a coding agent running in the user's terminal. \
@@ -15,17 +21,66 @@ Tools:
 - If a tool call is refused, don't retry it; explain what you wanted to do.
 - After making changes, check them (build, test, or read back) when you can.";
 
-pub fn system(model: &str) -> String {
-    let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-    let git = Path::new(&cwd).join(".git").exists();
-    format!(
-        "{BASE}\n\n<env>\nWorking directory: {cwd}\nGit repository: {git}\nPlatform: {}\nDate: {}\nModel: {model}\n</env>",
+const INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
+const MAX_FILE: usize = 32 * 1024;
+const MAX_GIT_LINES: usize = 30;
+
+pub fn system() -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut s = String::from(BASE);
+    let _ = write!(
+        s,
+        "\n\n<env>\nWorking directory: {}\nPlatform: {}\nDate: {}\n",
+        cwd.display(),
         std::env::consts::OS,
-        today(),
-    )
+        today()
+    );
+    if let Some(git) = git_status(&cwd) {
+        let _ = write!(s, "Git status at session start:\n{git}");
+    }
+    s.push_str("</env>");
+
+    for (path, text) in instructions(&cwd) {
+        let _ = write!(s, "\n\n<instructions file=\"{}\">\n{}\n</instructions>", path.display(), text.trim());
+    }
+    s
 }
 
-/// UTC date as YYYY-MM-DD, without pulling in a date library.
+/// AGENTS.md / CLAUDE.md from the config dir, then from the outermost parent
+/// directory down to the working directory, so the nearest file comes last.
+fn instructions(cwd: &Path) -> Vec<(std::path::PathBuf, String)> {
+    let mut dirs: Vec<&Path> = cwd.ancestors().collect();
+    dirs.reverse();
+    let global = crate::config::config_dir();
+    std::iter::once(global.as_path())
+        .chain(dirs)
+        .flat_map(|d| INSTRUCTION_FILES.iter().map(move |f| d.join(f)))
+        .filter_map(|p| {
+            let mut text = std::fs::read_to_string(&p).ok()?;
+            if text.len() > MAX_FILE {
+                let cut = (0..=MAX_FILE).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+                text.truncate(cut);
+            }
+            Some((p, text))
+        })
+        .collect()
+}
+
+fn git_status(cwd: &Path) -> Option<String> {
+    let out = Command::new("git").args(["status", "--short", "--branch"]).current_dir(cwd).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut s: String = text.lines().take(MAX_GIT_LINES).flat_map(|l| [l, "\n"]).collect();
+    let more = text.lines().count().saturating_sub(MAX_GIT_LINES);
+    if more > 0 {
+        let _ = writeln!(s, "... {more} more");
+    }
+    Some(s)
+}
+
+/// UTC date as YYYY-MM-DD, without a date library.
 fn today() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let (y, m, d) = civil_from_days((secs / 86_400) as i64);
