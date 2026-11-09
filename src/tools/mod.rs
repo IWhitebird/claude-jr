@@ -161,7 +161,16 @@ impl Tools {
     /// Short label for the UI, like `Edit(src/main.rs)`.
     pub fn label(&self, name: &str, input: &Value) -> String {
         let subject = self.subject(name, input);
-        let arg = shorten(subject.lines().next().unwrap_or(""), 80);
+        self.labelled(name, input, &shorten(subject.lines().next().unwrap_or(""), 80))
+    }
+
+    /// Like `label`, but with every line of the subject, for approval prompts.
+    pub fn full_label(&self, name: &str, input: &Value) -> String {
+        let subject = self.subject(name, input);
+        self.labelled(name, input, &shorten(&subject, 2000))
+    }
+
+    fn labelled(&self, name: &str, input: &Value, arg: &str) -> String {
         let head = match name {
             "ask_user" => return "Question".into(),
             "todo" => return "Todos".into(),
@@ -412,5 +421,13 @@ mod tests {
         let rules = crate::permission::Rules::new(vec!["edit:src/*".into()]);
         assert!(rules.allows("edit", &subject("src/a.css")));
         assert!(!rules.allows("edit", &subject("src/../../etc/passwd")));
+    }
+
+    #[test]
+    fn full_label_shows_every_line() {
+        let (t, _dir) = test_tools("full_label");
+        let input = json!({ "command": "ls\nrm -rf /tmp/x" });
+        assert!(!t.label("bash", &input).contains("rm"));
+        assert!(t.full_label("bash", &input).contains("rm -rf /tmp/x"));
     }
 }

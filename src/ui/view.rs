@@ -105,8 +105,24 @@ pub fn input_box(input: &Input, hint: &str, cols: usize, out: &mut Vec<String>) 
 }
 
 pub fn approve(label: &str, cols: usize, out: &mut Vec<String>) {
-    let question = format!("Allow {}?", clean(label));
-    boxed(&[(&question, BOLD), ("y yes · a always (this session) · n no", DIM)], cols, out);
+    const MAX_LINES: usize = 12;
+    let label = clean(label);
+    let lines: Vec<&str> = label.lines().collect();
+    let shown = lines.len().min(MAX_LINES);
+    let mut text: Vec<String> = lines[..shown].iter().map(|l| l.to_string()).collect();
+    if text.is_empty() {
+        text.push(String::new());
+    }
+    text[0] = format!("Allow {}", text[0]);
+    if lines.len() > shown {
+        text.push(format!("… {} more lines", lines.len() - shown));
+    }
+    if let Some(last) = text.last_mut() {
+        last.push('?');
+    }
+    let mut rows: Vec<(&str, &'static str)> = text.iter().map(|t| (t.as_str(), BOLD)).collect();
+    rows.push(("y yes · a always (this session) · n no", DIM));
+    boxed(&rows, cols, out);
 }
 
 /// A question from the model, with numbered options.
@@ -282,6 +298,19 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn approve_shows_every_line_within_width() {
+        let mut out = Vec::new();
+        approve("Bash(ls\nrm -rf x)", 40, &mut out);
+        let lines: Vec<_> = out.iter().map(|l| plain(l)).collect();
+        assert!(lines.iter().any(|l| l.contains("rm -rf x")));
+        assert!(lines.iter().all(|l| width(l) <= 40), "{lines:?}");
+        let long = (0..30).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let mut out = Vec::new();
+        approve(&format!("Bash({long})"), 40, &mut out);
+        assert!(out.iter().any(|l| plain(l).contains("18 more lines")));
     }
 
     #[test]

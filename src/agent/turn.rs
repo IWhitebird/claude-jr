@@ -146,7 +146,7 @@ impl Core {
     fn call_one(&self, ctx: &Ctx, c: &Call) -> Value {
         let label = ctx.tools.label(&c.name, &c.input);
         (ctx.emit)(Event::Tool { label: label.clone(), diff: ctx.tools.preview(&c.name, &c.input) });
-        let out = self.check(ctx, c, &label).and_then(|()| self.exec(ctx, c));
+        let out = self.check(ctx, c, &ctx.tools.full_label(&c.name, &c.input)).and_then(|()| self.exec(ctx, c));
         (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary(&c.name, &out) });
         tool_result(&c.id, out)
     }
@@ -155,7 +155,8 @@ impl Core {
     /// results are shown in order when all are done.
     fn call_group(&self, ctx: &Ctx, calls: &[Call]) -> Vec<Value> {
         let labels: Vec<String> = calls.iter().map(|c| ctx.tools.label(&c.name, &c.input)).collect();
-        let allowed: Vec<Result<(), String>> = calls.iter().zip(&labels).map(|(c, l)| self.check(ctx, c, l)).collect();
+        let allowed: Vec<Result<(), String>> =
+            calls.iter().map(|c| self.check(ctx, c, &ctx.tools.full_label(&c.name, &c.input))).collect();
         (ctx.emit)(Event::Activity(format!("running {} tools at once", calls.len())));
 
         let outs: Vec<Output> = thread::scope(|s| {
