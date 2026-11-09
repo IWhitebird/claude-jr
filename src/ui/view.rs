@@ -182,13 +182,13 @@ pub fn footer(left: &[Span], right: &str, cols: usize) -> String {
 /// The mascot as pixel art: each text row shows two pixel rows using half
 /// blocks. Same design as assets/logo.svg, smaller.
 const MASCOT: [&[u8; 12]; 8] = [
-    b"...GG..GG...",
+    b"...GGssGG...",
     b".....ss.....",
     b"..OOOOOOOO..",
-    b".OOWKOOWKOO.",
+    b".OOOOOOOOOO.",
     b".OOKKOOKKOO.",
-    b".POOOKKOOOP.",
-    b".DDDDDDDDDD.",
+    b".OOKKOOKKOO.",
+    b".OPOOKKOOPO.",
     b"..DD....DD..",
 ];
 
