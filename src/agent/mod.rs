@@ -1117,7 +1117,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bug: /rewind to a turn is refused when no file was changed in the session (see the checkpoint test)"]
     fn rewinding_a_turn_that_changed_nothing_works() {
         let mut rig = Rig::new("agent-rewind-plain", Mode::Default, vec![ok(text_reply("hello"))]);
         rig.run(vec![Command::Send("just talk".into())]);

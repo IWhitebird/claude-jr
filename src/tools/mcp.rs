@@ -291,8 +291,8 @@ fn expand(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
     while let Some(start) = rest.find("${") {
-        out.push_str(&rest[..start]);
         let Some(end) = rest[start..].find('}') else { break };
+        out.push_str(&rest[..start]);
         let var = &rest[start + 2..start + end];
         out.push_str(&std::env::var(var).unwrap_or_default());
         rest = &rest[start + end + 1..];
@@ -633,7 +633,6 @@ done"#;
     }
 
     #[test]
-    #[ignore = "bug: expand repeats the text before an unclosed ${ (\"a${x\" becomes \"aa${x\")"]
     fn an_unclosed_variable_is_kept_once() {
         assert_eq!(expand("a${unclosed"), "a${unclosed");
     }

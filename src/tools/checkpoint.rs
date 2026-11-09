@@ -370,7 +370,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bug: restore_from fails when no file was ever changed, because the checkpoint folder doesn't exist yet"]
     fn rewinding_a_session_that_changed_no_files_is_fine() {
         let dir = super::super::test_dir("checkpoint-untouched");
         let cp = Checkpoints::default();
