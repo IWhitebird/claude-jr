@@ -48,6 +48,29 @@ pub fn fit(s: &str, max: usize) -> String {
     out
 }
 
+/// Like `fit`, for text that already has escape codes in it.
+pub fn fit_styled(s: &str, max: usize) -> String {
+    let mut out = String::with_capacity(s.len());
+    let (mut w, mut esc) = (0, false);
+    for c in s.chars() {
+        match c {
+            '\x1b' => esc = true,
+            'm' if esc => esc = false,
+            _ if esc => {}
+            c => {
+                let cw = c.width().unwrap_or(0);
+                if w + cw > max {
+                    break;
+                }
+                w += cw;
+            }
+        }
+        out.push(c);
+    }
+    out.push_str(RESET);
+    out
+}
+
 /// Removes control characters (including escape codes) from untrusted text and
 /// expands tabs, so it can't move the cursor or break the layout.
 pub fn clean(s: &str) -> String {

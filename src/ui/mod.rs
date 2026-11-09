@@ -34,10 +34,11 @@ const FRAME: Duration = Duration::from_millis(33);
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 
 const HELP: &str = "/clear          start a new conversation
-/model [name]   show or change the model
+/model [name]   pick a model from the list, or set one by id
 /effort [level] low, medium, high, xhigh, max, or default
 /rename [name]  name this session (resume with claude-jr -r NAME)
 /rewind         go back to before an earlier message, undoing file changes
+/jobs, /kill N  background jobs, and stopping one
 /resume         switch to an earlier conversation in this folder
 /compact [focus] replace the conversation with a summary, to free up context
 /memory         instruction files in use
@@ -181,6 +182,8 @@ enum Prompt {
     Rewind(Vec<(usize, String)>),
     /// /resume: session ids and their descriptions, newest first.
     Resume(Vec<(String, String)>),
+    /// /model with no name: the catalogue.
+    Model,
 }
 
 /// Puts the terminal back to normal, for exits that skip `Term`'s cleanup.
@@ -210,6 +213,8 @@ struct App {
     has_key: bool,
     /// Effort level chosen with /effort or --effort; None is the model's default.
     effort: Option<String>,
+    /// Subagents running now: (id, task, latest step). Shown under the input.
+    subagents: Vec<(usize, String, String)>,
     started: Instant,
     quit_armed: Option<Instant>,
     quit: bool,
@@ -237,6 +242,7 @@ impl App {
             mcp: Vec::new(),
             has_key: true,
             effort: None,
+            subagents: Vec::new(),
             started: Instant::now(),
             quit_armed: None,
             quit: false,
@@ -449,6 +455,13 @@ impl App {
                 (self.name, self.skills, self.mcp) = (name, skills, mcp);
             }
             Event::Notice(msg) => self.note(&msg, DIM),
+            Event::SubStart { id, task } => self.subagents.push((id, task, "starting".into())),
+            Event::SubStep { id, label } => {
+                if let Some(s) = self.subagents.iter_mut().find(|s| s.0 == id) {
+                    s.2 = label;
+                }
+            }
+            Event::SubEnd { id } => self.subagents.retain(|s| s.0 != id),
             Event::RewindPoints(points) if points.is_empty() => self.note("Nothing to rewind to yet.", DIM),
             Event::RewindPoints(points) => self.prompts.push_front(Prompt::Rewind(points)),
             Event::Resumed { name, messages, recap } => {
@@ -557,6 +570,7 @@ impl App {
         self.flush();
         self.stream.md.reset();
         self.work = None;
+        self.subagents.clear();
         self.prompts.retain(|p| matches!(p, Prompt::Key));
         if let Some((msg, style)) = note {
             self.note(msg, style);
@@ -610,6 +624,21 @@ impl App {
                             let pick = crate::session::Pick::Named(id.clone());
                             self.prompts.pop_front();
                             let _ = self.agent.commands.send(Command::Resume(pick));
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.prompts.pop_front();
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Some(Prompt::Model) => {
+                match k.code {
+                    KeyCode::Char(c @ '1'..='9') => {
+                        if let Some((model, _)) = crate::api::CATALOGUE.get(c as usize - '1' as usize) {
+                            self.prompts.pop_front();
+                            self.set_model(model);
                         }
                     }
                     KeyCode::Esc => {
@@ -705,6 +734,12 @@ impl App {
         if let Some(Prompt::Question { reply, .. }) = self.prompts.pop_front() {
             let _ = reply.send(text);
         }
+    }
+
+    fn set_model(&mut self, model: &str) {
+        self.model = model.to_string();
+        let _ = self.agent.commands.send(Command::Model(self.model.clone()));
+        self.note(&format!("Model set to {}. {}", self.model, crate::api::describe(model)), DIM);
     }
 
     /// /effort: how hard the model thinks. The API's default for the model is
@@ -900,12 +935,30 @@ impl App {
                 let msg = format!("${:.4} so far · {} tokens in context", self.cost, self.context);
                 self.note(&msg, "");
             }
-            "model" if arg.is_empty() => self.note(&format!("Model: {}", self.model), ""),
+            "model" if arg.is_empty() => self.prompts.push_front(Prompt::Model),
+            "model" => self.set_model(arg),
             "effort" => self.set_effort(arg),
-            "model" => {
-                self.model = arg.to_string();
-                let _ = self.agent.commands.send(Command::Model(self.model.clone()));
-                self.note(&format!("Model set to {}.", self.model), DIM);
+            "jobs" => {
+                let jobs = self.agent.tools.get().map(|t| t.jobs()).unwrap_or_default();
+                let msg = if jobs.is_empty() {
+                    "No background jobs.".to_string()
+                } else {
+                    let lines: Vec<String> = jobs
+                        .iter()
+                        .map(|(id, cmd, running)| {
+                            format!("  {id}. {cmd}  ({})", if *running { "running" } else { "done" })
+                        })
+                        .collect();
+                    format!("Background jobs (stop one with /kill N):\n{}", lines.join("\n"))
+                };
+                self.note(&msg, "");
+            }
+            "kill" => {
+                let killed = arg.parse().ok().and_then(|id| self.agent.tools.get().map(|t| t.kill_job(id)));
+                match killed {
+                    Some(true) => self.note(&format!("Stopped job {arg}."), DIM),
+                    _ => self.note("No such job. /jobs lists them.", RED),
+                }
             }
             "rename" if arg.is_empty() => {
                 let msg = match &self.name {
@@ -993,6 +1046,18 @@ impl App {
                 view::picker("Resume a conversation", &items, "press a number · esc to cancel", cols, &mut out);
                 None
             }
+            Some(Prompt::Model) => {
+                let items: Vec<String> = crate::api::CATALOGUE
+                    .iter()
+                    .map(|(m, what)| {
+                        let here = if *m == self.model { "  (current)" } else { "" };
+                        format!("{m}{here} · {} · {what}", crate::api::describe(m))
+                    })
+                    .collect();
+                let hint = "price per million tokens in/out · press a number · /model <id> for others · esc to cancel";
+                view::picker("Choose a model", &items, hint, cols, &mut out);
+                None
+            }
             Some(Prompt::Key) => {
                 view::key_prompt(cols, &mut out);
                 Some(view::input_box(&self.input.masked(), "sk-ant-…", cols, &mut out))
@@ -1002,6 +1067,7 @@ impl App {
                 Some(view::input_box(&self.input, hint, cols, &mut out))
             }
         };
+        self.panel(&mut out);
         out.push(self.footer());
 
         // Never taller than the screen, or the cursor math breaks.
@@ -1009,6 +1075,28 @@ impl App {
         let extra = out.len().saturating_sub(max);
         out.drain(..extra);
         (out, cursor.map(|(r, c)| (r.saturating_sub(extra), c)))
+    }
+
+    /// Subagents and background jobs that are running right now.
+    fn panel(&self, out: &mut Vec<String>) {
+        const MAX: usize = 4;
+        let jobs = self.agent.tools.get().map(|t| t.jobs()).unwrap_or_default();
+        let mut lines: Vec<String> = self
+            .subagents
+            .iter()
+            .map(|(_, task, step)| format!(" {ORANGE}◆{RESET} {task}{DIM} · {step}{RESET}"))
+            .collect();
+        lines.extend(jobs.iter().filter(|j| j.2).map(|(id, cmd, _)| {
+            format!(" {GREEN}▶{RESET} job {id}{DIM} · {}{RESET}", cmd.lines().next().unwrap_or(""))
+        }));
+        let more = lines.len().saturating_sub(MAX);
+        for line in lines.into_iter().take(MAX) {
+            // Cut by visible width: escape codes don't take up columns.
+            out.push(text::fit_styled(&line, self.cols.saturating_sub(1)));
+        }
+        if more > 0 {
+            out.push(format!("   {DIM}… {more} more (/jobs){RESET}"));
+        }
     }
 
     fn footer(&self) -> String {

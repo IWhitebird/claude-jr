@@ -15,7 +15,7 @@ ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
 OUTPUT_KB = int(os.environ.get("MOCK_OUTPUT_KB", "1"))
 LOG = os.environ.get("MOCK_LOG")
 CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
-SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory"
+SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents"
 TEXT_CHARS = int(os.environ.get("MOCK_TEXT_CHARS", "2000"))  # "bench": streamed text per reply
 DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, like a real stream
 
@@ -186,6 +186,18 @@ class Handler(BaseHTTPRequestHandler):
         elif SCENARIO == "memory":  # saves a note, then answers
             events = (reply([tool("m1", "memory", {"action": "add", "note": "uses pnpm, not npm"})], "tool_use", usage)
                       if done == 0 else text_reply("Noted.\n", usage))
+        elif SCENARIO == "agents":  # two slow subagents, then a server left running
+            sub = "You are a subagent" in body.get("system", "")
+            if sub:
+                events = (reply([tool("s1", "bash", {"command": "sleep 1.5; echo looked"})], "tool_use", usage)
+                          if done == 0 else text_reply("Found it.", usage))
+            elif done == 0:
+                events = reply([tool("a1", "agent", {"description": "scan components", "prompt": "x"}),
+                                tool("a2", "agent", {"description": "check styles", "prompt": "y"})], "tool_use", usage)
+            elif done == 1:
+                events = reply([tool("b1", "bash", {"command": "sleep 60", "background": True})], "tool_use", usage)
+            else:
+                events = text_reply("Started the dev server.\n", usage)
         elif SCENARIO == "web":
             events = web(usage)
         elif SCENARIO == "bench":

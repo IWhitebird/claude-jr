@@ -284,6 +284,19 @@ impl Jobs {
         list.iter().map(|j| format!("{}: {} ({})", j.id, j.command, j.state())).collect::<Vec<_>>().join("\n")
     }
 
+    /// (id, command, running) for every job, oldest first.
+    pub fn summary(&self) -> Vec<(usize, String, bool)> {
+        let list = self.0.list.lock().unwrap();
+        list.iter().map(|j| (j.id, j.command.clone(), j.status.lock().unwrap().is_none())).collect()
+    }
+
+    /// Stops a job. Returns false if there's no such job.
+    pub fn kill(&self, id: usize) -> bool {
+        let Some(job) = self.get(id) else { return false };
+        kill_group(job.pid);
+        true
+    }
+
     pub fn on_finish(&self, f: Notify) {
         *self.0.notify.lock().unwrap() = Some(f);
     }

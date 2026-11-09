@@ -90,6 +90,18 @@ pub enum Event {
     },
     /// Something worth telling the user that isn't an error.
     Notice(String),
+    /// A subagent started, did a step, finished. Shown in the agent panel.
+    SubStart {
+        id: usize,
+        task: String,
+    },
+    SubStep {
+        id: usize,
+        label: String,
+    },
+    SubEnd {
+        id: usize,
+    },
     /// Where /rewind can go: (turn, what you typed), newest first.
     RewindPoints(Vec<(usize, String)>),
     /// Went back to before `prompt`; `files` were restored.
@@ -171,6 +183,8 @@ pub fn spawn(cfg: Config, emit: impl Fn(Event) + Send + Sync + 'static) -> Handl
 
 struct Agent {
     core: Arc<Core>,
+    /// Whether web tools are wanted (the config); used when /model switches.
+    web: bool,
     tools: Arc<Tools>,
     system: String,
     defs: Box<RawValue>,
@@ -221,11 +235,12 @@ impl Agent {
             emit,
             interactive: cfg.interactive,
             connector: tools.mcp.connector(),
-            sub_defs: tools.definitions(false, web),
+            sub_defs: Mutex::new(tools.definitions(false, web)),
             sub_system: OnceLock::new(),
             request: Mutex::default(),
         };
         let mut agent = Agent {
+            web: cfg.web,
             defs: tools.definitions(true, web),
             core: Arc::new(core),
             tools,
@@ -264,7 +279,7 @@ impl Agent {
                     self.system = crate::prompt::system();
                     self.told_plan = false;
                 }
-                Command::Model(m) => *self.core.model.lock().unwrap() = m,
+                Command::Model(m) => self.set_model(m),
                 Command::Effort(e) => *self.core.effort.lock().unwrap() = e,
                 Command::Rename(name) => self.session.rename(&self.system, &name),
                 Command::SetKey(key) => self.core.client.set_key(key),
@@ -414,6 +429,20 @@ impl Agent {
             "Compacted {before} messages into a {words}-word summary. /rewind can't go back past this point."
         )));
         Event::Done
+    }
+
+    /// Switches model. If the new one differs in whether it has the web
+    /// tools, the tool list is rebuilt to match (the API rejects tools a model
+    /// doesn't have); the prompt cache starts over either way, since it's per model.
+    fn set_model(&mut self, model: String) {
+        let had = crate::api::Caps::of(&self.core.model.lock().unwrap()).web;
+        let has = crate::api::Caps::of(&model).web;
+        *self.core.model.lock().unwrap() = model;
+        if had != has {
+            let web = has && self.web;
+            self.defs = self.tools.definitions(true, web);
+            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web);
+        }
     }
 
     fn resume(&mut self, pick: &Pick) {

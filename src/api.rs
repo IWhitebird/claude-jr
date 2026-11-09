@@ -62,6 +62,30 @@ impl Caps {
     }
 }
 
+/// Models /model offers, with what each is good for. Any other model id
+/// works too with /model <id>.
+pub const CATALOGUE: [(&str, &str); 7] = [
+    ("claude-opus-5-5", "default; strong at long coding tasks"),
+    ("claude-sonnet-5-5", "fast, half the price; everyday edits"),
+    ("claude-haiku-5-5", "fastest and cheapest; small changes"),
+    ("claude-fable-5-1", "most capable; hardest problems"),
+    ("claude-opus-5", "previous Opus"),
+    ("claude-sonnet-5", "previous Sonnet"),
+    ("claude-opus-4-8", "older Opus"),
+];
+
+/// "$4/$20 · 1M context": dollars per million tokens in and out.
+pub fn describe(model: &str) -> String {
+    let window = match Caps::of(model).window {
+        w if w >= 1_000_000 => format!("{}M", w / 1_000_000),
+        w => format!("{}k", w / 1000),
+    };
+    match price(model) {
+        Some((i, o, _)) => format!("${i}/${o} · {window} context"),
+        None => format!("{window} context"),
+    }
+}
+
 /// Dollars per million tokens: input, output, cache read. Cache writes are 1.25x input.
 fn price(model: &str) -> Option<(f64, f64, f64)> {
     Some(match model {

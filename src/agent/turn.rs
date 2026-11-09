@@ -29,7 +29,8 @@ pub struct Core {
     pub interactive: bool,
     /// Remote MCP servers, passed to the API's connector with every request.
     pub connector: Option<Box<RawValue>>,
-    pub sub_defs: Box<RawValue>,
+    /// Tool definitions for subagents; rebuilt if /model changes what's available.
+    pub sub_defs: Mutex<Box<RawValue>>,
     pub sub_system: OnceLock<String>,
     /// The user's latest message, so auto mode's reviewer knows the intent.
     pub request: Mutex<String>,

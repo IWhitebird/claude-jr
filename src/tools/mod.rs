@@ -201,6 +201,15 @@ impl Tools {
         self.jobs.take_finished()
     }
 
+    /// (id, command, running) for every background job.
+    pub fn jobs(&self) -> Vec<(usize, String, bool)> {
+        self.jobs.summary()
+    }
+
+    pub fn kill_job(&self, id: usize) -> bool {
+        self.jobs.kill(id)
+    }
+
     pub fn running_jobs(&self) -> usize {
         self.jobs.running()
     }

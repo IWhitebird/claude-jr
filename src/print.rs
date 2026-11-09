@@ -78,6 +78,8 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
             }
             Event::Notice(msg) => eprintln!("{msg}"),
             Event::RewindPoints(_) | Event::Rewound { .. } | Event::Resumed { .. } => {}
+            Event::SubStart { task, .. } => eprintln!("● agent: {task}"),
+            Event::SubStep { .. } | Event::SubEnd { .. } => {}
             // Nobody is there to answer; the agent was told so (interactive: false).
             Event::Ask { reply, .. } => {
                 let _ = reply.send(agent::Answer::No);
