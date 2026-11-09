@@ -264,4 +264,214 @@ mod tests {
         i.down(80);
         assert_eq!(i.text(), "draft");
     }
+
+    fn typed(s: &str) -> Input {
+        let mut i = Input::default();
+        i.insert(s);
+        i
+    }
+
+    fn rows(i: &Input, cols: usize) -> Vec<String> {
+        i.layout(cols).0.iter().map(|r| i.text()[r.clone()].to_string()).collect()
+    }
+
+    #[test]
+    fn clearing_and_taking_text() {
+        let mut i = typed("hello");
+        assert!(!i.is_empty());
+        i.clear();
+        assert!(i.is_empty());
+        i.insert("x");
+        assert_eq!(i.text(), "x", "the cursor went back to the start of an empty line");
+
+        let mut i = typed("one");
+        assert_eq!(i.take(), "one");
+        assert!(i.is_empty());
+        // Blank lines and repeats are not remembered.
+        i.insert("   ");
+        i.take();
+        i.insert("one");
+        i.take();
+        i.up(80);
+        assert_eq!(i.text(), "one");
+        i.up(80);
+        assert_eq!(i.text(), "one", "already at the oldest entry");
+    }
+
+    #[test]
+    fn secrets_stay_out_of_history_and_are_masked() {
+        let mut i = typed("sk-h\u{e9}llo");
+        let m = i.masked();
+        assert_eq!(m.text(), "\u{2022}".repeat(8));
+        let (rows, (r, c)) = m.layout(80);
+        assert_eq!((rows.len(), r, c), (1, 0, 8), "the cursor is after the last dot");
+        i.left();
+        i.left();
+        let m = i.masked();
+        assert_eq!(m.layout(80).1, (0, 6));
+        assert_eq!(i.take_secret(), "sk-h\u{e9}llo");
+        assert!(i.is_empty());
+        i.up(80);
+        assert!(i.is_empty(), "nothing was remembered");
+    }
+
+    #[test]
+    fn a_trailing_backslash_continues_the_line() {
+        let mut i = typed("first \\");
+        assert!(i.continues_line());
+        assert_eq!(i.text(), "first \n");
+        i.insert("second");
+        assert!(!i.continues_line());
+        assert_eq!(i.text(), "first \nsecond");
+        // Only at the very end of the text.
+        let mut i = typed("a\\b");
+        i.left();
+        i.left();
+        assert!(!i.continues_line());
+        assert_eq!(i.text(), "a\\b");
+        let mut i = Input::default();
+        assert!(!i.continues_line());
+    }
+
+    #[test]
+    fn moving_and_deleting_stop_at_the_ends() {
+        let mut i = typed("a\u{e9}\u{4e16}");
+        i.right();
+        assert_eq!(i.text(), "a\u{e9}\u{4e16}");
+        i.delete();
+        assert_eq!(i.text(), "a\u{e9}\u{4e16}", "nothing after the cursor");
+        i.left();
+        i.delete();
+        assert_eq!(i.text(), "a\u{e9}");
+        i.left();
+        i.right();
+        i.right();
+        i.backspace();
+        assert_eq!(i.text(), "a");
+        i.left();
+        i.left();
+        i.backspace();
+        assert_eq!(i.text(), "a", "nothing before the cursor");
+        i.delete();
+        assert!(i.is_empty());
+    }
+
+    #[test]
+    fn home_end_and_kills_work_on_the_current_line() {
+        let mut i = typed("one\ntwo three\nfour");
+        i.left();
+        i.left(); // fo|ur
+        i.home();
+        i.insert(">");
+        assert_eq!(i.text(), "one\ntwo three\n>four");
+        i.end();
+        i.insert("<");
+        assert_eq!(i.text(), "one\ntwo three\n>four<");
+
+        i.up(80); // the middle line, at column 6 ("two th|ree")
+        i.kill_to_end();
+        assert_eq!(i.text(), "one\ntwo th\n>four<");
+        i.kill_to_start();
+        assert_eq!(i.text(), "one\n\n>four<");
+        i.insert("x");
+        i.up(80);
+        i.home();
+        i.kill_to_start();
+        assert_eq!(i.text(), "one\nx\n>four<", "at the start of a line there is nothing to kill");
+        i.end();
+        i.kill_to_end();
+        assert_eq!(i.text(), "one\nx\n>four<");
+    }
+
+    #[test]
+    fn deleting_a_word_at_the_start_does_nothing() {
+        let mut i = typed("word");
+        i.delete_word();
+        assert!(i.is_empty());
+        i.delete_word();
+        assert!(i.is_empty());
+        let mut i = typed("   ");
+        i.delete_word();
+        assert_eq!(i.text(), "");
+    }
+
+    #[test]
+    fn layout_wraps_by_display_width() {
+        assert_eq!(
+            rows(&typed("a\u{4e16}b"), 2),
+            ["a", "\u{4e16}", "b"],
+            "a wide character moves to the next row whole"
+        );
+        assert_eq!(typed("a\u{4e16}b").layout(2).1, (2, 1));
+        // Text that exactly fills the last row puts the cursor on a new, empty one.
+        let i = typed("abcd");
+        assert_eq!(rows(&i, 4), ["abcd", ""]);
+        assert_eq!(i.layout(4).1, (1, 0));
+        // A zero-width column count is treated as one.
+        assert_eq!(rows(&typed("ab"), 0), ["a", "b", ""]);
+        // The cursor in the middle of wrapped text.
+        let mut i = typed("abcdefgh");
+        i.left();
+        i.left();
+        i.left();
+        assert_eq!(i.layout(3).1, (1, 2));
+        assert_eq!(rows(&Input::default(), 10), [""]);
+    }
+
+    #[test]
+    fn up_and_down_keep_the_column_across_wide_characters() {
+        let mut i = typed("\u{4e16}\u{4e16}\u{4e16}\nabcdef");
+        // Cursor at the end of "abcdef": column 6; the row above is 3 wide characters = 6 columns.
+        i.up(80);
+        assert_eq!(i.layout(80).1, (0, 6));
+        i.left();
+        assert_eq!(i.layout(80).1, (0, 4));
+        i.down(80);
+        assert_eq!(i.layout(80).1, (1, 4));
+        // Landing in the middle of a wide character puts the cursor before it.
+        let mut i = typed("abc\n\u{4e16}\u{4e16}");
+        i.up(80);
+        i.home();
+        i.right();
+        i.right();
+        i.right(); // column 3 on the first line
+        i.down(80);
+        assert_eq!(i.layout(80).1, (1, 2));
+    }
+
+    #[test]
+    fn history_browsing_restores_the_draft_and_stops_at_the_ends() {
+        let mut i = Input::default();
+        i.down(80); // nothing to go down to
+        assert!(i.is_empty());
+        i.up(80);
+        assert!(i.is_empty(), "no history yet");
+        for t in ["a", "b", "c"] {
+            i.insert(t);
+            i.take();
+        }
+        i.insert("draft");
+        i.up(80);
+        i.up(80);
+        i.up(80);
+        i.up(80);
+        assert_eq!(i.text(), "a");
+        i.down(80);
+        assert_eq!(i.text(), "b");
+        i.down(80);
+        i.down(80);
+        assert_eq!(i.text(), "draft");
+        i.down(80);
+        assert_eq!(i.text(), "draft");
+        // Browsing a multi-line entry moves within it before moving on.
+        let mut i = Input::default();
+        i.insert("l1\nl2");
+        i.take();
+        i.up(80);
+        assert_eq!(i.text(), "l1\nl2");
+        i.up(80);
+        assert_eq!(i.layout(80).1, (0, 2));
+        i.down(80);
+        assert_eq!(i.layout(80).1, (1, 2));
+    }
 }

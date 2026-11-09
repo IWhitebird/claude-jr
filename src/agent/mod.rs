@@ -1117,6 +1117,16 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "bug: /rewind to a turn is refused when no file was changed in the session (see the checkpoint test)"]
+    fn rewinding_a_turn_that_changed_nothing_works() {
+        let mut rig = Rig::new("agent-rewind-plain", Mode::Default, vec![ok(text_reply("hello"))]);
+        rig.run(vec![Command::Send("just talk".into())]);
+        let events = rig.run(vec![Command::Rewind(Some(0))]);
+        assert!(matches!(events.first(), Some(Event::Rewound { files: 0, .. })), "{:?}", errors_of(&events));
+        assert!(rig.agent.messages.is_empty());
+    }
+
+    #[test]
     fn rewind_that_cannot_restore_keeps_the_conversation() {
         use std::os::unix::fs::PermissionsExt;
         let write = tool_use("w1", "write", json!({"path": "sub/a.txt", "content": "hi\n"}));

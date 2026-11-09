@@ -125,4 +125,72 @@ mod tests {
         let skill = parse(&file).unwrap();
         assert_eq!((skill.name.as_str(), skill.description.as_str()), ("release", ""));
     }
+
+    fn skill_in(dir: &Path, folder: &str, text: &str) -> PathBuf {
+        let d = dir.join(folder);
+        std::fs::create_dir_all(&d).unwrap();
+        let file = d.join("SKILL.md");
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    #[test]
+    fn loading_a_skill_by_name() {
+        let dir = super::super::test_dir("skill-load");
+        let a = parse(&skill_in(&dir, "alpha", "---\nname: alpha\ndescription: first\n---\nDo A.\n")).unwrap();
+        let b = parse(&skill_in(&dir, "beta", "Just B.\n")).unwrap();
+        let skills = [a, b];
+
+        let out = load(&skills, &json!({"name": "alpha"})).unwrap();
+        assert_eq!(out, format!("Skill \"alpha\" (files in {}):\n\nDo A.", dir.join("alpha").display()));
+        assert!(
+            load(&skills, &json!({"name": "beta"})).unwrap().ends_with("Just B."),
+            "the folder name is the default name"
+        );
+        assert_eq!(load(&skills, &json!({"name": "gamma"})).unwrap_err(), "no skill named gamma");
+        assert_eq!(load(&skills, &json!({})).unwrap_err(), "missing name");
+
+        let def: Value = serde_json::from_str(definition(&skills).get()).unwrap();
+        let text = def["description"].as_str().unwrap();
+        assert!(text.contains("\n- alpha: first\n- beta: "), "{text}");
+        assert_eq!(def["name"], "skill");
+
+        // A file that vanished is an error naming it.
+        std::fs::remove_file(dir.join("alpha/SKILL.md")).unwrap();
+        let err = load(&skills, &json!({"name": "alpha"})).unwrap_err();
+        assert!(err.contains("alpha/SKILL.md"), "{err}");
+    }
+
+    #[test]
+    fn front_matter_edge_cases() {
+        let dir = super::super::test_dir("skill-front");
+        // Unterminated front matter: not a skill.
+        assert!(parse(&skill_in(&dir, "broken", "---\nname: x\nno end here\n")).is_none());
+        // A blank name falls back to the folder name; single quotes are stripped.
+        let s = parse(&skill_in(&dir, "folder", "---\nname:\ndescription: 'quoted: yes'\n---\nbody")).unwrap();
+        assert_eq!((s.name.as_str(), s.description.as_str()), ("folder", "quoted: yes"));
+        // Long descriptions are cut on a character boundary and marked.
+        let long = "\u{e9}".repeat(400);
+        let s = parse(&skill_in(&dir, "long", &format!("---\ndescription: {long}\n---\nbody"))).unwrap();
+        assert_eq!(s.description, format!("{}\u{2026}", "\u{e9}".repeat(150)));
+        assert!(parse(&dir.join("nothing/SKILL.md")).is_none());
+        assert_eq!(split_front_matter("---\na: b\n---\n\n\nBody"), Some(("\na: b", "Body")));
+        assert_eq!(split_front_matter("plain"), Some(("", "plain")));
+    }
+
+    #[test]
+    fn skills_are_found_in_the_config_folder_and_the_first_name_wins() {
+        super::super::test_home();
+        let root = crate::config::config_dir().join("skills");
+        skill_in(&root, "unit-first", "---\nname: unit-dup\ndescription: from config\n---\nA");
+        skill_in(&root, "unit-second", "---\nname: unit-dup\ndescription: shadowed\n---\nB");
+        skill_in(&root, "unit-not-a-skill", "---\nname: unit-bad\n");
+        std::fs::write(root.join("stray-file.md"), "x").unwrap();
+        let found: Vec<(String, String)> = discover()
+            .into_iter()
+            .filter(|s| s.name == "unit-dup" || s.name == "unit-bad")
+            .map(|s| (s.name, s.description))
+            .collect();
+        assert_eq!(found, [("unit-dup".to_string(), "from config".to_string())]);
+    }
 }

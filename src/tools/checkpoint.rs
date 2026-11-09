@@ -296,4 +296,118 @@ mod tests {
         assert_eq!(cp.restore_from(2), Ok(1));
         assert!(!n.exists());
     }
+
+    #[test]
+    fn a_file_is_copied_once_per_turn() {
+        let dir = super::super::test_dir("checkpoint-once");
+        let cp = Checkpoints::default();
+        cp.open(dir.join("cp"));
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "original").unwrap();
+        cp.begin_turn(2);
+        cp.before_change(&a);
+        std::fs::write(&a, "second").unwrap();
+        cp.before_change(&a);
+        std::fs::write(&a, "third").unwrap();
+        assert_eq!(index(&dir).lines().count(), 1, "the second change in a turn adds nothing");
+        assert_eq!(cp.restore_from(2), Ok(1));
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "original",
+            "back to before the turn, not before the last change"
+        );
+    }
+
+    #[test]
+    fn nothing_is_recorded_without_a_folder_or_for_huge_files() {
+        let dir = super::super::test_dir("checkpoint-skip");
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "x").unwrap();
+        let cp = Checkpoints::default();
+        cp.before_change(&a); // never opened: nothing to do
+        assert_eq!(cp.restore_from(0), Ok(0));
+
+        std::fs::create_dir_all(dir.join("cp")).unwrap();
+        cp.open(dir.join("cp"));
+        let big = dir.join("big.bin");
+        std::fs::File::create(&big).unwrap().set_len(MAX_FILE + 1).unwrap();
+        cp.begin_turn(0);
+        cp.before_change(&big);
+        assert_eq!(index(&dir), "", "files over 10 MB aren't copied, so can't be rewound");
+        assert_eq!(cp.restore_from(0), Ok(0));
+        let exact = dir.join("exact.bin");
+        std::fs::File::create(&exact).unwrap().set_len(MAX_FILE).unwrap();
+        cp.before_change(&exact);
+        assert_eq!(index(&dir).lines().count(), 1, "exactly 10 MB is still copied");
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_copied_is_left_unrecorded() {
+        let dir = super::super::test_dir("checkpoint-nocopy");
+        let cp = Checkpoints::default();
+        // The checkpoint folder's place is taken by a file, so nothing can be stored there.
+        std::fs::write(dir.join("cp"), "in the way").unwrap();
+        cp.open(dir.join("cp"));
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "x").unwrap();
+        cp.before_change(&a);
+        assert!(dir.join("cp").is_file(), "nothing was recorded or created");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "x");
+    }
+
+    #[test]
+    fn a_file_the_turn_created_may_already_be_gone() {
+        let dir = super::super::test_dir("checkpoint-gone");
+        let cp = Checkpoints::default();
+        cp.open(dir.join("cp"));
+        let new = dir.join("new.txt");
+        cp.begin_turn(3);
+        cp.before_change(&new);
+        std::fs::write(&new, "created").unwrap();
+        std::fs::remove_file(&new).unwrap(); // the user deleted it
+        assert_eq!(cp.restore_from(3), Ok(1));
+        assert_eq!(index(&dir), "", "the entry is spent");
+    }
+
+    #[test]
+    #[ignore = "bug: restore_from fails when no file was ever changed, because the checkpoint folder doesn't exist yet"]
+    fn rewinding_a_session_that_changed_no_files_is_fine() {
+        let dir = super::super::test_dir("checkpoint-untouched");
+        let cp = Checkpoints::default();
+        cp.open(dir.join("cp"));
+        assert_eq!(cp.restore_from(0), Ok(0));
+    }
+
+    #[test]
+    fn clearing_forgets_every_turn() {
+        let dir = super::super::test_dir("checkpoint-clear");
+        let cp = Checkpoints::default();
+        cp.open(dir.join("cp"));
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "v1").unwrap();
+        cp.begin_turn(0);
+        cp.before_change(&a);
+        std::fs::write(&a, "v2").unwrap();
+        cp.clear();
+        assert_eq!(index(&dir), "");
+        assert_eq!(cp.restore_from(0), Ok(0));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "v2");
+    }
+
+    #[test]
+    fn a_blocked_index_update_is_reported() {
+        let dir = super::super::test_dir("checkpoint-index");
+        let cp = Checkpoints::default();
+        cp.open(dir.join("cp"));
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "v1").unwrap();
+        cp.begin_turn(0);
+        cp.before_change(&a);
+        std::fs::write(&a, "v2").unwrap();
+        // A folder where the temp index file goes makes writing the new index fail.
+        std::fs::create_dir(dir.join("cp/index.jsonl.tmp")).unwrap();
+        let err = cp.restore_from(0).unwrap_err();
+        assert!(err.starts_with("couldn't update the checkpoint index: "), "{err}");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "v1", "the file itself was still restored");
+    }
 }
