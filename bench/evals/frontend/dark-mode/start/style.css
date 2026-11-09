@@ -1,0 +1,15 @@
+body {
+  background: #ffffff;
+  color: #1a1a1a;
+  font-family: system-ui, sans-serif;
+}
+
+.card {
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  color: #1a1a1a;
+}
+
+a {
+  color: #2563eb;
+}

@@ -1,0 +1,4 @@
+{
+  "prompt": "Add a dark mode to style.css that follows the system setting. Define the colors once as CSS custom properties on :root, override them inside @media (prefers-color-scheme: dark), and make body, .card and a use the variables instead of fixed colors.",
+  "timeout": 420
+}

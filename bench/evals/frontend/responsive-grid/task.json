@@ -1,0 +1,4 @@
+{
+  "prompt": "In style.css, make .cards one column on screens narrower than 640px and three equal columns from 640px up. Write it mobile first (the base rule is the one-column layout, a min-width media query adds the columns).",
+  "timeout": 420
+}

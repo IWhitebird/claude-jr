@@ -1,0 +1,4 @@
+{
+  "prompt": "Write validateSignup({ email, password, confirm }) in validate.js, exported by name. It returns an object with an entry for each invalid field and nothing for valid ones ({} when all is fine). Messages: email missing -> \"Email is required\"; email without exactly one @ with text on both sides and a dot in the domain -> \"Enter a valid email\"; password shorter than 8 -> \"At least 8 characters\"; password without a number -> \"Include a number\" (check length first); confirm different from password -> \"Passwords don't match\". Trim whitespace around the email before checking.",
+  "timeout": 420
+}

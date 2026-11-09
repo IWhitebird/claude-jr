@@ -1,0 +1,4 @@
+{
+  "prompt": "Write renderTodos(todos) in todos.js, exported by name. It returns an HTML string: a <ul class=\"todos\"> with one <li> per todo ({ title, done }), where done ones have class=\"done\", and an empty list renders as <p class=\"empty\">Nothing to do</p> instead. Titles come from users, so make sure they can't inject HTML.",
+  "timeout": 420
+}

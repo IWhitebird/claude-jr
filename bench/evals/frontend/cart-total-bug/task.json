@@ -1,0 +1,4 @@
+{
+  "prompt": "The cart total in cart.js is wrong in some cases. Fix cart.js so `node cart.test.js` passes. Don't change cart.test.js.",
+  "timeout": 420
+}

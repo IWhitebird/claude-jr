@@ -1,0 +1,4 @@
+{
+  "prompt": "Write debounce(fn, ms) in debounce.js, exported by name. The returned function delays calling fn until ms milliseconds have passed without another call, then calls it once with the arguments of the last call and the same `this`. It also has a .cancel() method that drops a pending call.",
+  "timeout": 420
+}

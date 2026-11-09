@@ -1,0 +1,4 @@
+{
+  "prompt": "Rewrite index.html to use semantic HTML: the top bar should be a header containing a nav with the links, the article area should be main, and the bottom should be a footer. Give the image a short, useful alt text. Keep all the visible text and the class names.",
+  "timeout": 420
+}

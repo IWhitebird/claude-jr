@@ -1,0 +1,4 @@
+{
+  "prompt": "Make the signup form in signup.html accessible: every visible input needs a visible <label> connected to it, the submit button must have type=\"submit\", and the icon-only close button (\u2715) needs an accessible name. Don't remove any fields.",
+  "timeout": 420
+}

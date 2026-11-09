@@ -1,0 +1,4 @@
+{
+  "prompt": "Implement relativeTime(date, now) in time.js (both are Date objects). Rules: under 60 seconds either way -> \"just now\"; under an hour -> \"N minutes ago\" or \"in N minutes\" (\"1 minute ago\" for one); under a day -> hours the same way; between 1 and 2 days in the past -> \"yesterday\", in the future -> \"tomorrow\"; under 7 days -> \"N days ago\" / \"in N days\"; otherwise the date as YYYY-MM-DD (UTC). Round down. Export it as a named export.",
+  "timeout": 420
+}

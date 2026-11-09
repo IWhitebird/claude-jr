@@ -1,0 +1,4 @@
+{
+  "prompt": "Build pricing.html to match the design in design.png (look at the image). Plain HTML and CSS in one file, no frameworks. Use one element with class \"card\" per plan, and keep the plan names, prices and the badge text exactly as in the design.",
+  "timeout": 420
+}
