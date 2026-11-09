@@ -18,7 +18,8 @@ const MAX_PREVIEW: u64 = 1024 * 1024;
 pub static READ: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
         "name": "read",
-        "description": "Read a text file. Returns lines prefixed with their line number and a tab. \
+        "description": "Read a file. Text comes back as lines prefixed with their line number and a tab; \
+            images (png, jpg, gif, webp) come back as the image itself, so you can look at screenshots and designs. \
             Reads up to 2000 lines; use offset and limit for more. You must read a file before editing or overwriting it.",
         "input_schema": {
             "type": "object",
@@ -115,6 +116,9 @@ pub fn read(t: &Tools, input: &Value) -> Output {
     if path.is_dir() {
         return Err(format!("{} is a directory. Use bash ls.", path.display()));
     }
+    if crate::images::media_type(&path).is_some() {
+        return super::image_output(&path);
+    }
     let offset = input["offset"].as_u64().unwrap_or(1).max(1) as usize;
     let limit = input["limit"].as_u64().map_or(MAX_LINES, |n| n as usize).min(MAX_LINES);
     let file = fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -205,7 +209,7 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_tools;
+    use super::super::{result_content, summary, test_tools};
     use serde_json::json;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
@@ -229,5 +233,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
         assert!(t.run("edit", &edit("changed", false), &no).unwrap_err().contains("changed since"));
+    }
+
+    #[test]
+    fn reads_images_as_image_blocks() {
+        let (t, dir) = test_tools("read-image");
+        std::fs::write(dir.join("shot.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        let out = t.run("read", &json!({"path": "shot.png"}), &AtomicBool::new(false));
+        assert_eq!(summary("read", &out), "Read image (0 KB)");
+        let content = result_content(out.unwrap());
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
     }
 }

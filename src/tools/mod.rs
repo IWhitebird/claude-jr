@@ -226,9 +226,38 @@ impl Tools {
     }
 }
 
+/// Tools return text. An image is returned as this marker followed by its
+/// path, and turned into an image block by `result_content`.
+const IMAGE: &str = "\u{0}image:";
+
+fn image_output(path: &Path) -> Output {
+    let size = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    if size > crate::images::MAX_BYTES {
+        return Err(format!("{} is {} MB; images can be at most 5 MB", path.display(), size / 1_048_576));
+    }
+    Ok(format!("{IMAGE}{}", path.display()))
+}
+
+/// The `content` of a tool_result: the text, or for an image an image block
+/// plus a line saying which file it is.
+pub fn result_content(text: String) -> Value {
+    match text.strip_prefix(IMAGE) {
+        Some(path) => match crate::images::block(Path::new(path)) {
+            Ok(image) => json!([image, { "type": "text", "text": format!("Image: {path}") }]),
+            Err(e) => Value::String(e),
+        },
+        None => Value::String(text),
+    }
+}
+
 /// A few lines describing a tool result, for the UI.
 pub fn summary(name: &str, out: &Output) -> String {
     let (text, max) = match out {
+        Ok(s) if s.starts_with(IMAGE) => {
+            let path = &s[IMAGE.len()..];
+            let kb = std::fs::metadata(path).map_or(0, |m| m.len() / 1024);
+            return format!("Read image ({kb} KB)");
+        }
         Ok(s) if name == "read" => {
             let n = s.lines().filter(|l| l.as_bytes().get(6) == Some(&b'\t')).count();
             return format!("Read {n} line{}", if n == 1 { "" } else { "s" });

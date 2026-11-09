@@ -47,6 +47,7 @@ name = "claude-jr"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "crossterm",
  "serde",
  "serde_json",

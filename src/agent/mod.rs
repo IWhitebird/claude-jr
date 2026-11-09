@@ -255,6 +255,18 @@ impl Agent {
     fn send(&mut self, text: String) {
         self.core.cancel.store(false, Ordering::Relaxed);
         *self.core.request.lock().unwrap() = text.clone();
+        // Image files mentioned in the message (dragged in, or pasted with
+        // ctrl+v) go in as images, before the text.
+        for path in crate::images::paths_in(&text) {
+            match crate::images::block(&path) {
+                Ok(image) => {
+                    let kb = std::fs::metadata(&path).map_or(0, |m| m.len() / 1024);
+                    (self.core.emit)(Event::Notice(format!("Attached {} ({kb} KB)", path.display())));
+                    self.push_user(image);
+                }
+                Err(e) => (self.core.emit)(Event::Notice(e)),
+            }
+        }
         self.push_user(json!({ "type": "text", "text": text }));
 
         // Mode changes and finished jobs go into this message, not the system

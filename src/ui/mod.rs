@@ -46,6 +46,7 @@ const HELP: &str = "/clear          start a new conversation
 /exit           quit
 #note           save a note to ./AGENTS.md (used from now on)
 !command        run a shell command yourself; the agent sees the output
+images          drag a file in (its path is attached), or ctrl+v a screenshot
 
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
 shift+tab: normal → accept edits → plan → auto → skip permissions
@@ -570,6 +571,10 @@ impl App {
             KeyCode::Char('u') if ctrl => self.input.kill_to_start(),
             KeyCode::Char('k') if ctrl => self.input.kill_to_end(),
             KeyCode::Char('w') if ctrl => self.input.delete_word(),
+            KeyCode::Char('v') if ctrl => match crate::images::from_clipboard() {
+                Ok(path) => self.input.insert(&format!("{} ", path.display())),
+                Err(e) => self.note(&format!("Can't paste an image: {e}."), DIM),
+            },
             KeyCode::Backspace if ctrl || alt => self.input.delete_word(),
             KeyCode::Char(c) if !ctrl => {
                 let mut buf = [0u8; 4];

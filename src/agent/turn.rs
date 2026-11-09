@@ -210,8 +210,8 @@ impl Core {
 
 fn tool_result(id: &Value, out: Output) -> Value {
     let (content, is_error) = match out {
-        Ok(s) => (s, false),
-        Err(s) => (s, true),
+        Ok(s) => (tools::result_content(s), false),
+        Err(s) => (Value::String(s), true),
     };
     json!({ "type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error })
 }
