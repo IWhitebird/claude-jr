@@ -146,7 +146,8 @@ impl Tools {
             "write" | "edit" | "read" => {
                 let p = input["path"].as_str().unwrap_or("");
                 let full = self.resolve(p);
-                full.strip_prefix(&self.root).map(|r| r.display().to_string()).unwrap_or_else(|_| p.to_string())
+                // Outside the project: the full resolved path, never the raw text.
+                full.strip_prefix(&self.root).unwrap_or(&full).display().to_string()
             }
             "agent" => input["description"].as_str().unwrap_or("").to_string(),
             "skill" => input["name"].as_str().unwrap_or("").to_string(),
@@ -237,9 +238,11 @@ impl Tools {
         bash::run(self, &json!({ "command": cmd }), cancel)
     }
 
+    /// An absolute path with `.` and `..` worked out, so `src/../../x` can't
+    /// pass for a path inside the project in rules, auto mode or labels.
     fn resolve(&self, p: &str) -> PathBuf {
         let p = Path::new(p);
-        if p.is_absolute() { p.to_path_buf() } else { self.root.join(p) }
+        normalize(&if p.is_absolute() { p.to_path_buf() } else { self.root.join(p) })
     }
 }
 
@@ -296,6 +299,22 @@ pub fn summary(name: &str, out: &Output) -> String {
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     chars.next().map(|c| c.to_ascii_uppercase()).into_iter().chain(chars).collect()
+}
+
+/// Resolves `.` and `..` without touching the disk (the file may not exist yet).
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 pub(crate) fn shorten(s: &str, max: usize) -> String {
@@ -374,4 +393,23 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 pub(crate) fn test_tools(name: &str) -> (Tools, PathBuf) {
     let dir = test_dir(name);
     (Tools::new(dir.clone(), Vec::new(), mcp::Servers::default()), dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_that_climb_out_are_not_inside_the_project() {
+        let (t, dir) = test_tools("paths");
+        let subject = |p: &str| t.subject("edit", &json!({ "path": p }));
+        assert_eq!(subject("src/./app.css"), "src/app.css");
+        assert_eq!(subject("src/../index.html"), "index.html");
+        let escaped = subject("src/../../outside.txt");
+        assert!(escaped.starts_with('/'), "{escaped}");
+        assert_eq!(PathBuf::from(&escaped), dir.parent().unwrap().join("outside.txt"));
+        let rules = crate::permission::Rules::new(vec!["edit:src/*".into()]);
+        assert!(rules.allows("edit", &subject("src/a.css")));
+        assert!(!rules.allows("edit", &subject("src/../../etc/passwd")));
+    }
 }
