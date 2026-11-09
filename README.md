@@ -122,10 +122,14 @@ claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 
 Images: drag a file into the terminal (its path is pasted and the image is
 attached) or press ctrl+v with a screenshot in the clipboard. The agent can
-also `read` image files, like a design or a screenshot of your app.
+also `read` image files, like a design or a screenshot of your app. Images are
+copied once into `~/.local/share/claude-jr/images/` and encoded from disk while
+a request is sent, so they don't sit in memory.
 
 The input stays on the bottom rows of the screen and the conversation scrolls
 above it; running subagents and background jobs are listed under the input.
+Resizing the terminal redraws what's on screen at the new width. Tables are
+drawn with boxes and a line between rows.
 `"layout": "inline"` in the config (or `/settings`) puts the input right after
 the conversation instead.
 
@@ -356,7 +360,7 @@ a correct solution. `--budget` stops before a task that would likely go over.
 ## Development
 
 ```sh
-cargo test                                      # 37 tests, 53% line coverage
+cargo test                                      # 42 tests
 bench/mem.sh && bench/cpu.sh && bench/sandbox.sh
 ```
 
