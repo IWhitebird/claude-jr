@@ -36,17 +36,28 @@ without a runtime: no Node, no Python, no async framework.
 
 ## Numbers
 
-Static x86_64 build, measured with the scripts in [`bench/`](bench):
+Measured with [`bench/compare.py`](bench/compare.py): every agent runs against
+the same fake API (no model time counted), with a fresh empty home folder.
+Busy = one prompt that makes 20 bash calls with streamed text in between.
 
-| | |
-|---|---|
-| Binary | 2.8 MB, static |
-| Startup to first frame | 3 ms |
-| Memory when idle | 1.7 MB |
-| CPU when idle | 0 |
-| Memory after 60 tool calls (2.4 MB of history) | 4.1 MB |
-| CPU per tool call (claude-jr's own work) | ~5 ms |
-| Whole container at 0.1 CPU / 64 MB | 10 MB peak |
+|                               | claude-jr | Claude Code | pi       | Codex    |
+|-------------------------------|-----------|-------------|----------|----------|
+| install size                  | 2.8 MB    | 324.5 MB    | 109.0 MB | 437.4 MB |
+| startup (screen settles)      | 4 ms      | 160 ms      | 258 ms   | 347 ms   |
+| memory, idle                  | 1.7 MB    | 134.2 MB    | 144.9 MB | 190.1 MB |
+| processes / threads, idle     | 1 / 4     | 1 / 15      | 1 / 11   | 5 / 37   |
+| CPU while idle 10s            | 0 ms      | 70 ms       | 0 ms     | 320 ms   |
+| busy: wall time               | 0.10 s    | 1.53 s      | 1.23 s   | n/a      |
+| busy: agent's own CPU         | 30 ms     | 1080 ms     | 570 ms   | n/a      |
+| busy: agent's own peak memory | 2.3 MB    | 268.4 MB    | 151.4 MB | n/a      |
+| busy: CPU incl. commands      | 111 ms    | 1208 ms     | 679 ms   | n/a      |
+
+Claude Code 2.1.319, pi 1.5.0, Codex 0.167.0 (idle only: it speaks OpenAI's
+API), claude-jr static x86_64 build. Install sizes for pi and Codex are their
+`node_modules`, not counting Node itself.
+
+While a reply streams in at about 200 tokens a second, the interactive UI uses
+about 0.5% of one core (`bench/ui.py`).
 
 ## Install
 
@@ -66,9 +77,7 @@ CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-l
 ## Use
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-
-claude-jr                         # start
+claude-jr                         # start; the first time, it asks for your API key
 claude-jr --sandbox               # only allow writes inside this directory
 claude-jr -c                      # continue the last conversation here
 claude-jr -r "auth refactor"      # continue a named conversation
@@ -93,10 +102,14 @@ claude-jr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 | `/memory` | instruction files in use |
 | `/stats` | memory and CPU of claude-jr and everything it started |
 | `/cost` | tokens and spend so far |
+| `/login`, `/logout` | add, change or remove your API key |
 | `/clear` | start over |
 | `/<skill> args` | run a skill |
 | `#some note` | save a note to `./AGENTS.md` |
 | `!command` | run a command yourself; the agent sees the output |
+
+Your key is saved to `~/.config/claude-jr/credentials`, readable only by you.
+`ANTHROPIC_API_KEY` works too and takes priority.
 
 ## Modes
 
@@ -238,8 +251,10 @@ out exactly, so `cargo *` can't approve `cargo test; rm -rf ~`.
 ```
 
 - **No async runtime.** Plain threads and channels. The UI blocks on one
-  channel, so it uses no CPU while you think, and it only writes to the
-  terminal when the picture changed.
+  channel, so it uses no CPU while you think. While text streams in it draws
+  at most ~30 frames a second and rewrites only the lines that changed;
+  finished rows of a long paragraph go to scrollback as soon as they can't
+  change.
 - **Messages are stored as the JSON text that goes over the wire.** A request
   is streamed straight from them and the session file is the same text.
 - **The history only grows.** That keeps the prompt cache warm and the model's
@@ -266,6 +281,8 @@ bench/
   mock.py         fake API for tests and benchmarks
   mem.sh          long session; fails above 16 MB
   cpu.sh          idle and busy CPU
+  ui.py           the UI while a reply streams in
+  compare.py      side by side with Claude Code, pi and Codex
   box.sh          run in a 0.1 CPU / 64 MB container
   sandbox.sh      check the sandbox
 ```
@@ -274,8 +291,10 @@ bench/
 
 | What | How |
 |---|---|
+| Against Claude Code, pi and Codex | `python3 bench/compare.py` |
 | Inside the app | `/stats` |
 | Idle and busy CPU, memory | `bench/cpu.sh` |
+| The UI while a reply streams | `python3 bench/ui.py target/release/claude-jr` |
 | Memory budget over a long session | `bench/mem.sh` |
 | In a 0.1 CPU / 64 MB box | `bench/box.sh` |
 | A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |

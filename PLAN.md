@@ -78,6 +78,21 @@ UI, and nothing more.
    `bench/cpu.sh` and `bench/idle.py`; clean exit on SIGINT/SIGTERM/SIGHUP
    that stops every child process. Done.
 
+10. **Optimization pass.** `/login` for the API key. Measured against Claude
+    Code, pi and Codex with `bench/compare.py`. Changes that paid off:
+    committing finished rows of a streaming paragraph (terminal output for a
+    35 KB reply 11 MB -> 0.7 MB), rewriting only changed lines, ~30 fps cap
+    with the UI sleeping until a frame is due, waiting on the output pipe
+    instead of polling (60 tool calls 0.81 s -> 0.32 s), no delayed first
+    frame. Tried and dropped: opt-level "s" (20% smaller binary, ~10% more
+    CPU), size-optimized dependencies (8% smaller, +0.2 MB idle and +0.3 MB
+    busy memory), building the HTTP client lazily (no difference: ureq
+    already sets up TLS on first use). Done.
+
+    Where the CPU goes now, while streaming ~200 tokens/s: the agent thread
+    waking for each network packet (~110 ms per 46 s) and ~30 frames a second
+    in the UI (~90 ms). Parsing itself is ~10 ms for 35 KB.
+
 ## Next: benchmarking (needs an API key)
 
 - Task suite in `bench/tasks/`: small repos, a prompt and a `check.sh` each
