@@ -33,17 +33,21 @@ the existing tests where that is quick. Stop when the fix is in place.
 </issue>"""
 
 # Runs inside the task image, in the task's conda environment. The patch is
-# everything that differs from the task's base commit, new files included.
+# what the agent changed, new files included: the difference from a snapshot
+# taken just before it starts (the images come with a few edits of their own,
+# such as pinned versions in setup.py, which must not be in the patch).
 INSIDE = r"""
 source /opt/miniconda3/bin/activate 2>/dev/null && conda activate testbed 2>/dev/null
 cd /testbed
 git config --global --add safe.directory /testbed
+git add -A >/dev/null 2>&1
+before=$(git write-tree)
 start=$(date +%s)
 timeout -k 10 {timeout} claudejr -y {effort} -p "$(cat /out/prompt.txt)" >/out/transcript.txt 2>&1
 echo $? >/out/exit_code
 echo $(( $(date +%s) - start )) >/out/seconds
 git add -A >/dev/null 2>&1
-git -c core.fileMode=false diff --cached {base} >/out/patch.diff 2>/dev/null
+git -c core.fileMode=false diff --cached "$before" >/out/patch.diff 2>/dev/null
 chmod -R a+rwX /out
 """
 
@@ -78,7 +82,7 @@ def run_agent(task, out, args, env):
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, "prompt.txt"), "w").write(
         PROMPT.format(repo=task["repo"], issue=task["problem_statement"]))
-    script = INSIDE.format(timeout=args.timeout, base=task["base_commit"],
+    script = INSIDE.format(timeout=args.timeout,
                            effort=f"-e {args.effort}" if args.effort else "")
     name = "cjr-swe-" + task["instance_id"].replace("__", "-")
     sh("docker", "rm", "-f", name)
@@ -108,7 +112,8 @@ def run_agent(task, out, args, env):
 
 
 def evaluate(task, patch, out, run_id, model):
-    """The official harness on one task. True if the hidden tests pass."""
+    """The official harness on one task: True if the hidden tests pass, False
+    if they don't, None if the harness produced no verdict."""
     pred = os.path.join(out, "prediction.jsonl")
     open(pred, "w").write(json.dumps(
         {"instance_id": task["instance_id"], "model_name_or_path": model, "model_patch": patch}) + "\n")
@@ -123,7 +128,7 @@ def evaluate(task, patch, out, run_id, model):
                     return bool(json.load(open(os.path.join(root, f)))[task["instance_id"]]["resolved"])
                 except (ValueError, KeyError):
                     pass
-    return False
+    return None
 
 
 def main():
@@ -172,7 +177,7 @@ def main():
         if not env["ANTHROPIC_API_KEY"]:
             sys.exit("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY")
 
-    out = args.out or os.path.join(ROOT, "bench/results", time.strftime("swe-%Y%m%d-%H%M%S"))
+    out = os.path.abspath(args.out or os.path.join(ROOT, "bench/results", time.strftime("swe-%Y%m%d-%H%M%S")))
     os.makedirs(out, exist_ok=True)
     results_path = os.path.join(out, "results.jsonl")
     done = {}
