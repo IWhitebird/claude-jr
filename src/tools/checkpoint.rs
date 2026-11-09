@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 /// Files bigger than this aren't copied (and so can't be rewound).
@@ -28,17 +28,56 @@ pub struct Checkpoints(Mutex<State>);
 #[derive(Default)]
 struct State {
     dir: Option<PathBuf>,
+    /// The project folder; restores never touch anything outside it.
+    root: Option<PathBuf>,
     turn: usize,
     entries: Vec<Entry>,
 }
 
+/// The index is read back from disk, so it is checked before use: the target
+/// must be an absolute path inside `root`, and the copy a plain file directly
+/// inside `dir`.
+fn check(e: &Entry, dir: &Path, root: &Path) -> Result<(), String> {
+    let plain =
+        |p: &Path| p.is_absolute() && !p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir));
+    if !plain(&e.path) || !e.path.starts_with(root) {
+        return Err(format!("{}: outside the project, skipped", e.path.display()));
+    }
+    if let Some(copy) = &e.saved {
+        let name_ok = copy.file_name().is_some_and(|n| Path::new(n).components().count() == 1);
+        if copy.parent() != Some(dir) || !name_ok || copy.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err(format!("{}: backup is not inside the checkpoint folder, skipped", e.path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Writes the index through a temp file in the same folder, then renames it.
+fn write_index(dir: &Path, entries: &[Entry]) -> std::io::Result<()> {
+    let lines: String = entries.iter().filter_map(|e| serde_json::to_string(e).ok()).map(|l| l + "\n").collect();
+    let tmp = dir.join("index.jsonl.tmp");
+    std::fs::write(&tmp, lines)?;
+    std::fs::rename(&tmp, dir.join("index.jsonl"))
+}
+
 impl Checkpoints {
     /// Where this session's copies go. Loads what earlier runs recorded.
+    /// Files outside the current folder are never restored.
     pub fn open(&self, dir: PathBuf) {
+        let root = std::env::current_dir().unwrap_or_default();
+        self.open_in(dir, root);
+    }
+
+    fn open_in(&self, dir: PathBuf, root: PathBuf) {
         let entries = std::fs::read_to_string(dir.join("index.jsonl"))
-            .map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
+            .map(|t| {
+                t.lines()
+                    .filter_map(|l| serde_json::from_str::<Entry>(l).ok())
+                    .filter(|e| check(e, &dir, &root).is_ok())
+                    .collect()
+            })
             .unwrap_or_default();
-        *self.0.lock().unwrap() = State { dir: Some(dir), turn: 0, entries };
+        *self.0.lock().unwrap() = State { dir: Some(dir), root: Some(root), turn: 0, entries };
     }
 
     /// Forgets every checkpoint (the files stay as they are). After /compact
@@ -47,7 +86,7 @@ impl Checkpoints {
         let mut s = self.0.lock().unwrap();
         s.entries.clear();
         if let Some(dir) = &s.dir {
-            let _ = std::fs::write(dir.join("index.jsonl"), "");
+            let _ = write_index(dir, &[]);
         }
     }
 
@@ -87,31 +126,49 @@ impl Checkpoints {
     }
 
     /// Puts back every file changed in `turn` or later. Returns how many.
+    /// Entries that can't be restored stay in the index for another try; the
+    /// error names them. Entries that fail validation are dropped.
     pub fn restore_from(&self, turn: usize) -> Result<usize, String> {
         let mut s = self.0.lock().unwrap();
-        let (undo, keep): (Vec<Entry>, Vec<Entry>) = s.entries.drain(..).partition(|e| e.turn >= turn);
-        s.entries = keep;
-        let mut restored: Vec<&Path> = Vec::new();
-        for e in undo.iter().rev() {
-            match &e.saved {
+        let (dir, root) = (s.dir.clone().unwrap_or_default(), s.root.clone().unwrap_or_default());
+        let all = std::mem::take(&mut s.entries);
+        let (undo, mut keep): (Vec<Entry>, Vec<Entry>) = all.into_iter().partition(|e| e.turn >= turn);
+        let mut restored: Vec<PathBuf> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        let mut failed: Vec<Entry> = Vec::new();
+        for e in undo.into_iter().rev() {
+            if let Err(msg) = check(&e, &dir, &root) {
+                errors.push(msg);
+                continue;
+            }
+            let done = match &e.saved {
                 Some(copy) => std::fs::copy(copy, &e.path).map(|_| ()),
                 None => std::fs::remove_file(&e.path).or_else(|err| match err.kind() {
                     std::io::ErrorKind::NotFound => Ok(()),
                     _ => Err(err),
                 }),
-            }
-            .map_err(|err| format!("couldn't restore {}: {err}", e.path.display()))?;
-            if !restored.contains(&e.path.as_path()) {
-                restored.push(&e.path);
+            };
+            match done {
+                Ok(()) => {
+                    if !restored.contains(&e.path) {
+                        restored.push(e.path);
+                    }
+                }
+                Err(err) => {
+                    errors.push(format!("couldn't restore {}: {err}", e.path.display()));
+                    failed.push(e);
+                }
             }
         }
-        // Rewrite the index without the undone entries.
-        if let Some(dir) = &s.dir {
-            let lines: String =
-                s.entries.iter().filter_map(|e| serde_json::to_string(e).ok()).map(|l| l + "\n").collect();
-            let _ = std::fs::write(dir.join("index.jsonl"), lines);
+        // The index is kept oldest first (failed is newest first).
+        failed.reverse();
+        keep.extend(failed);
+        keep.sort_by_key(|e| e.turn);
+        s.entries = keep;
+        if let Some(Err(err)) = s.dir.as_ref().map(|d| write_index(d, &s.entries)) {
+            errors.push(format!("couldn't update the checkpoint index: {err}"));
         }
-        Ok(restored.len())
+        if errors.is_empty() { Ok(restored.len()) } else { Err(errors.join("; ")) }
     }
 }
 
@@ -123,7 +180,7 @@ mod tests {
     fn restores_newest_first() {
         let dir = super::super::test_dir("checkpoint");
         let cp = Checkpoints::default();
-        cp.open(dir.join("cp"));
+        cp.open_in(dir.join("cp"), dir.clone());
         let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
         std::fs::write(&a, "v1").unwrap();
 
@@ -144,9 +201,93 @@ mod tests {
 
         // Back to before turn 1, from a fresh index loaded off disk.
         let again = Checkpoints::default();
-        again.open(dir.join("cp"));
+        again.open_in(dir.join("cp"), dir.clone());
         assert_eq!(again.restore_from(1), Ok(2));
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "v1");
         assert!(!b.exists());
+    }
+
+    fn index(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("cp/index.jsonl")).unwrap_or_default()
+    }
+
+    #[test]
+    fn failed_entry_stays_for_another_try() {
+        let dir = super::super::test_dir("checkpoint-fail");
+        let cp = Checkpoints::default();
+        cp.open_in(dir.join("cp"), dir.clone());
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a1").unwrap();
+        std::fs::write(&b, "b1").unwrap();
+        cp.begin_turn(1);
+        cp.before_change(&a);
+        std::fs::write(&a, "a2").unwrap();
+        cp.before_change(&b);
+        std::fs::write(&b, "b2").unwrap();
+
+        // Lose the backup of a (entry 0), keep b's.
+        std::fs::remove_file(dir.join("cp/1-0")).unwrap();
+        let err = cp.restore_from(1).unwrap_err();
+        assert!(err.contains("a.txt"), "{err}");
+        assert!(!err.contains("b.txt"), "{err}");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b1");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a2");
+        assert_eq!(index(&dir).lines().count(), 1);
+
+        // Put the backup back and try again.
+        std::fs::write(dir.join("cp/1-0"), "a1").unwrap();
+        assert_eq!(cp.restore_from(1), Ok(1));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a1");
+        assert_eq!(index(&dir), "");
+    }
+
+    #[test]
+    fn tampered_entries_are_ignored() {
+        let dir = super::super::test_dir("checkpoint-tamper");
+        let root = dir.join("proj");
+        let cpdir = dir.join("cp");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&cpdir).unwrap();
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "secret").unwrap();
+        let victim = root.join("v.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let outside = dir.join("outside.txt");
+        std::fs::write(&outside, "keep").unwrap();
+        let entry = |path: &Path, saved: Option<PathBuf>| {
+            serde_json::to_string(&Entry { turn: 1, path: path.to_path_buf(), saved }).unwrap()
+        };
+        let lines = [
+            entry(&victim, Some(cpdir.join("../secret.txt"))), // backup escapes
+            entry(&outside, None),                             // would delete outside the root
+            entry(&root.join("../outside.txt"), None),         // `..` in the target
+        ];
+        std::fs::write(cpdir.join("index.jsonl"), lines.join("\n")).unwrap();
+
+        let cp = Checkpoints::default();
+        cp.open_in(cpdir.clone(), root.clone());
+        assert_eq!(cp.restore_from(0), Ok(0));
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(outside.exists());
+
+        // Entries that get past loading are still refused on restore.
+        cp.0.lock().unwrap().entries.push(Entry { turn: 1, path: outside.clone(), saved: None });
+        let err = cp.restore_from(0).unwrap_err();
+        assert!(err.contains("outside.txt"), "{err}");
+        assert!(outside.exists());
+        assert_eq!(index(&dir), "");
+    }
+
+    #[test]
+    fn files_created_in_the_turn_are_removed() {
+        let dir = super::super::test_dir("checkpoint-new");
+        let cp = Checkpoints::default();
+        cp.open_in(dir.join("cp"), dir.clone());
+        let n = dir.join("new.txt");
+        cp.begin_turn(2);
+        cp.before_change(&n);
+        std::fs::write(&n, "x").unwrap();
+        assert_eq!(cp.restore_from(2), Ok(1));
+        assert!(!n.exists());
     }
 }
