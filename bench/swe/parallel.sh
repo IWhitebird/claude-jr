@@ -23,4 +23,7 @@ for i in $(seq 0 $((jobs - 1))); do
         >>"$out/run-$i.log" 2>&1 &
 done
 wait
+# Unresolved tasks whose reference fix fails here too can't be scored on this
+# machine: list them, so they aren't counted against the agent.
+$py bench/swe/run.py --recheck "$out" >>"$out/recheck.log" 2>&1
 touch bench/results/swe-finished

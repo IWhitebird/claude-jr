@@ -11,6 +11,7 @@
 # Run (PY = ~/.cache/claude-jr-evals/swe-venv/bin/python):
 #   $PY bench/swe/run.py --dry-run                       # 1 task against bench/mock.py, costs nothing
 #   $PY bench/swe/run.py --gold --n 1                    # score the reference fix: must say "resolved"
+#   $PY bench/swe/run.py --recheck DIR                   # after a run: which failures aren't the agent's
 #   $PY bench/swe/run.py --n 5 --budget 5                # a pilot
 #   $PY bench/swe/run.py --n 50 --budget 60 --model claude-sonnet-5-5
 #   $PY bench/swe/run.py --out bench/results/swe-...     # continue a run that stopped
@@ -154,6 +155,8 @@ def main():
     ap.add_argument("--keep-images", action="store_true")
     ap.add_argument("--no-eval", action="store_true")
     ap.add_argument("--gold", action="store_true", help="score the reference fix instead of running the agent")
+    ap.add_argument("--recheck", metavar="DIR", help="score the reference fix for every unresolved task of a "
+                    "finished run: where that fails too, the task can't be scored on this machine")
     ap.add_argument("--dry-run", action="store_true", help="one task against bench/mock.py: tests the plumbing")
     ap.add_argument("--shard", default="", help="i/n: this process takes every n-th task, starting at i (run n of them at once)")
     ap.add_argument("--out")
@@ -163,7 +166,11 @@ def main():
         sys.exit("build the static binary first (see the top of this file)")
     from datasets import load_dataset
     tasks = {t["instance_id"]: t for t in load_dataset(DATASET, split="test")}
-    if args.ids:
+    if args.recheck:
+        rows = [json.loads(line) for line in open(os.path.join(args.recheck, "results.jsonl"))]
+        ids = [r["instance_id"] for r in rows if r["resolved"] is False]
+        args.gold, args.out, args.shard = True, os.path.join(args.recheck, "reference-check"), ""
+    elif args.ids:
         ids = args.ids.split(",")
     else:
         # A fixed shuffle, so a bigger --n continues the same list.
@@ -263,6 +270,10 @@ def main():
                "cost_usd": round(spent, 2), "cost_per_task": round(spent / len(done), 3) if done else None}
     json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=2)
     print(json.dumps(summary))
+    if args.recheck:
+        broken = sorted(i for i, r in done.items() if r["resolved"] is not True)
+        json.dump(broken, open(os.path.join(args.recheck, "not_scorable.json"), "w"), indent=2)
+        print(f"{len(broken)} of {len(done)} unresolved tasks fail with the reference fix too: {broken}")
 
 
 if __name__ == "__main__":
