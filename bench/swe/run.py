@@ -25,9 +25,16 @@ BINARY = os.path.join(ROOT, "target/x86_64-unknown-linux-musl/release/claudejr")
 DATASET = "SWE-bench/SWE-bench_Verified"
 
 PROMPT = """You are in the repository {repo} at /testbed. Fix the issue below by changing the \
-source code. Don't change or add tests: hidden tests will check the fix. Look at the relevant code \
-first, make the smallest change that fixes the issue properly, and check it by running the code or \
-the existing tests where that is quick. Stop when the fix is in place.
+source code. Hidden tests will check the fix, so don't change or add tests.
+
+Work like this:
+1. Reproduce the problem first, with a short script or an existing test. If the issue includes \
+an example, run that example.
+2. Find every place the behaviour comes from (other classes, backends, layers), not only the \
+first one that shows the symptom, and fix the issue completely. Don't make unrelated changes.
+3. Run your reproduction again, then the existing tests for the code you changed. If a test \
+fails, work out whether your change caused it. A failing test you can't edit is still a signal: \
+don't dismiss it as outdated unless you can say exactly why the new behaviour is right.
 
 <issue>
 {issue}
