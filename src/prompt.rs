@@ -230,7 +230,10 @@ mod tests {
     fn the_system_prompt_describes_the_environment() {
         crate::tools::test_home();
         let s = system();
-        assert!(s.starts_with(BASE));
+        // The search tool named is one that is installed here.
+        let search = if on_path("rg") { "(rg, find, ls)" } else { "(grep -rn, find, ls)" };
+        assert!(s.starts_with(&BASE.replace("(rg, find, ls)", search)));
+        assert!(BASE.contains("(rg, find, ls)"));
         let cwd = std::env::current_dir().unwrap();
         assert!(s.contains(&format!(
             "<env>\nWorking directory: {}\nPlatform: {}\nDate: {}\n",
