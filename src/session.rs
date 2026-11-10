@@ -165,13 +165,13 @@ impl Session {
         if end <= self.saved {
             return;
         }
-        let mut buf = Vec::new();
+        // Written one message at a time: a copy of everything unsaved would
+        // double the memory a long turn needs.
         for m in &messages[self.saved..end] {
-            buf.extend_from_slice(m.json.get().as_bytes());
-            buf.push(b'\n');
-        }
-        if self.append(system, &buf) {
-            self.saved = end;
+            if !(self.append(system, m.json.get().as_bytes()) && self.append(system, b"\n")) {
+                break;
+            }
+            self.saved += 1;
         }
     }
 
