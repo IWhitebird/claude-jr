@@ -5,23 +5,46 @@
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
-  A small coding agent for the terminal, in one 3 MB binary.<br>
-  2 MB of RAM when idle. A whole session fits in a 16 MB container on 0.05 CPU.
+  A coding agent for the terminal in one 3 MB binary.<br>
+  It does what the big ones do, at a hundredth of the size.
 </p>
+
+<p align="center">
+  <a href="https://github.com/IWhitebird/claude-jr/actions/workflows/ci.yml"><img src="https://github.com/IWhitebird/claude-jr/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
+  <img src="https://img.shields.io/badge/platform-Linux-lightgrey" alt="Linux">
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center"><b>3.2 MB</b><br>binary, no runtime</td>
+    <td align="center"><b>2 MB</b><br>memory when idle</td>
+    <td align="center"><b>5 ms</b><br>to start</td>
+    <td align="center"><b>88–90%</b><br>SWE-bench Verified<br>(first sample)</td>
+  </tr>
+</table>
 
 ---
 
 claude-jr talks to Claude, reads and edits your files, and runs commands,
-asking before anything changes. It has what you'd expect from a coding agent
-(images, subagents, background jobs, rewind, compaction, memory, skills, MCP,
-web search, an auto-approve mode, a sandbox) without a runtime: no Node, no
-Python, no async framework.
+asking before anything changes. It is written in Rust with no async runtime
+and a handful of dependencies, so there is no Node or Python to install and
+nothing running in the background. Claude Code needs 135 MB of memory to sit
+idle; claude-jr needs 2, and a whole working session fits in a 16 MB
+container on a twentieth of a CPU core.
+
+```sh
+git clone https://github.com/IWhitebird/claude-jr && cd claude-jr
+cargo install --path .     # installs the command: claudejr
+claudejr                   # asks for your Anthropic API key the first time
+```
 
 ```
 > add a --verbose flag to the cli
 
-● Read(src/cli.rs)
-  ⎿ Read 48 lines
+● Bash(grep -n "struct Args" -A12 src/cli.rs)
+  ⎿ 9:pub struct Args {
+    … +11 lines
 
 ● Edit(src/cli.rs)
     13 + /// Print debug output
@@ -34,6 +57,15 @@ Python, no async framework.
 
 ● Added `--verbose` to `Args`. The build passes.
 ```
+
+What's in it:
+
+- **Tools:** read, write, edit, bash, background jobs, a todo list, questions to you, web search and fetch.
+- **Subagents** that work in parallel, **skills** from `.claude/skills`, and **MCP** servers (local and remote).
+- **Five permission modes**, from asking about everything to an auto mode where a small model reviews each command, plus a **sandbox** that only lets it write inside the project.
+- **Sessions** that are saved as they go: continue, resume by name, rewind (which also undoes file changes), compact.
+- **Images** by dragging a file in or pasting a screenshot, and **memory** that carries notes between sessions.
+- **For scripts:** `-p` mode with JSON output and a spending limit.
 
 ## Numbers
 
