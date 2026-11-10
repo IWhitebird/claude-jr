@@ -22,9 +22,9 @@ name=claudejr-$os-$arch
 
 fetch() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$1" -o "$2"
+        curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$2" "$1"
+        wget -q --tries=3 --timeout=30 -O "$2" "$1"
     else
         echo "curl or wget is needed" >&2; exit 1
     fi
