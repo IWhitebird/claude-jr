@@ -200,9 +200,36 @@ impl std::io::Read for Encoder {
     }
 }
 
+/// What ctrl+v found in the clipboard.
+pub enum Clip {
+    /// An image, saved to this file.
+    Image(PathBuf),
+    Text(String),
+}
+
+/// The clipboard's image if it holds one, otherwise its text.
+pub fn clipboard() -> Result<Clip, String> {
+    if let Ok(path) = from_clipboard() {
+        return Ok(Clip::Image(path));
+    }
+    let tries: [(&str, &[&str]); 3] =
+        [("wl-paste", &["--no-newline"]), ("xclip", &["-selection", "clipboard", "-o"]), ("xsel", &["-b", "-o"])];
+    for (cmd, args) in tries {
+        let Ok(out) = std::process::Command::new(cmd).args(args).stderr(std::process::Stdio::null()).output() else {
+            continue;
+        };
+        if let (true, Ok(text)) = (out.status.success(), String::from_utf8(out.stdout))
+            && !text.trim().is_empty()
+        {
+            return Ok(Clip::Text(text));
+        }
+    }
+    Err("Nothing to paste: the clipboard is empty, or wl-paste / xclip isn't installed".into())
+}
+
 /// Saves an image from the clipboard to a file and returns its path.
 /// Uses wl-paste (Wayland) or xclip (X11).
-pub fn from_clipboard() -> Result<PathBuf, String> {
+fn from_clipboard() -> Result<PathBuf, String> {
     let tries: [(&str, &[&str]); 2] =
         [("wl-paste", &["--type", "image/png"]), ("xclip", &["-selection", "clipboard", "-t", "image/png", "-o"])];
     for (cmd, args) in tries {

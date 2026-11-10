@@ -8,6 +8,7 @@
 mod history;
 mod input;
 mod md;
+mod paste;
 mod stats;
 mod table;
 mod term;
@@ -300,6 +301,8 @@ struct App {
     prompt_since: Instant,
     /// Messages typed while the agent was busy (or before a key), sent in order.
     queued: VecDeque<String>,
+    /// Big pastes, shown in the input as short labels.
+    pastes: paste::Pastes,
     cost: f64,
     context: u64,
     /// The session's name, set with /rename.
@@ -337,6 +340,7 @@ impl App {
             menu_at: 0,
             prompt_since: Instant::now(),
             queued: VecDeque::new(),
+            pastes: paste::Pastes::default(),
             cost: 0.0,
             context: 0,
             name: None,
@@ -548,7 +552,7 @@ impl App {
             Msg::Agent(e) => self.on_agent(e),
             Msg::Term(TermEvent::Key(k)) => self.on_key(k),
             Msg::Term(TermEvent::Paste(s)) if !matches!(self.prompts.front(), Some(Prompt::Approve { .. })) => {
-                self.input.insert(&s.replace("\r\n", "\n").replace('\r', "\n"));
+                self.paste(&s);
             }
             Msg::Term(TermEvent::Resize(c, r)) => {
                 (self.cols, self.rows) = (c as usize, r as usize);
@@ -823,9 +827,12 @@ impl App {
             KeyCode::Char('u') if ctrl => self.input.kill_to_start(),
             KeyCode::Char('k') if ctrl => self.input.kill_to_end(),
             KeyCode::Char('w') if ctrl => self.input.delete_word(),
-            KeyCode::Char('v') if ctrl => match crate::images::from_clipboard() {
-                Ok(path) => self.input.insert(&format!("{} ", path.display())),
-                Err(e) => self.note(&format!("Can't paste an image: {e}."), DIM),
+            // The terminal's own paste arrives as a paste event; ctrl+v reads
+            // the clipboard itself, so it can take an image as well as text.
+            KeyCode::Char('v') if ctrl => match crate::images::clipboard() {
+                Ok(crate::images::Clip::Image(path)) => self.input.insert(&format!("{} ", path.display())),
+                Ok(crate::images::Clip::Text(text)) => self.paste(&text),
+                Err(e) => self.note(&format!("{e}."), DIM),
             },
             KeyCode::Backspace if ctrl || alt => self.input.delete_word(),
             KeyCode::Char(c) if !ctrl => {
@@ -987,13 +994,25 @@ impl App {
 
     // ---- input ----------------------------------------------------------
 
+    /// Puts pasted text into the input. A big paste goes in as a short label
+    /// that is swapped for the text when the message is sent.
+    fn paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if self.prompts.is_empty() && paste::is_big(&text) {
+            let label = self.pastes.add(text);
+            self.input.insert(&label);
+        } else {
+            self.input.insert(&text);
+        }
+    }
+
     fn submit(&mut self, text: String) {
         let trimmed = text.trim();
         if let Some(cmd) = trimmed.strip_prefix('/').filter(|c| !starts_with_path(c)) {
             return self.command(cmd);
         }
         if let Some(note) = trimmed.strip_prefix('#').map(str::trim).filter(|n| !n.is_empty()) {
-            return self.remember(note);
+            return self.remember(&self.pastes.expand(note));
         }
         let shell = trimmed.strip_prefix('!').map(|c| c.trim().to_string());
         if self.work.is_some() {
@@ -1012,9 +1031,10 @@ impl App {
         self.add(Block::User(text::clean(&text)));
         self.stream.block_start = true;
         self.work = Some(Work::new());
+        // What is shown keeps the labels of big pastes; what is sent has the text.
         let cmd = match shell {
-            Some(shell) => Command::Shell(shell),
-            None => Command::Send(text),
+            Some(shell) => Command::Shell(self.pastes.expand(&shell)),
+            None => Command::Send(self.pastes.expand(&text)),
         };
         let _ = self.agent.commands.send(cmd);
     }

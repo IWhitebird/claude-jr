@@ -85,8 +85,9 @@ impl Input {
         self.cur = self.next();
     }
 
+    /// Deletes the character before the cursor, or a whole paste label.
     pub fn backspace(&mut self) {
-        let p = self.prev();
+        let p = super::paste::label_start(&self.buf[..self.cur]).unwrap_or_else(|| self.prev());
         self.buf.drain(p..self.cur);
         self.cur = p;
     }
