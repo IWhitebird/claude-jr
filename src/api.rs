@@ -16,8 +16,11 @@ const BETA_COMPACT: &str = "compact-2026-01-12";
 const BETA_MCP: &str = "mcp-client-2025-11-20";
 const MAX_ATTEMPTS: u32 = 5;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-/// One blocking read gives up after this, so the cancel flag is checked often.
-const READ_TIMEOUT: Duration = Duration::from_secs(3);
+/// One blocking read gives up after this. It also covers the wait for the
+/// reply to begin, which the library can't pick up again after a timeout (the
+/// request would be sent, and billed, a second time), so it has to be longer
+/// than the model ever takes to start answering.
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// A stream with no bytes at all (not even pings) for this long is dead.
 const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
@@ -267,10 +270,14 @@ pub struct Client {
 
 impl Client {
     pub fn new(key: String, base: Option<String>) -> Self {
+        Client::with_read_timeout(key, base, READ_TIMEOUT)
+    }
+
+    fn with_read_timeout(key: String, base: Option<String>, read: Duration) -> Self {
         let http = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(CONNECT_TIMEOUT))
-            .timeout_per_read(Some(READ_TIMEOUT))
+            .timeout_per_read(Some(read))
             .build()
             .into();
         let base = base.unwrap_or_else(|| "https://api.anthropic.com".into());
@@ -706,10 +713,51 @@ data: {"type":"message_stop"}
         (base, h)
     }
 
+    /// The model can take a while to begin its reply. Giving up on that wait
+    /// re-sends the request, which is slow and is billed again.
+    #[test]
+    fn a_slow_start_is_waited_for_not_sent_again() {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = requests.clone();
+        std::thread::spawn(move || {
+            for mut s in l.incoming().flatten() {
+                seen.fetch_add(1, Ordering::Relaxed);
+                let mut buf = [0u8; 8192];
+                let _ = s.read(&mut buf);
+                sleep(Duration::from_millis(3500));
+                let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
+                    data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+                    data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"late\"}}\n\n\
+                    data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+                    data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n\
+                    data: {\"type\":\"message_stop\"}\n\n";
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n";
+                let _ = s.write_all(format!("{head}content-length: {}\r\n\r\n{body}", body.len()).as_bytes());
+            }
+        });
+        let client = Client::new("k".into(), Some(base));
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new("claude-opus-5-5", None, "", &tools);
+        let mut text = String::new();
+        let reply = client
+            .stream(&req, &[] as &[&str], &AtomicBool::new(false), |c| {
+                if let Chunk::Text(t) = c {
+                    text.push_str(t);
+                }
+            })
+            .expect("the reply arrives");
+        assert_eq!(text, "late");
+        assert_eq!(reply.stop_reason, "end_turn");
+        assert_eq!(requests.load(Ordering::Relaxed), 1, "the request was sent once");
+    }
+
     #[test]
     fn cancel_works_while_the_stream_stalls() {
         let (base, server) = stalled_server();
-        let client = Client::new("k".into(), Some(base));
+        let client = Client::with_read_timeout("k".into(), Some(base), Duration::from_secs(1));
         let tools = RawValue::from_string("[]".into()).unwrap();
         let req = Request::new("claude-opus-5-5", None, "", &tools);
         let cancel = AtomicBool::new(false);
@@ -800,7 +848,7 @@ data: {"type":"message_stop"}
             );
             s.write_all(b"0\r\n\r\n").unwrap();
         });
-        let client = Client::new("k".into(), Some(base));
+        let client = Client::with_read_timeout("k".into(), Some(base), Duration::from_secs(1));
         let tools = RawValue::from_string("[]".into()).unwrap();
         let req = Request::new("claude-opus-5-5", None, "", &tools);
         let mut text = String::new();
