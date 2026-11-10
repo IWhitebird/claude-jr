@@ -116,6 +116,10 @@ claudejr -p "fix the tests" -y --output-format json --max-cost 2   # for scripts
 | esc | stop the current turn |
 | ctrl-c | clear input; twice to quit |
 | up / down | history |
+| ctrl-v | paste: an image if the clipboard has one, otherwise its text |
+
+A long paste shows in the input as a short label, such as `[Pasted #1: 40 lines, 3104 chars]`;
+the whole text is sent. Backspace removes the label in one go.
 
 Type `/` to see every command; keep typing to narrow the list, up/down to pick,
 tab to complete, enter to run.

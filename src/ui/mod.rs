@@ -67,6 +67,7 @@ const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 #note           save a note to ./AGENTS.md (used from now on)
 !command        run a shell command yourself; the agent sees the output
 images          drag a file in (its path is attached), or ctrl+v a screenshot
+paste           ctrl+v pastes text too; a long paste shows as a short [Pasted #N] label
 
 type / to list commands: up/down pick, tab completes, enter runs
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
