@@ -1,0 +1,51 @@
+name: release
+# Pushing a tag like v0.1.0 builds one plain binary per platform and publishes
+# them with a `version` file and checksums. install.sh and `claudejr --update`
+# download from the latest release.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, name: claudejr-linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: claudejr-linux-aarch64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: claudejr-macos-aarch64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: claudejr-macos-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/claudejr ${{ matrix.name }}
+      # The binary must run and carry the tag's version (the Intel Mac build can't run on this runner).
+      - if: matrix.target != 'x86_64-apple-darwin'
+        run: test "$(./${{ matrix.name }} --version)" = "claude-jr ${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: |
+          echo "${GITHUB_REF_NAME#v}" > version
+          sha256sum claudejr-* > checksums.txt
+          cat checksums.txt
+          gh release create "$GITHUB_REF_NAME" claudejr-* version checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --title "claude-jr ${GITHUB_REF_NAME#v}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
