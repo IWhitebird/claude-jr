@@ -597,20 +597,39 @@ impl App {
             Event::SubEnd { id } => self.subagents.retain(|s| s.0 != id),
             Event::RewindPoints(points) if points.is_empty() => self.note("Nothing to rewind to yet.", DIM),
             Event::RewindPoints(points) => self.prompts.push_front(Prompt::Rewind(points)),
-            Event::Resumed { name, messages, recap } => {
+            Event::Resumed { name, messages } => {
                 let which = name.as_deref().map_or("the conversation".to_string(), |n| format!("\"{n}\""));
                 self.note(&format!("Resumed {which} ({messages} messages)."), DIM);
-                if let Some((prompt, reply)) = recap {
-                    self.gap();
-                    self.add(Block::User(text::clean(&prompt)));
-                    let short: Vec<&str> = reply.lines().filter(|l| !l.trim().is_empty()).take(6).collect();
-                    self.stream.block_start = true;
-                    for line in short {
-                        self.commit_text_line(line);
-                    }
-                    self.stream.md.reset();
-                }
                 (self.name, self.context) = (name, 0);
+            }
+            // The whole conversation again, as it looked when it happened.
+            Event::Replay(shown) => {
+                for piece in shown {
+                    match piece {
+                        agent::Shown::User(text) => {
+                            self.gap();
+                            self.add(Block::User(text::clean(&text)));
+                            self.stream.block_start = true;
+                        }
+                        agent::Shown::Text(text) => {
+                            self.stream.block_start = true;
+                            for line in text.lines() {
+                                self.commit_text_line(line);
+                            }
+                            self.flush();
+                            self.stream.md.reset();
+                            self.stream.block_start = true;
+                        }
+                        agent::Shown::Tool(label) => {
+                            self.gap();
+                            self.add(Block::Tool { label, diff: None });
+                        }
+                        agent::Shown::Result { ok, summary } => {
+                            self.add(Block::Result { ok, summary });
+                            self.stream.block_start = true;
+                        }
+                    }
+                }
             }
             Event::Rewound { prompt, files } => {
                 let restored = match files {

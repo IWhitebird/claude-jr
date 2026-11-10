@@ -130,7 +130,7 @@ fn print_events(events: Receiver<Event>, report: &mut Report, options: &Options,
                 }
             }
             Event::Notice(msg) => eprintln!("{}", label(&msg)),
-            Event::RewindPoints(_) | Event::Rewound { .. } | Event::Resumed { .. } => {}
+            Event::RewindPoints(_) | Event::Rewound { .. } | Event::Resumed { .. } | Event::Replay(_) => {}
             Event::SubStart { task, .. } => eprintln!("● agent: {}", label(&task)),
             Event::SubStep { .. } | Event::SubEnd { .. } => {}
             // Nobody is there to answer; the agent was told so (interactive: false).

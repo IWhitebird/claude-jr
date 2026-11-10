@@ -109,13 +109,14 @@ pub enum Event {
         prompt: String,
         files: usize,
     },
-    /// Switched to a saved conversation. `recap`: your last message and the
-    /// reply to it.
+    /// Switched to a saved conversation.
     Resumed {
         name: Option<String>,
         messages: usize,
-        recap: Option<(String, String)>,
     },
+    /// A saved conversation, to be shown from the start: sent after it is
+    /// resumed, at startup or with /resume.
+    Replay(Vec<Shown>),
     Text(String),
     /// Progress notes the model writes between tool calls.
     Thinking(String),
@@ -159,6 +160,15 @@ pub enum Event {
 }
 
 pub type Emit = Arc<dyn Fn(Event) + Send + Sync>;
+
+/// One piece of a saved conversation, as it was shown when it happened.
+#[derive(Debug, PartialEq)]
+pub enum Shown {
+    User(String),
+    Text(String),
+    Tool(String),
+    Result { ok: bool, summary: String },
+}
 
 pub struct Handle {
     pub commands: Sender<Command>,
@@ -257,6 +267,9 @@ impl Agent {
             mcp: agent.tools.mcp.describe(),
             has_key: agent.core.client.has_key(),
         });
+        if !agent.messages.is_empty() {
+            (agent.core.emit)(Event::Replay(agent.transcript()));
+        }
         agent
     }
 
@@ -461,18 +474,66 @@ impl Agent {
         (self.session, self.system, self.messages, self.told_plan) = (session, system, messages, false);
         self.close_open_calls("Not run: the session ended.");
 
-        let prompt = self.messages.iter().rev().find_map(Msg::prompt);
-        let reply = self
-            .messages
-            .iter()
-            .rev()
-            .find(|m| !m.user)
-            .map(|m| m.content().iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"));
-        (self.core.emit)(Event::Resumed {
-            name: self.session.name.clone(),
-            messages: self.messages.len(),
-            recap: prompt.zip(reply),
-        });
+        (self.core.emit)(Event::Resumed { name: self.session.name.clone(), messages: self.messages.len() });
+        (self.core.emit)(Event::Replay(self.transcript()));
+    }
+
+    /// The conversation so far as the UI would have shown it: what the user
+    /// said, what the model answered, each tool call and its outcome.
+    fn transcript(&self) -> Vec<Shown> {
+        let mut out = Vec::new();
+        // Calls waiting for their result, by id: (tool name, label). A reply
+        // can hold several calls and their results come in the next message,
+        // so each call is shown when its result is, the two together.
+        let mut calls: Vec<(String, String, String)> = Vec::new();
+        for m in &self.messages {
+            if let Some(prompt) = m.prompt() {
+                out.extend(calls.drain(..).map(|(_, _, label)| Shown::Tool(label)));
+                out.push(Shown::User(prompt));
+                continue;
+            }
+            for b in m.content() {
+                match b["type"].as_str().unwrap_or("") {
+                    "text" if !m.user => {
+                        if let Some(t) = b["text"].as_str().filter(|t| !t.trim().is_empty()) {
+                            out.push(Shown::Text(t.to_string()));
+                        }
+                    }
+                    "tool_use" => {
+                        let name = b["name"].as_str().unwrap_or("");
+                        let id = b["id"].as_str().unwrap_or("").to_string();
+                        calls.push((id, name.to_string(), self.tools.label(name, &b["input"])));
+                    }
+                    "tool_result" => {
+                        let text = match &b["content"] {
+                            Value::String(s) => s.clone(),
+                            Value::Array(parts) => {
+                                parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n")
+                            }
+                            _ => String::new(),
+                        };
+                        let result = if b["is_error"] == true { Err(text) } else { Ok(text) };
+                        let id = b["tool_use_id"].as_str().unwrap_or("");
+                        let mut name = String::new();
+                        if let Some(at) = calls.iter().position(|(call, _, _)| call == id) {
+                            let (_, tool, label) = calls.remove(at);
+                            out.push(Shown::Tool(label));
+                            name = tool;
+                        }
+                        out.push(Shown::Result { ok: result.is_ok(), summary: tools::summary(&name, &result) });
+                    }
+                    _ => {
+                        if let Some(label) = turn::server_label(&b) {
+                            out.push(Shown::Tool(label));
+                        } else if let Some(result) = turn::server_result(&b) {
+                            out.push(Shown::Result { ok: result.is_ok(), summary: tools::summary("server", &result) });
+                        }
+                    }
+                }
+            }
+        }
+        out.extend(calls.into_iter().map(|(_, _, label)| Shown::Tool(label)));
+        out
     }
 
     fn shell(&mut self, cmd: &str) {
@@ -830,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_switches_conversation_and_recaps_it() {
+    fn resume_switches_conversation_and_replays_it() {
         let mut rig = Rig::new("agent-resume", Mode::Default, vec![ok(text_reply("pong"))]);
         rig.run(vec![Command::Send("ping".into()), Command::Rename("unit-resume-me".into())]);
         assert_eq!(rig.agent.session.name.as_deref(), Some("unit-resume-me"));
@@ -840,14 +901,16 @@ mod tests {
         rig.run(vec![Command::Clear]);
         assert!(rig.agent.messages.is_empty());
         let events = rig.run(vec![Command::Resume(Pick::Named("unit-resume-me".into()))]);
-        let Some(Event::Resumed { name, messages, recap }) =
-            events.into_iter().find(|e| matches!(e, Event::Resumed { .. }))
-        else {
+        let Some(Event::Resumed { name, messages }) = events.iter().find(|e| matches!(e, Event::Resumed { .. })) else {
             panic!("no Resumed event");
         };
         assert_eq!(name.as_deref(), Some("unit-resume-me"));
-        assert_eq!(messages, 2);
-        assert_eq!(recap, Some(("ping".to_string(), "pong".to_string())));
+        assert_eq!(*messages, 2);
+        // The whole conversation is sent again to be shown.
+        let Some(Event::Replay(shown)) = events.iter().find(|e| matches!(e, Event::Replay(_))) else {
+            panic!("no Replay event");
+        };
+        assert_eq!(shown, &[Shown::User("ping".into()), Shown::Text("pong".into())]);
 
         let events = rig.run(vec![Command::Resume(Pick::Named("unit-never-saved".into()))]);
         assert_eq!(errors_of(&events), ["couldn't load that conversation"]);

@@ -796,6 +796,43 @@ fn the_key_prompt_takes_a_pasted_key() {
 }
 
 #[test]
+fn continuing_shows_the_whole_earlier_conversation() {
+    let world = World::new("replay", &[("MOCK_ROUNDS", "1")]);
+    let mut app = world.start(&["-y"]);
+    app.turn("first question");
+    app.turn("second question");
+    app.exit();
+
+    // A new start with -c: everything from before is on screen again, in order.
+    let mut app = world.launch(&["-c", "-y"], Some("mock"));
+    app.expect_all(&[
+        "Resumed the last session",
+        "> first question",
+        "Write(demo.txt)",
+        "Wrote 3 lines",
+        "Edit(demo.txt)",
+        "Edited ",
+        "Done. Here's what happened:",
+        "> second question",
+        "Done. Here's what happened:",
+        "ask anything",
+    ]);
+    let screen = app.all();
+    assert_eq!(screen.matches("> first question").count(), 1, "shown once");
+    assert!(screen.find("> first question") < screen.find("> second question"));
+    assert!(screen.contains("│ demo.txt │"), "the reply's table is drawn: {screen}");
+
+    // /resume replays the picked conversation too.
+    app.send("/clear\r");
+    app.expect("/help for commands");
+    app.send("/resume\r");
+    app.expect("Resume a conversation");
+    app.send("1");
+    app.expect_all(&["> first question", "> second question", "ask anything"]);
+    app.exit();
+}
+
+#[test]
 fn rewind_works_before_any_file_was_changed() {
     let world = World::new("rewind-nofiles", &[("MOCK_ROUNDS", "0")]);
     let mut app = world.start(&["-y"]);

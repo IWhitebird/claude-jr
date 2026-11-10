@@ -275,7 +275,7 @@ fn clean(s: &str) -> String {
 }
 
 /// The transcript line for a server-side call: the tool and its arguments.
-fn server_label(b: &Value) -> Option<String> {
+pub(super) fn server_label(b: &Value) -> Option<String> {
     let name = b["name"].as_str().unwrap_or("");
     let label = match b["type"].as_str()? {
         "server_tool_use" => match name {
@@ -295,7 +295,7 @@ fn server_label(b: &Value) -> Option<String> {
 }
 
 /// The outcome of a server-side call, if the block is a result.
-fn server_result(b: &Value) -> Option<Result<String, String>> {
+pub(super) fn server_result(b: &Value) -> Option<Result<String, String>> {
     let kind = b["type"].as_str()?;
     let code = |c: &Value| clean(c["error_code"].as_str().unwrap_or("error"));
     Some(match kind {
