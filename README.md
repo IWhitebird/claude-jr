@@ -67,6 +67,21 @@ More of claude-jr's own numbers (`bench/`):
 | a whole session (20 commands) in a container, agent plus the commands it runs | finishes in 6 MB of RAM (Docker's minimum) at 0.1 CPU, and at 0.01 CPU with 16 MB |
 | the binary, compressed (xz) | 1.3 MB |
 
+## SWE-bench Verified
+
+A first run, on a fixed random sample of [SWE-bench Verified](https://www.swebench.com/) tasks, scored
+with the official harness ([`bench/swe/run.py`](bench/swe/run.py), results in `bench/swe/results/`):
+
+| model | tasks | resolved | cost | median time per task |
+|---|---|---|---|---|
+| claude-sonnet-5-5 | 100 | 88 (88%) | $5.06 | 14 s |
+| claude-opus-5-5 | 50 (the first 50 of the same list) | 45 (90%) | $5.33 | 27 s |
+
+On those same 50 tasks Sonnet resolved 44. With samples this small the true rates could be anywhere
+from about 80% to 95%, so the two models can't be told apart here, and this is not a leaderboard
+entry. The tasks are public and old enough that the models may have seen them. Each task ran once,
+in the task's own container, with no retries and no hints.
+
 ## Install
 
 ```sh
