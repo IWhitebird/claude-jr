@@ -14,6 +14,7 @@
 #   $PY bench/swe/run.py --n 5 --budget 5                # a pilot
 #   $PY bench/swe/run.py --n 50 --budget 60 --model claude-sonnet-5-5
 #   $PY bench/swe/run.py --out bench/results/swe-...     # continue a run that stopped
+#   for i in 0 1 2; do $PY bench/swe/run.py --n 500 --shard $i/3 --out DIR & done   # three at once
 #
 # The key comes from ANTHROPIC_API_KEY or ~/.config/claude-jr/credentials.
 
@@ -147,6 +148,7 @@ def main():
     ap.add_argument("--no-eval", action="store_true")
     ap.add_argument("--gold", action="store_true", help="score the reference fix instead of running the agent")
     ap.add_argument("--dry-run", action="store_true", help="one task against bench/mock.py: tests the plumbing")
+    ap.add_argument("--shard", default="", help="i/n: this process takes every n-th task, starting at i (run n of them at once)")
     ap.add_argument("--out")
     args = ap.parse_args()
 
@@ -161,6 +163,9 @@ def main():
         ids = sorted(tasks)
         random.Random(args.seed).shuffle(ids)
         ids = ids[:1 if args.dry_run else args.n]
+    if args.shard:
+        i, n = map(int, args.shard.split("/"))
+        ids = ids[i::n]
 
     env = dict(os.environ, CLAUDE_JR_MODEL=args.model)
     mock = None
@@ -191,6 +196,9 @@ def main():
         for i, iid in enumerate(ids, 1):
             if iid in done:
                 continue
+            # Other shards write to the same file: the budget is for all of them.
+            if os.path.exists(results_path):
+                spent = sum(json.loads(line).get("cost_usd", 0) for line in open(results_path))
             if spent >= args.budget:
                 print(f"budget reached (${spent:.2f}); stopping")
                 break
@@ -238,6 +246,9 @@ def main():
         if mock:
             mock.kill()
 
+    # With shards, other processes add to the same file: count everything in it.
+    done = {r["instance_id"]: r for r in map(json.loads, open(results_path))} if os.path.exists(results_path) else done
+    spent = sum(r.get("cost_usd", 0) for r in done.values())
     scored = [r for r in done.values() if r["resolved"] is not None]
     solved = sum(1 for r in scored if r["resolved"])
     summary = {"model": args.model, "tasks_run": len(done), "scored": len(scored), "resolved": solved,
