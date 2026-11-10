@@ -111,6 +111,7 @@ struct World {
 impl World {
     /// `name` must be unique in this file. `mock_env` is MOCK_SCENARIO and friends.
     fn new(name: &str, mock_env: &[(&str, &str)]) -> World {
+        sweep_old_runs("cjr-ui-");
         let root = std::env::temp_dir().join(format!("cjr-ui-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for dir in ["bin", "cfg/claude-jr", "data", "proj"] {
@@ -988,6 +989,44 @@ fn failed_saves_are_reported() {
 }
 
 #[test]
+fn a_big_paste_shows_as_a_label_and_is_sent_in_full() {
+    let world = World::new("bigpaste", &[("MOCK_ROUNDS", "0")]);
+    // A clipboard tool with text only: asking it for an image fails.
+    let tool = world.root.join("bin/wl-paste");
+    let script = "#!/bin/sh\ncase \"$*\" in *image*) exit 1;; esac\nprintf 'from the clipboard'\n";
+    std::fs::write(&tool, script).unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut app = world.start(&["-y"]);
+
+    // Ten pasted lines appear as one short label, not as ten rows.
+    let lines: Vec<String> = (1..=10).map(|i| format!("pasted-line-{i}")).collect();
+    app.send("explain ");
+    app.send(&format!("\x1b[200~{}\x1b[201~", lines.join("\r")));
+    app.expect("> explain [Pasted #1: 10 lines, 140 chars]");
+    assert!(!app.all().contains("pasted-line-3"), "the pasted text itself is not drawn");
+    // Backspace removes the whole label; pasting again gives the next one.
+    app.send(BACKSPACE);
+    app.expect("> explain ");
+    app.send(&format!("\x1b[200~{}\x1b[201~", lines.join("\n")));
+    app.expect("[Pasted #2: 10 lines, 140 chars]");
+    app.send("\r");
+    app.expect_all(&["> explain [Pasted #2: 10 lines, 140 chars]", "Done. Here's what happened:", "ask anything"]);
+    // The API got the text, not the label.
+    world.sent("pasted-line-1\\npasted-line-2");
+    world.sent("pasted-line-10");
+    assert!(!world.log().contains("[Pasted #"), "{}", world.log());
+
+    // A short paste goes in as it is, and ctrl+v pastes text when there is no image.
+    app.send("\x1b[200~short paste\x1b[201~ and ");
+    app.send(CTRL_V);
+    app.expect("> short paste and from the clipboard");
+    app.send("\r");
+    app.expect_all(&["Done. Here's what happened:", "ask anything"]);
+    world.sent("short paste and from the clipboard");
+    app.exit();
+}
+
+#[test]
 fn images_come_from_the_clipboard_or_a_dragged_file() {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     let world = World::new("images", &[("MOCK_ROUNDS", "0")]);
@@ -1220,7 +1259,7 @@ fn editing_keys_history_paste_and_ctrl_c() {
 
     // No clipboard here (and no display to find one on).
     app.send(CTRL_V);
-    app.expect("Can't paste an image: no image in the clipboard");
+    app.expect("Nothing to paste: the clipboard is empty, or wl-paste / xclip isn't installed.");
 
     // Ctrl-c clears what's typed, then asks, then quits.
     app.send("never sent");
@@ -1349,4 +1388,19 @@ fn sighup_and_sigint_exit_cleanly() {
     let app = world.start(&[]);
     app.signal("INT");
     app.exited(128 + 2);
+}
+
+/// Removes the folders that earlier runs of these tests left behind: their
+/// names start with `prefix` and the id of a process that is gone.
+fn sweep_old_runs(prefix: &str) {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let pid = name.strip_prefix(prefix).and_then(|n| n.split('-').next().map(str::to_string));
+            if pid.is_some_and(|pid| !Path::new("/proc").join(pid).exists()) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
 }

@@ -6,7 +6,7 @@
 
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -61,6 +61,7 @@ impl Env {
 
     fn with(mock_env: &[(&str, &str)]) -> Env {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        sweep_old_runs("cjr-cli-");
         let root = std::env::temp_dir().join(format!("cjr-cli-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (home, config, data, proj) = (root.join("home"), root.join("config"), root.join("data"), root.join("proj"));
@@ -671,4 +672,19 @@ fn sandbox_error_paths() {
     cmd.env("PATH", e.root.join("empty"));
     assert!(exec(cmd).err.contains("needs bubblewrap"));
     assert!(e.requests().is_empty());
+}
+
+/// Removes the folders that earlier runs of these tests left behind: their
+/// names start with `prefix` and the id of a process that is gone.
+fn sweep_old_runs(prefix: &str) {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let pid = name.strip_prefix(prefix).and_then(|n| n.split('-').next().map(str::to_string));
+            if pid.is_some_and(|pid| !Path::new("/proc").join(pid).exists()) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
 }

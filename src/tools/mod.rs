@@ -425,6 +425,18 @@ pub(crate) fn test_home() -> PathBuf {
 
 #[cfg(test)]
 pub(crate) fn test_dir(name: &str) -> PathBuf {
+    // Once per run, remove the folders that earlier runs left behind: the
+    // name ends with the process id, and that process is gone.
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let pid = name.strip_prefix("cjr-test-").and_then(|n| n.rsplit('-').next().map(str::to_string));
+            if pid.is_some_and(|pid| !Path::new("/proc").join(pid).exists()) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
     let d = std::env::temp_dir().join(format!("cjr-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
