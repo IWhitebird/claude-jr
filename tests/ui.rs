@@ -1152,7 +1152,7 @@ fn the_slash_menu_filters_picks_completes_and_runs() {
     app.expect_all(&["Loaded 1 skill.", "ask anything"]);
 
     app.send("/");
-    app.expect_all(&["› /help", "commands and keys", "13 more · up/down to pick · tab completes · enter runs"]);
+    app.expect_all(&["› /help", "commands and keys", "14 more · up/down to pick · tab completes · enter runs"]);
     app.send("re");
     app.expect("› /resume");
     assert!(!app.since().contains("more ·"), "three matches fit");

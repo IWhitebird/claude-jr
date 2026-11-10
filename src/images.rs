@@ -212,8 +212,13 @@ pub fn clipboard() -> Result<Clip, String> {
     if let Ok(path) = from_clipboard() {
         return Ok(Clip::Image(path));
     }
-    let tries: [(&str, &[&str]); 3] =
-        [("wl-paste", &["--no-newline"]), ("xclip", &["-selection", "clipboard", "-o"]), ("xsel", &["-b", "-o"])];
+    // Wayland, X11 (two tools), macOS.
+    let tries: [(&str, &[&str]); 4] = [
+        ("wl-paste", &["--no-newline"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+        ("xsel", &["-b", "-o"]),
+        ("pbpaste", &[]),
+    ];
     for (cmd, args) in tries {
         let Ok(out) = std::process::Command::new(cmd).args(args).stderr(std::process::Stdio::null()).output() else {
             continue;

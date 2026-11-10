@@ -10,6 +10,7 @@ mod session;
 mod signals;
 mod tools;
 mod ui;
+mod update;
 
 use agent::Mode;
 use session::{Pick, Session};
@@ -28,6 +29,7 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
       --output-format json   with -p: print one JSON object at the end (result, cost, tokens)
       --max-cost USD   with -p: stop once this many dollars have been spent
+      --update         replace this binary with the newest release
   -h, --help           show this help
   -V, --version        show the version
 
@@ -57,6 +59,7 @@ enum Cli {
     /// --help or --version: print this and exit successfully.
     Show(String),
     Sessions,
+    Update,
 }
 
 fn parse_args() -> Result<Cli, String> {
@@ -72,6 +75,7 @@ fn parse_args() -> Result<Cli, String> {
             "-c" | "--continue" => args.resume = Some(Pick::Latest),
             "-r" | "--resume" => args.resume = Some(Pick::Named(value()?)),
             "--sessions" => return Ok(Cli::Sessions),
+            "--update" => return Ok(Cli::Update),
             "--sandbox" => args.sandbox = true,
             "--output-format" => match value()?.as_str() {
                 "json" => args.json = true,
@@ -106,6 +110,10 @@ fn run() -> Result<ExitCode, String> {
         Cli::Run(args) => args,
         Cli::Show(text) => {
             println!("{text}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Update => {
+            println!("{}", update::run()?);
             return Ok(ExitCode::SUCCESS);
         }
         Cli::Sessions => {

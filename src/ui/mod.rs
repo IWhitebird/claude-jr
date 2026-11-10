@@ -62,6 +62,7 @@ const HELP: &str = "/clear, /new    start a new conversation on a clean screen
 /stats          memory and CPU used by claude-jr and what it started
 /settings       layout, default model, effort, mode, web tools, sandbox
 /login          add or change your API key; /logout removes it
+/update         replace claudejr with the newest release (also: claudejr --update)
 /cost           tokens and cost so far
 /exit           quit
 #note           save a note to ./AGENTS.md (used from now on)
@@ -95,6 +96,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("settings", "layout, default model, effort, mode, web tools, sandbox"),
     ("login", "add or change your API key"),
     ("logout", "remove your API key"),
+    ("update", "replace claudejr with the newest release"),
     ("exit", "quit"),
 ];
 /// How many of them are shown at once.
@@ -1133,6 +1135,10 @@ impl App {
                 let report = stats::report(self.started.elapsed(), &children);
                 self.note(&report, "");
             }
+            "update" => match crate::update::run() {
+                Ok(msg) => self.note(&msg, ""),
+                Err(e) => self.note(&format!("Update failed: {e}"), RED),
+            },
             "cost" => {
                 let msg = format!("${:.4} so far · {} tokens in context", self.cost, self.context);
                 self.note(&msg, "");
