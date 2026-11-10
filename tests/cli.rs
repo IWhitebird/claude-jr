@@ -516,6 +516,10 @@ fn update_replaces_the_binary_with_a_newer_release() {
     let update = |base: &str| {
         let mut cmd = Command::new(&exe);
         cmd.arg("--update").env_clear().env("PATH", std::env::var("PATH").unwrap()).env("CLAUDE_JR_RELEASES", base);
+        // Coverage runs (bench/coverage.sh) collect the binary's profile through this.
+        if let Some(p) = std::env::var_os("LLVM_PROFILE_FILE") {
+            cmd.env("LLVM_PROFILE_FILE", p);
+        }
         exec(cmd)
     };
     let version = |exe: &Path| String::from_utf8(Command::new(exe).arg("--version").output().unwrap().stdout).unwrap();
