@@ -265,6 +265,63 @@ fn interactive_needs_a_terminal() {
 // ---- -p mode: the default scenario -----------------------------------------
 
 #[test]
+fn json_output_is_one_object_with_the_final_answer() {
+    let e = Env::new();
+    let o = e.run(&["-p", "do the demo", "-y", "--output-format", "json"]);
+    ok(&o);
+    // stdout is exactly one JSON object; progress and the reply as it comes are on stderr.
+    let r: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap_or_else(|e| panic!("{e}: {}", o.out));
+    assert_eq!(r["ok"], true);
+    assert_eq!(r["error"], serde_json::Value::Null);
+    assert_eq!(r["requests"], 3);
+    assert!(r["cost_usd"].as_f64().unwrap() > 0.0);
+    assert!(r.get("duration_ms").is_some() && r.get("output_tokens").is_some());
+    let result = r["result"].as_str().unwrap();
+    assert!(result.starts_with("Done. Here's what happened:") && result.contains("| file | change"), "{result}");
+    assert!(o.err.contains("● ") && o.err.contains("Done. Here's what happened:"), "{}", o.err);
+
+    // A failed run is still one JSON object, with the reason.
+    let closed = Env::new();
+    let mut cmd = closed.command(&["-p", "hi", "-y", "--output-format", "json"]);
+    cmd.env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9");
+    let o = exec(cmd);
+    assert_ne!(o.code, 0);
+    let r: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap_or_else(|e| panic!("{e}: {}", o.out));
+    assert_eq!(r["ok"], false);
+    assert!(r["error"].as_str().is_some_and(|e| !e.is_empty()), "{r}");
+
+    let o = e.run(&["-p", "x", "--output-format", "xml"]);
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("unknown output format: xml"), "{}", o.err);
+}
+
+#[test]
+fn max_cost_stops_the_run() {
+    let e = Env::new();
+    let report = e.root.join("report.json");
+    let mut cmd = e.command(&["-p", "do the demo", "-y", "--max-cost", "0.000001"]);
+    cmd.env("CLAUDE_JR_REPORT", &report);
+    let o = exec(cmd);
+    assert_eq!(o.code, 1, "{}", o.err);
+    assert!(o.err.contains("stopped: the cost limit of $0.00 was reached"), "{}", o.err);
+    let r: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(r["ok"], false);
+    assert!(r["error"].as_str().unwrap().starts_with("stopped: the cost limit"));
+    assert!(r["requests"].as_u64().unwrap() < 3, "it stopped before the end: {r}");
+
+    // A generous limit changes nothing.
+    let o = e.run(&["-p", "do the demo", "-y", "--max-cost", "$5"]);
+    ok(&o);
+    assert!(o.out.contains("Done. Here's what happened:"), "{}", o.out);
+
+    for bad in ["abc", "0", "-1"] {
+        let o = e.run(&["-p", "x", "--max-cost", bad]);
+        assert_eq!(o.code, 2, "{bad}");
+        assert!(o.err.contains("--max-cost needs an amount in dollars"), "{}", o.err);
+    }
+}
+
+#[test]
 fn default_scenario_runs_tools() {
     let e = Env::new();
     let report = e.root.join("report.json");

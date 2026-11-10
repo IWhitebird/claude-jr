@@ -105,6 +105,7 @@ claudejr -c                      # continue the last conversation here
 claudejr -r "auth refactor"      # continue a named conversation
 claudejr -p "explain main.rs"    # one prompt, print the answer, exit
 claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
+claudejr -p "fix the tests" -y --output-format json --max-cost 2   # for scripts: JSON result, stop at $2
 ```
 
 | Key | |

@@ -26,6 +26,8 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
+      --output-format json   with -p: print one JSON object at the end (result, cost, tokens)
+      --max-cost USD   with -p: stop once this many dollars have been spent
   -h, --help           show this help
   -V, --version        show the version
 
@@ -46,6 +48,8 @@ struct Args {
     yes: bool,
     resume: Option<Pick>,
     sandbox: bool,
+    json: bool,
+    max_cost: Option<f64>,
 }
 
 enum Cli {
@@ -69,6 +73,16 @@ fn parse_args() -> Result<Cli, String> {
             "-r" | "--resume" => args.resume = Some(Pick::Named(value()?)),
             "--sessions" => return Ok(Cli::Sessions),
             "--sandbox" => args.sandbox = true,
+            "--output-format" => match value()?.as_str() {
+                "json" => args.json = true,
+                "text" => args.json = false,
+                other => return Err(format!("unknown output format: {other} (text or json)")),
+            },
+            "--max-cost" => {
+                let v = value()?;
+                let usd = v.trim_start_matches('$').parse::<f64>().ok().filter(|usd| *usd > 0.0);
+                args.max_cost = Some(usd.ok_or_else(|| format!("--max-cost needs an amount in dollars, got {v}"))?);
+            }
             "-h" | "--help" => return Ok(Cli::Show(USAGE.into())),
             "-V" | "--version" => return Ok(Cli::Show(format!("claude-jr {}", env!("CARGO_PKG_VERSION")))),
             _ => return Err(format!("unknown argument: {a}\n\n{USAGE}")),
@@ -153,7 +167,10 @@ fn run() -> Result<ExitCode, String> {
     };
 
     match args.prompt {
-        Some(prompt) => Ok(if print::run(cfg, prompt) { ExitCode::SUCCESS } else { ExitCode::FAILURE }),
+        Some(prompt) => {
+            let options = print::Options { json: args.json, max_cost: args.max_cost };
+            Ok(if print::run(cfg, prompt, options) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+        }
         None => {
             let bottom = file.layout.as_deref() != Some("inline");
             ui::run(cfg, bottom).map_err(|e| format!("terminal error: {e}"))?;

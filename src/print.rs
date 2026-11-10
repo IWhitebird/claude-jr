@@ -2,19 +2,31 @@
 //
 // With CLAUDE_JR_REPORT=<file>, also writes what the run used there as JSON
 // (requests, tokens, cost), for scripts such as bench/evals.
+// With --output-format json, stdout gets one JSON object at the end instead:
+// the same totals plus `result` (the final answer) and `error`.
+// With --max-cost, the run stops once it has spent that many dollars.
 
 use crate::agent::{self, Command, Event};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 
+#[derive(Default)]
+pub struct Options {
+    /// Print one JSON object at the end instead of the reply as it comes.
+    pub json: bool,
+    /// Stop once this many dollars have been spent.
+    pub max_cost: Option<f64>,
+}
+
 /// Returns true if the turn finished without an error.
-pub fn run(cfg: agent::Config, prompt: String) -> bool {
+pub fn run(cfg: agent::Config, prompt: String, options: Options) -> bool {
     let (tx, rx) = mpsc::channel();
     let agent = agent::spawn(cfg, move |e| {
         let _ = tx.send(e);
     });
     crate::signals::watch(agent.tools.clone(), false);
-    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx);
+    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx, &options, &agent.cancel);
     if let Some(tools) = agent.tools.get() {
         tools.shutdown();
     }
@@ -43,27 +55,50 @@ struct Report {
     cache_read_tokens: u64,
     cache_write_tokens: u64,
     cost_usd: f64,
+    duration_ms: u64,
+    /// Why the run failed, if it did.
+    error: Option<String>,
+    /// The final answer: the text after the last tool call. Only in the
+    /// JSON printed to stdout.
+    #[serde(skip)]
+    result: String,
 }
 
 /// Prints events until the turn ends.
-fn print(events: Receiver<Event>) -> bool {
+fn print(events: Receiver<Event>, options: &Options, cancel: &AtomicBool) -> bool {
+    let start = std::time::Instant::now();
     let mut report = Report::default();
-    let ok = print_events(events, &mut report);
-    if let Ok(path) = std::env::var("CLAUDE_JR_REPORT") {
-        report.ok = ok;
-        if let Ok(json) = serde_json::to_string_pretty(&report) {
-            let _ = std::fs::write(path, json);
-        }
+    let ok = print_events(events, &mut report, options, cancel);
+    report.ok = ok;
+    report.duration_ms = start.elapsed().as_millis() as u64;
+    if let Ok(path) = std::env::var("CLAUDE_JR_REPORT")
+        && let Ok(json) = serde_json::to_string_pretty(&report)
+    {
+        let _ = std::fs::write(path, json);
+    }
+    if options.json
+        && let Ok(serde_json::Value::Object(mut fields)) = serde_json::to_value(&report)
+    {
+        fields.insert("result".into(), report.result.trim().into());
+        println!("{}", serde_json::Value::Object(fields));
     }
     ok
 }
 
-fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
+fn print_events(events: Receiver<Event>, report: &mut Report, options: &Options, cancel: &AtomicBool) -> bool {
     let mut out = std::io::stdout().lock();
     // Whether stdout / stderr were left in the middle of a line.
     let (mut mid_out, mut mid_err) = (false, false);
     for ev in events {
         match ev {
+            // With JSON output the reply goes to stderr as it comes, like the
+            // rest of the progress, and to stdout once at the end.
+            Event::Text(t) if options.json => {
+                let t = safe(&t, true);
+                eprint!("{t}");
+                mid_err = !t.ends_with('\n');
+                report.result.push_str(&t);
+            }
             Event::Text(t) => {
                 let t = safe(&t, true);
                 let _ = out.write_all(t.as_bytes());
@@ -83,7 +118,11 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
                     eprintln!();
                 }
             }
-            Event::Tool { label: label_text, .. } => eprintln!("● {}", label(&label_text)),
+            Event::Tool { label: label_text, .. } => {
+                // What was said before a tool call is not the final answer.
+                report.result.clear();
+                eprintln!("● {}", label(&label_text));
+            }
             Event::ToolResult { ok, summary } => {
                 let mark = if ok { "⎿" } else { "✗" };
                 for (i, line) in label(&summary).lines().enumerate() {
@@ -101,9 +140,12 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
             Event::Question { reply, .. } => {
                 let _ = reply.send(String::new());
             }
-            Event::Done | Event::Cancelled => return true,
+            Event::Done => return true,
+            // Only the cost limit cancels a -p run.
+            Event::Cancelled => return report.error.is_none(),
             Event::Error(e) => {
                 eprintln!("error: {}", label(&e));
+                report.error.get_or_insert(label(&e));
                 return false;
             }
             Event::Usage { usage, cost, .. } => {
@@ -113,6 +155,13 @@ fn print_events(events: Receiver<Event>, report: &mut Report) -> bool {
                 report.cache_read_tokens += usage.cache_read_input_tokens;
                 report.cache_write_tokens += usage.cache_creation_input_tokens;
                 report.cost_usd += cost.unwrap_or(0.0);
+                if let Some(max) = options.max_cost.filter(|max| report.cost_usd >= *max && report.error.is_none()) {
+                    let msg =
+                        format!("stopped: the cost limit of ${max:.2} was reached (${:.2} spent)", report.cost_usd);
+                    eprintln!("{msg}");
+                    report.error = Some(msg);
+                    cancel.store(true, Ordering::Relaxed);
+                }
             }
             Event::Ready { .. } | Event::ToolStart(_) | Event::ToolInput(_) | Event::Activity(_) => {}
         }
