@@ -347,7 +347,10 @@ impl Agent {
 
         let emit = self.core.emit.clone();
         let ctx = Ctx { system: &self.system, defs: &self.defs, tools: &self.tools, emit: &*emit, main: true };
-        let end = self.core.turn(&ctx, &mut self.messages);
+        // Saved after every round of tool calls, not only at the end: a long
+        // turn that is killed can then be continued with -c.
+        let (session, system) = (&mut self.session, &self.system);
+        let end = self.core.turn(&ctx, &mut self.messages, &mut |so_far| session.save(system, so_far));
         self.session.save(&self.system, &self.messages);
         emit(end);
     }

@@ -56,7 +56,10 @@ struct Call {
 
 impl Core {
     /// Runs requests and tools until the model stops. Returns the final event.
-    pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>) -> Event {
+    /// Runs until the model has nothing more to do. `step` is called with
+    /// the conversation after each round of tool calls, so it can be saved:
+    /// a turn can run for a long time, and a crash shouldn't lose it.
+    pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>, step: &mut dyn FnMut(&[Msg])) -> Event {
         loop {
             let model = self.model.lock().unwrap().clone();
             let effort = self.effort.lock().unwrap().clone();
@@ -119,6 +122,7 @@ impl Core {
                 results.push(json!({ "type": "text", "text": note }));
             }
             messages.push(Msg::new("user", Value::Array(results)));
+            step(messages);
             if self.cancel.load(Ordering::Relaxed) {
                 return Event::Cancelled;
             }
@@ -557,7 +561,7 @@ mod tests {
         let emit = rig.agent.core.emit.clone();
         let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
         let mut messages = vec![Msg::new("user", json!([{ "type": "text", "text": "hi" }]))];
-        let end = rig.agent.core.turn(&ctx, &mut messages);
+        let end = rig.agent.core.turn(&ctx, &mut messages, &mut |_| {});
         assert!(matches!(end, Event::Cancelled));
         assert_eq!(messages.len(), 1);
     }

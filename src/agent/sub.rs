@@ -42,7 +42,7 @@ impl Core {
         let defs = self.sub_defs.lock().unwrap().clone();
         let sub = Ctx { system, defs: &defs, tools: &tools, emit: &emit, main: false };
 
-        let result = match self.turn(&sub, &mut messages) {
+        let result = match self.turn(&sub, &mut messages, &mut |_| {}) {
             Event::Done => Ok(final_text(&messages)),
             Event::Cancelled => Err("Cancelled by the user.".into()),
             Event::Error(e) => Err(format!("The subagent failed: {e}")),
