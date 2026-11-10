@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs claudejr (claude-jr, "Claude Junior") from the latest release:
-#   curl -fsSL https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
+#   curl -fsSL --connect-timeout 5 https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
 # It goes to ~/.local/bin (set CLAUDE_JR_BIN for another folder). Linux and
 # macOS, x86_64 and ARM. On Windows, run it inside WSL.
 set -eu
@@ -22,7 +22,7 @@ name=claudejr-$os-$arch
 
 fetch() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 "$1" -o "$2"
+        curl -fsSL --retry 3 --connect-timeout 5 --max-time 120 "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then
         wget -q --tries=3 --timeout=30 -O "$2" "$1"
     else

@@ -28,7 +28,7 @@ fn asset() -> Option<String> {
 
 fn get(url: &str) -> Result<ureq::Body, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_connect(Some(Duration::from_secs(5)))
         .timeout_per_read(Some(Duration::from_secs(60)))
         .build()
         .into();
