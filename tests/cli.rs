@@ -347,6 +347,7 @@ fn default_scenario_runs_tools() {
     assert_eq!(reqs.len(), 3);
     assert_eq!(reqs[0]["model"], "claude-opus-5-5");
     let tools: Vec<&str> = reqs[0]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+    assert!(!tools.contains(&"ask_user"), "nobody is there to ask in -p mode: {tools:?}");
     for t in ["bash", "read", "write", "edit"] {
         assert!(tools.contains(&t), "{tools:?}");
     }

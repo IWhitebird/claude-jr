@@ -119,11 +119,15 @@ impl Tools {
     /// Tool definitions for the API, serialized once per session. Subagents
     /// don't get `agent` (no nesting) or `ask_user` (they can't reach the user).
     /// `web` adds Anthropic's web search and fetch, which run on their side.
-    pub fn definitions(&self, main: bool, web: bool) -> Box<RawValue> {
+    /// `user`: someone is there to answer `ask_user` (not so in -p mode).
+    pub fn definitions(&self, main: bool, web: bool, user: bool) -> Box<RawValue> {
         let mut defs = vec![fs::READ.clone(), fs::WRITE.clone(), fs::EDIT.clone(), bash::BASH.clone()];
         defs.extend([bash::JOBS.clone(), todo::TODO.clone()]);
         if main {
-            defs.extend([ASK_USER.clone(), AGENT.clone(), memory::MEMORY.clone()]);
+            if user {
+                defs.push(ASK_USER.clone());
+            }
+            defs.extend([AGENT.clone(), memory::MEMORY.clone()]);
         }
         if !self.skills.is_empty() {
             defs.push(skill::definition(&self.skills));
@@ -494,7 +498,7 @@ mod tests {
         assert_eq!(t.subject("memory", &input), "add: uses pnpm");
         assert!(t.child().run("memory", &input, &AtomicBool::new(false)).is_err());
         for main in [true, false] {
-            let defs = t.child().definitions(main, false);
+            let defs = t.child().definitions(main, false, true);
             let names: Vec<String> = serde_json::from_str::<Vec<Value>>(defs.get())
                 .unwrap()
                 .iter()
@@ -572,8 +576,9 @@ mod tests {
     #[test]
     fn definitions_carry_streaming_and_optional_web_tools() {
         let (t, _dir) = test_tools("mod-defs");
-        let defs =
-            |main: bool, web: bool| -> Vec<Value> { serde_json::from_str(t.definitions(main, web).get()).unwrap() };
+        let defs = |main: bool, web: bool| -> Vec<Value> {
+            serde_json::from_str(t.definitions(main, web, true).get()).unwrap()
+        };
         let plain = defs(true, false);
         assert!(plain.iter().all(|d| d["name"] != "web_search"));
         assert!(plain.iter().all(|d| d["eager_input_streaming"] == true), "our own tools stream their input");

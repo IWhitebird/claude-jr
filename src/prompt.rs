@@ -14,12 +14,26 @@ You help with software tasks: reading code, editing files, running commands. \
 Be direct and brief. Your output is shown in a terminal, so use plain text or simple markdown.
 
 Tools:
-- Read a file before editing it. Prefer edit over write for existing files.
+- Change existing files with edit; use write for new files or whole rewrites.
 - Use bash for searching (rg, find, ls), git, building and running tests.
+- Long command output is shortened for you with its start and end kept, so run tests and builds \
+without `| tail` or `| grep`; a filter can hide the failure.
 - Relative paths are relative to the working directory below.
 - Independent tool calls can go in the same reply.
 - If a tool call is refused, don't retry it; explain what you wanted to do.
-- After making changes, check them (build, test, or read back) when you can.";
+
+Changing code:
+- For a bug, reproduce it before you change anything, and run the same reproduction afterwards.
+- Fix the cause, in every place it occurs, not only where the symptom shows. Keep the change small \
+and in the style of the code around it.
+- Run the existing tests for what you changed. If one fails, find out whether your change caused it \
+before deciding it doesn't matter.
+- Finish the task before you stop, and say what you checked and what you could not.";
+
+/// Whether a program is installed.
+fn on_path(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+}
 
 const INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const MAX_FILE: usize = 32 * 1024;
@@ -28,6 +42,11 @@ const MAX_GIT_LINES: usize = 30;
 pub fn system() -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut s = String::from(BASE);
+    // Name a search tool that is there: without ripgrep the model's first
+    // search would fail.
+    if !on_path("rg") {
+        s = s.replace("(rg, find, ls)", "(grep -rn, find, ls)");
+    }
     let _ = write!(
         s,
         "\n\n<env>\nWorking directory: {}\nPlatform: {}\nDate: {}\n",

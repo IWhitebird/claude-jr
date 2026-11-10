@@ -24,7 +24,7 @@ pub static BASH: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
         "name": "bash",
         "description": "Run a bash command. stdout and stderr are combined. The working directory carries over \
-            between calls. Long output keeps the start and the end. Use rg, find and ls to search. \
+            between calls. Output over 50 KB keeps the start and the end. \
             Set background to true for servers, watchers and long builds: it returns a job id at once, \
             and you're told when the job ends. Use the jobs tool to read its output or wait for it.",
         "input_schema": {
@@ -94,7 +94,10 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
         if cancel.load(Ordering::Relaxed) {
             stopped = Some("Cancelled by the user".to_string());
         } else if start.elapsed() > timeout {
-            stopped = Some(format!("Timed out after {}s. Use background: true for long commands.", timeout.as_secs()));
+            stopped = Some(format!(
+                "Timed out after {}s and was stopped. Run it again with a longer timeout (up to 600) or with background: true.",
+                timeout.as_secs()
+            ));
         }
         if stopped.is_some() {
             kill_group(child.id());
@@ -113,12 +116,17 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     if !pipe_closed {
         let _ = done.recv_timeout(Duration::from_millis(300));
     }
-    let text = out.lock().unwrap().text();
+    let mut text = out.lock().unwrap().text();
 
     if let Ok(dir) = std::fs::read_to_string(&cwd_file) {
         let dir = PathBuf::from(dir.trim_end());
         if dir.is_dir() {
-            *t.cwd.lock().unwrap() = dir;
+            // Said out loud, so the next command isn't written for the old place.
+            let mut cwd = t.cwd.lock().unwrap();
+            if dir != *cwd {
+                text = join(&text, &format!("(working directory is now {})", dir.display()));
+            }
+            *cwd = dir;
         }
         let _ = std::fs::remove_file(&cwd_file);
     }
@@ -455,7 +463,10 @@ impl Capped {
         let mut s = String::from_utf8_lossy(&self.head).into_owned();
         let omitted = self.total - self.head.len() - self.tail.len();
         if omitted > 0 {
-            let _ = write!(s, "\n\n... [{omitted} bytes omitted] ...\n\n");
+            let _ = write!(
+                s,
+                "\n\n... [{omitted} bytes omitted here; filter the command or send its output to a file to see them] ...\n\n"
+            );
         }
         s.push_str(&String::from_utf8_lossy(self.tail.make_contiguous()));
         s
@@ -480,7 +491,9 @@ mod tests {
         let (t, dir) = test_tools("bash");
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let no = AtomicBool::new(false);
-        t.run("bash", &json!({"command": "cd sub"}), &no).unwrap();
+        // A move is said out loud; staying put is not.
+        let moved = t.run("bash", &json!({"command": "cd sub"}), &no).unwrap();
+        assert!(moved.starts_with("(working directory is now ") && moved.ends_with("/sub)"), "{moved}");
         assert!(t.run("bash", &json!({"command": "pwd"}), &no).unwrap().ends_with("/sub\n"));
         let err = t.run("bash", &json!({"command": "echo oops >&2; exit 3"}), &no).unwrap_err();
         assert_eq!(err, "oops\nExit code 3");
@@ -532,7 +545,10 @@ mod tests {
         for chunk in [&b"abc"[..], b"defgh", b"ijklmn", b"opqrst"] {
             c.push(chunk);
         }
-        assert_eq!(c.text(), "abcde\n\n... [10 bytes omitted] ...\n\npqrst");
+        assert_eq!(
+            c.text(),
+            "abcde\n\n... [10 bytes omitted here; filter the command or send its output to a file to see them] ...\n\npqrst"
+        );
 
         let mut t = Tail::new(4);
         t.push(b"abcdef");
@@ -664,10 +680,16 @@ mod tests {
         c.push(b"abc");
         assert_eq!(c.text(), "abc");
         c.push(b"defghijklmnopqrstuvwxyz");
-        assert_eq!(c.text(), "abcde\n\n... [16 bytes omitted] ...\n\nvwxyz");
+        assert_eq!(
+            c.text(),
+            "abcde\n\n... [16 bytes omitted here; filter the command or send its output to a file to see them] ...\n\nvwxyz"
+        );
         let mut one_big = Capped::new(4);
         one_big.push(b"0123456789");
-        assert_eq!(one_big.text(), "01\n\n... [6 bytes omitted] ...\n\n89");
+        assert_eq!(
+            one_big.text(),
+            "01\n\n... [6 bytes omitted here; filter the command or send its output to a file to see them] ...\n\n89"
+        );
     }
 
     #[test]

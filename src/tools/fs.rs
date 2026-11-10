@@ -20,7 +20,7 @@ pub static READ: LazyLock<Box<RawValue>> = LazyLock::new(|| {
         "name": "read",
         "description": "Read a file. Text comes back as lines prefixed with their line number and a tab; \
             images (png, jpg, gif, webp) come back as the image itself, so you can look at screenshots and designs. \
-            Reads up to 2000 lines; use offset and limit for more. You must read a file before editing or overwriting it.",
+            Reads up to 2000 lines or 50 KB; use offset and limit for more.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,7 +37,7 @@ pub static WRITE: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
         "name": "write",
         "description": "Create a file or replace its whole content. Creates parent directories. \
-            An existing file must be read first. Prefer edit for changes to existing files.",
+            An existing file must be read first. Use edit to change part of a file.",
         "input_schema": {
             "type": "object",
             "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
@@ -49,8 +49,9 @@ pub static WRITE: LazyLock<Box<RawValue>> = LazyLock::new(|| {
 pub static EDIT: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
         "name": "edit",
-        "description": "Replace exact text in a file. old_string must match exactly once, including whitespace, \
-            unless replace_all is true. The file must be read first. Do not include the line number prefixes from read.",
+        "description": "Replace exact text in a file. old_string must match exactly once, including whitespace and \
+            indentation, unless replace_all is true. Copy it from the file as it is now, without the line number \
+            prefixes that read adds.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -190,7 +191,8 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
     if old == new {
         return Err("old_string and new_string are the same".into());
     }
-    check_fresh(t, &path)?;
+    // No read is asked for first: old_string matching exactly is the proof
+    // that the model knows what is there now.
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let count = text.matches(old).count();
     if count == 0 {
@@ -214,7 +216,6 @@ mod tests {
     use super::super::{result_content, summary, test_tools};
     use serde_json::json;
     use std::sync::atomic::AtomicBool;
-    use std::time::Duration;
 
     #[test]
     fn edit_rules() {
@@ -224,17 +225,25 @@ mod tests {
 
         let edit =
             |old: &str, all: bool| json!({"path": "a.txt", "old_string": old, "new_string": "X", "replace_all": all});
-        assert!(t.run("edit", &edit("one", false), &no).unwrap_err().contains("not been read"));
-        assert!(t.run("read", &json!({"path": "a.txt"}), &no).unwrap().contains("     1\tone"));
+        // No read is needed first: an exact match is proof enough.
         assert!(t.run("edit", &edit("two", false), &no).unwrap_err().contains("matches 2"));
         assert!(t.run("edit", &edit("nope", false), &no).unwrap_err().contains("not found"));
         t.run("edit", &edit("two", true), &no).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\nX\nX\n");
 
-        // Changed on disk after the read: refuse.
-        std::thread::sleep(Duration::from_millis(20));
+        // Changed on disk meanwhile: the edit works on what is there now.
         std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
-        assert!(t.run("edit", &edit("changed", false), &no).unwrap_err().contains("changed since"));
+        assert!(t.run("edit", &edit("one", false), &no).unwrap_err().contains("not found"));
+        t.run("edit", &edit("changed", false), &no).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "X\n");
+
+        // Overwriting a whole file still needs a read first (an edit counts as one).
+        std::fs::write(dir.join("b.txt"), "old\n").unwrap();
+        let write = json!({"path": "b.txt", "content": "new"});
+        assert!(t.run("write", &write, &no).unwrap_err().contains("not been read"));
+        assert!(t.run("read", &json!({"path": "b.txt"}), &no).unwrap().contains("     1\told"));
+        t.run("write", &write, &no).unwrap();
+        t.run("write", &json!({"path": "a.txt", "content": "new"}), &no).unwrap();
     }
 
     #[test]

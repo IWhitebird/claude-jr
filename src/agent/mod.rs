@@ -235,13 +235,13 @@ impl Agent {
             emit,
             interactive: cfg.interactive,
             connector: tools.mcp.connector(),
-            sub_defs: Mutex::new(tools.definitions(false, web)),
+            sub_defs: Mutex::new(tools.definitions(false, web, false)),
             sub_system: OnceLock::new(),
             request: Mutex::default(),
         };
         let mut agent = Agent {
             web: cfg.web,
-            defs: tools.definitions(true, web),
+            defs: tools.definitions(true, web, cfg.interactive),
             core: Arc::new(core),
             tools,
             system,
@@ -445,8 +445,8 @@ impl Agent {
         *self.core.model.lock().unwrap() = model;
         if had != has {
             let web = has && self.web;
-            self.defs = self.tools.definitions(true, web);
-            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web);
+            self.defs = self.tools.definitions(true, web, self.core.interactive);
+            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web, false);
         }
     }
 
