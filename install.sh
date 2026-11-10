@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs claudejr (claude-jr, "Claude Junior") from the latest release:
-#   curl -fsSL --connect-timeout 5 https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
 # It goes to ~/.local/bin (set CLAUDE_JR_BIN for another folder). Linux and
 # macOS, x86_64 and ARM. On Windows, run it inside WSL.
 set -eu

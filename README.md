@@ -33,7 +33,7 @@ asking before anything changes.
 ## Install
 
 ```sh
-curl -fsSL --connect-timeout 5 https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
 ```
 
 Linux and macOS, x86_64 and ARM. On Windows, run it inside WSL. Then run
