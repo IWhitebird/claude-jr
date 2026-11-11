@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pauses a run. Finished tasks are kept; tasks in flight are redone when the
 # run is started again with the same command.
+systemctl --user stop cjr-swe 2>/dev/null
 pkill -f "bench/swe/tonight.sh" 2>/dev/null
 pkill -f "bench/swe/parallel.sh" 2>/dev/null
 pkill -f "bench/swe/night.sh" 2>/dev/null

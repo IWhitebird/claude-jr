@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # One unattended night: a 20-task pilot at default and at high effort, a
 # choice between them by a fixed rule, then the full run with what won, and a
-# check of which failures aren't the agent's. Start it detached:
-#   setsid nohup bench/swe/tonight.sh >/dev/null 2>&1 &
+# check of which failures aren't the agent's. Start it as its own service, so
+# it doesn't die with the terminal it was started from (the out-of-memory
+# guard kills whole terminal sessions):
+#   systemd-run --user --unit cjr-swe --collect -p MemoryMax=4G \
+#       -E CHOICE=default -E JOBS=2 "$PWD/bench/swe/tonight.sh"
+#   systemctl --user status cjr-swe     journalctl --user -u cjr-swe
+# CHOICE=default or high skips the high-effort pilot and the choosing.
 # Progress: bench/results/tonight.log. bench/swe/stop.sh pauses it; running
 # this again continues where it stopped.
 #   MODEL (claude-opus-5-5)  TASKS (500)  CAP dollars for everything (160)
@@ -28,11 +33,15 @@ say() { echo "$(date +%H:%M) $*" >>"$log"; }
 (
     while [ ! -f $res/swe-finished ]; do
         avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
-        if [ "$avail" -lt 1200 ]; then
+        # Percent of the last 10 s that something stalled waiting for memory:
+        # what the system's out-of-memory guard acts on.
+        stall=$(sed -n 's/^some avg10=\([0-9]*\).*/\1/p' /proc/pressure/memory)
+        if [ "$avail" -lt 1200 ] || [ "${stall:-0}" -ge 30 ]; then
             victim=$(docker ps --format '{{.Names}}' | grep '^cjr-swe-' | head -1)
-            [ -n "$victim" ] && docker rm -f "$victim" >/dev/null 2>&1 && say "memory at ${avail} MB: stopped $victim"
+            [ -n "$victim" ] && docker rm -f "$victim" >/dev/null 2>&1 &&
+                say "memory: ${avail} MB free, pressure ${stall}%: stopped $victim"
         fi
-        echo "$(date +%H:%M) ${avail} MB free" >>$res/memory.log
+        echo "$(date +%H:%M) ${avail} MB free, pressure ${stall:-0}%" >>$res/memory.log
         sleep 30
     done
 ) &
@@ -53,8 +62,10 @@ field() { $py -c "import json,sys; print(json.load(open('$1/summary.json')).get(
 
 say "pilot: 20 tasks at default effort"
 run $res/swe-pilot-default 20 20
-say "pilot: the same 20 at high effort"
-run $res/swe-pilot-high 20 25 high
+if [ -z "${CHOICE:-}" ]; then
+    say "pilot: the same 20 at high effort"
+    run $res/swe-pilot-high 20 25 high
+fi
 
 d_solved=$(field $res/swe-pilot-default resolved); d_cost=$(field $res/swe-pilot-default cost_per_task)
 h_solved=$(field $res/swe-pilot-high resolved); h_cost=$(field $res/swe-pilot-high cost_per_task)
@@ -63,8 +74,8 @@ left=$($py -c "print(round($cap - $spent, 2))")
 say "default: $d_solved/20 at \$$d_cost a task; high: $h_solved/20 at \$$h_cost a task; \$$spent spent, \$$left left"
 
 # High effort only if it solves at least 2 more of the 20 and all the tasks fit in what's left.
-choice=default
-if $py -c "import sys; sys.exit(0 if $h_solved - $d_solved >= 2 and $h_cost * ($tasks - 20) <= $left else 1)"; then
+choice=${CHOICE:-default}
+if [ -z "${CHOICE:-}" ] && $py -c "import sys; sys.exit(0 if $h_solved - $d_solved >= 2 and $h_cost * ($tasks - 20) <= $left else 1)"; then
     choice=high
 fi
 say "chosen: $choice effort"

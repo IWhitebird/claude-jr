@@ -76,6 +76,15 @@ def available_mb():
     return 0
 
 
+def pressure():
+    """How much of the last 10 seconds something was stalled waiting for memory, in percent.
+    This, not free memory, is what the system's out-of-memory guard acts on."""
+    try:
+        return float(open("/proc/pressure/memory").readline().split("avg10=")[1].split()[0])
+    except (OSError, IndexError, ValueError):
+        return 0.0
+
+
 def api_key():
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if key:
@@ -219,8 +228,10 @@ def main():
             if free_gb() < args.min_free_gb:
                 print(f"only {free_gb():.0f} GB of disk free; stopping")
                 break
-            while available_mb() < 2500:  # the laptop is busy: wait rather than push it into swap
-                print(f"only {available_mb()} MB of memory available; waiting a minute")
+            # The laptop is busy: wait rather than push it into swap, or have
+            # the out-of-memory guard kill something.
+            while available_mb() < 2500 or pressure() > 10:
+                print(f"{available_mb()} MB of memory available, pressure {pressure():.0f}%; waiting a minute", flush=True)
                 time.sleep(60)
             task = tasks[iid]
             had_image = sh("docker", "image", "inspect", task["image"]).returncode == 0
