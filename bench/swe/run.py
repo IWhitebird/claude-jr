@@ -235,8 +235,20 @@ def main():
                 time.sleep(60)
             task = tasks[iid]
             had_image = sh("docker", "image", "inspect", task["image"]).returncode == 0
-            if not had_image and sh("docker", "pull", "-q", task["image"]).returncode != 0:
-                print(f"[{i}/{len(ids)}] {iid}: can't pull {task['image']}; skipped")
+            # Docker Hub allows about 100 pulls an hour: when it says no, wait
+            # and try again rather than skip the task.
+            pulled = had_image
+            for attempt in range(13):
+                if pulled:
+                    break
+                pull = sh("docker", "pull", "-q", task["image"])
+                pulled = pull.returncode == 0
+                if not pulled and attempt < 12:
+                    why = (pull.stderr or pull.stdout).strip().splitlines()[-1:] or ["unknown error"]
+                    print(f"[{i}/{len(ids)}] {iid}: pull failed ({why[0][:120]}); trying again in 5 minutes", flush=True)
+                    time.sleep(300)
+            if not pulled:
+                print(f"[{i}/{len(ids)}] {iid}: can't pull {task['image']}; skipped", flush=True)
                 continue
             task_out = os.path.join(out, iid)
             if args.gold:
