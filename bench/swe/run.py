@@ -244,6 +244,14 @@ def main():
                 r = {"patch": task["patch"], "report": {}, "exit_code": "", "seconds": 0}
             else:
                 r = run_agent(task, task_out, args, env)
+                if r["exit_code"] == "":
+                    # The container was stopped from outside (the memory
+                    # watchdog) before the agent finished: not a result. It is
+                    # left out, so the next run of this command tries it again.
+                    print(f"[{i}/{len(ids)}] {iid}: stopped before it finished; it will be retried", flush=True)
+                    if not had_image and not args.keep_images:
+                        sh("docker", "rmi", task["image"])
+                    continue
             resolved = None
             if not args.no_eval and r["patch"].strip():
                 resolved = evaluate(task, r["patch"], task_out, run_id, args.model)
