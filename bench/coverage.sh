@@ -12,6 +12,8 @@ tools=$(dirname "$(find "$(rustc --print sysroot)" -name llvm-cov | head -1)")
 [ -x "$tools/llvm-cov" ] || { echo "run: rustup component add llvm-tools"; exit 1; }
 dir=$PWD/target/cov
 rm -rf "$dir/prof"; mkdir -p "$dir/prof"
+# Test binaries left by earlier builds would be counted as code no test ran.
+[ -d "$dir/debug/deps" ] && find "$dir/debug/deps" -maxdepth 1 -type f -executable ! -name '*.so' -delete
 export RUSTFLAGS="-C instrument-coverage" CARGO_TARGET_DIR=$dir LLVM_PROFILE_FILE="$dir/prof/%p-%m.profraw"
 cargo test -q 2>&1 | grep -E "test result|FAILED|panicked|error" || true
 "$tools/llvm-profdata" merge -sparse "$dir"/prof/*.profraw -o "$dir/cov.profdata"

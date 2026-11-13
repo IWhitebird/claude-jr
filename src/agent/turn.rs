@@ -59,7 +59,7 @@ impl Core {
     /// Runs until the model has nothing more to do. `step` is called with
     /// the conversation after each round of tool calls, so it can be saved:
     /// a turn can run for a long time, and a crash shouldn't lose it.
-    pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>, step: &mut dyn FnMut(&[Msg])) -> Event {
+    pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>, step: &mut dyn FnMut(&mut [Msg])) -> Event {
         loop {
             let model = self.model.lock().unwrap().clone();
             let effort = self.effort.lock().unwrap().clone();

@@ -304,7 +304,7 @@ impl Client {
     }
 
     /// Sends a request and streams the reply. `messages` are JSON texts.
-    pub fn stream<M: AsRef<str>>(
+    pub fn stream<M: Message>(
         &self,
         req: &Request,
         messages: &[M],
@@ -350,7 +350,7 @@ impl Client {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn send<M: AsRef<str>>(
+    fn send<M: Message>(
         &self,
         http: &ureq::Agent,
         head: &[u8],
@@ -425,9 +425,34 @@ impl Client {
     }
 }
 
+/// A message's JSON text: at hand, or a stretch of the session file.
+#[derive(Clone, Copy)]
+pub enum Text<'a> {
+    Memory(&'a str),
+    Saved { file: &'a std::fs::File, at: u64, len: usize },
+}
+
+/// Anything that can go in a request's `messages`.
+pub trait Message {
+    fn text(&self) -> Text<'_>;
+}
+
+impl Message for &str {
+    fn text(&self) -> Text<'_> {
+        Text::Memory(self)
+    }
+}
+
+impl Message for Text<'_> {
+    fn text(&self) -> Text<'_> {
+        *self
+    }
+}
+
 /// The request body, read in order without copying the history into one
 /// buffer: `{"messages":[` m1 `,` m2 ... `],` + the rest of the request.
-/// Stored images are encoded from disk as they're read.
+/// Saved messages are read from the session file and stored images encoded
+/// from disk, both as the body is read.
 struct Body<'a> {
     parts: Vec<Part<'a>>,
     len: usize,
@@ -437,11 +462,12 @@ struct Body<'a> {
 
 enum Part<'a> {
     Bytes(&'a [u8]),
+    File { file: &'a std::fs::File, at: u64, left: usize },
     Image(crate::images::Encoder),
 }
 
 impl<'a> Body<'a> {
-    fn new<M: AsRef<str>>(head: &'a [u8], messages: &'a [M]) -> Self {
+    fn new<M: Message>(head: &'a [u8], messages: &'a [M]) -> Self {
         use crate::images::{Encoder, Piece};
         let mut parts = Vec::with_capacity(messages.len() * 2 + 2);
         parts.push(Part::Bytes(b"{\"messages\":["));
@@ -449,7 +475,14 @@ impl<'a> Body<'a> {
             if i > 0 {
                 parts.push(Part::Bytes(b","));
             }
-            for piece in crate::images::pieces(m.as_ref()) {
+            let json = match m.text() {
+                Text::Memory(json) => json,
+                Text::Saved { file, at, len } => {
+                    parts.push(Part::File { file, at, left: len });
+                    continue;
+                }
+            };
+            for piece in crate::images::pieces(json) {
                 parts.push(match piece {
                     Piece::Text(t) => Part::Bytes(t),
                     Piece::Image(path) => Part::Image(Encoder::open(&path)),
@@ -462,6 +495,7 @@ impl<'a> Body<'a> {
             .iter()
             .map(|p| match p {
                 Part::Bytes(b) => b.len(),
+                Part::File { left, .. } => *left,
                 Part::Image(e) => e.len,
             })
             .sum();
@@ -478,6 +512,19 @@ impl std::io::Read for Body<'_> {
                     let n = rest.len().min(buf.len());
                     buf[..n].copy_from_slice(&rest[..n]);
                     self.offset += n;
+                    n
+                }
+                Part::File { file, at, left } => {
+                    use std::os::unix::fs::FileExt;
+                    let want = buf.len().min(*left);
+                    let n = file.read_at(&mut buf[..want], *at)?;
+                    // The length was promised up front: a file that got
+                    // shorter can't be papered over.
+                    if n == 0 && want > 0 {
+                        return Err(std::io::ErrorKind::UnexpectedEof.into());
+                    }
+                    *at += n as u64;
+                    *left -= n;
                     n
                 }
                 Part::Image(e) => e.read(buf)?,
@@ -717,6 +764,29 @@ data: {"type":"message_stop"}
         assert_eq!(reply.content[1]["text"], "Hello");
         assert_eq!(reply.content[2]["input"]["path"], "a.rs");
         assert_eq!(reply.content[3]["content"], "summary");
+    }
+
+    #[test]
+    fn body_reads_saved_messages_from_their_file() {
+        let dir = crate::tools::test_dir("body-file");
+        let path = dir.join("session.jsonl");
+        let (first, second) = (r#"{"role":"user","content":"hi"}"#, r#"{"role":"assistant","content":"yo"}"#);
+        std::fs::write(&path, format!("header\n{first}\n{second}\n")).unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        let head = br#"{"model":"m"}"#;
+        let saved = |at: usize, len: usize| Text::Saved { file: &file, at: at as u64, len };
+        let msgs = [saved(7, first.len()), Text::Memory(second), saved(7 + first.len() + 1, second.len())];
+        let mut body = Body::new(head, &msgs);
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut body, &mut out).unwrap();
+        assert_eq!(out.len(), body.len);
+        assert_eq!(out, format!(r#"{{"messages":[{first},{second},{second}],"model":"m"}}"#));
+
+        // A file that ends before the message does is an error, not a short body.
+        let msgs = [saved(7, 4096)];
+        let mut out = Vec::new();
+        assert!(std::io::Read::read_to_end(&mut Body::new(head, &msgs), &mut out).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

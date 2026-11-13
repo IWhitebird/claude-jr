@@ -364,7 +364,7 @@ impl Agent {
         // turn that is killed can then be continued with -c.
         let (session, system) = (&mut self.session, &self.system);
         let end = self.core.turn(&ctx, &mut self.messages, &mut |so_far| session.save(system, so_far));
-        self.session.save(&self.system, &self.messages);
+        self.session.save(&self.system, &mut self.messages);
         emit(end);
     }
 
@@ -404,7 +404,7 @@ impl Agent {
         );
         // The request is the conversation plus the ask; the ask joins the last
         // message if that's already a user message, so roles keep alternating.
-        let mut parts: Vec<&str> = self.messages.iter().map(|m| m.json.get()).collect();
+        let mut parts: Vec<crate::api::Text> = self.messages.iter().map(crate::api::Message::text).collect();
         let ask = json!({ "type": "text", "text": ask });
         let tail = match self.messages.last() {
             Some(last) if last.user => {
@@ -415,7 +415,7 @@ impl Agent {
             }
             _ => Msg::new("user", json!([ask])),
         };
-        parts.push(tail.json.get());
+        parts.push(crate::api::Message::text(&tail));
 
         let model = self.core.model.lock().unwrap().clone();
         let effort = self.core.effort.lock().unwrap().clone();
@@ -442,7 +442,7 @@ impl Agent {
             Msg::new("assistant", json!([{ "type": "text", "text": "Got it. I'll continue from this summary." }])),
         ];
         self.session.truncate(&self.system, 0);
-        self.session.save(&self.system, &self.messages);
+        self.session.save(&self.system, &mut self.messages);
         self.tools.checkpoints.clear();
         self.told_plan = false;
         let words = summary.split_whitespace().count();
@@ -868,12 +868,12 @@ mod tests {
         tick();
         let name = "unit-open-calls";
         let mut s = Session::new();
-        let msgs = vec![
+        let mut msgs = vec![
             Msg::new("user", json!([{ "type": "text", "text": "run it" }])),
             Msg::new("assistant", json!([tool_use("t9", "bash", json!({"command": "x"}))])),
         ];
         s.rename("SYS", name);
-        s.save("SYS", &msgs);
+        s.save("SYS", &mut msgs);
 
         let mut cfg = config(None, Mode::Default);
         cfg.resume = Some(Pick::Named(name.into()));
@@ -887,7 +887,7 @@ mod tests {
         assert_eq!(rig.agent.system, "SYS");
         let last = rig.agent.messages.last().unwrap();
         assert!(last.user && last.has_results());
-        assert!(last.json.get().contains("Not run: the session ended."));
+        assert!(last.json().contains("Not run: the session ended."));
     }
 
     #[test]
@@ -961,8 +961,8 @@ mod tests {
         let asked = rig.bodies().pop().unwrap();
         assert!(asked.contains("Pay particular attention to: the tests"));
         assert_eq!(rig.agent.messages.len(), 2);
-        assert!(rig.agent.messages[0].json.get().contains("They fixed bugs in main.rs today."));
-        assert!(rig.agent.messages[0].json.get().contains("<compacted>"));
+        assert!(rig.agent.messages[0].json().contains("They fixed bugs in main.rs today."));
+        assert!(rig.agent.messages[0].json().contains("<compacted>"));
         assert!(!rig.agent.messages[1].user);
         assert!(events.iter().any(|e| matches!(e, Event::Activity(a) if a == "summarizing the conversation")));
         assert!(events.iter().any(|e| matches!(e, Event::Usage { main: false, .. })));
@@ -1045,7 +1045,7 @@ mod tests {
         assert!(matches!(&events[0], Event::Tool { label, .. } if label == "! echo from-user; exit 3"));
         assert!(matches!(&events[1], Event::ToolResult { ok: false, summary } if summary.contains("from-user")));
         assert!(last_is_done(&events));
-        let note = rig.agent.messages.last().unwrap().json.get().to_string();
+        let note = rig.agent.messages.last().unwrap().json().to_string();
         assert!(note.contains("<user-shell>\\n$ echo from-user; exit 3\\nfrom-user"), "{note}");
 
         // The model sees it with the next message, as part of the same turn.

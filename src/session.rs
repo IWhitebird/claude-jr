@@ -1,36 +1,67 @@
 // Conversations stored as JSONL: a header line with the system prompt, then one
 // message per line, exactly as sent to the API. The history is append-only,
 // so the file is too.
+//
+// The file is also where the history lives while the app runs: once a message
+// is saved, memory keeps only where its line is, and requests read it from
+// there. A long session then takes no more memory than a short one.
 
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// One message, kept as the JSON text that goes over the wire.
+/// One message: the JSON text that goes over the wire, or where that text is
+/// in the session file.
 pub struct Msg {
     pub user: bool,
-    pub json: Box<RawValue>,
+    body: Body,
+}
+
+enum Body {
+    Memory(String),
+    Saved { file: Arc<File>, at: u64, len: usize },
 }
 
 impl Msg {
     pub fn new(role: &str, content: Value) -> Msg {
-        let json =
-            serde_json::value::to_raw_value(&json!({ "role": role, "content": content })).expect("message serializes");
-        Msg { user: role == "user", json }
+        let json = serde_json::to_string(&json!({ "role": role, "content": content })).expect("message serializes");
+        Msg { user: role == "user", body: Body::Memory(json) }
     }
 
-    fn parse(line: &str) -> Option<Msg> {
+    /// A message line of a session file, which starts at byte `at` of `file`.
+    fn parse(line: &str, file: &Arc<File>, at: u64) -> Option<Msg> {
         #[derive(Deserialize)]
         struct Role<'a> {
             role: &'a str,
         }
-        let json = RawValue::from_string(line.to_string()).ok()?;
-        let user = serde_json::from_str::<Role>(json.get()).ok()?.role == "user";
-        Some(Msg { user, json })
+        let user = serde_json::from_str::<Role>(line).ok()?.role == "user";
+        let mut msg = Msg { user, body: Body::Memory(String::new()) };
+        // A message with stored images is spliced together when it's sent,
+        // which needs its text at hand.
+        if crate::images::pieces(line).len() > 1 {
+            msg.body = Body::Memory(line.to_string());
+        } else {
+            msg.body = Body::Saved { file: file.clone(), at, len: line.len() };
+        }
+        Some(msg)
+    }
+
+    /// The message's JSON, read back from the session file if that's where it is.
+    pub fn json(&self) -> Cow<'_, str> {
+        match &self.body {
+            Body::Memory(json) => Cow::Borrowed(json),
+            Body::Saved { file, at, len } => {
+                let mut buf = vec![0; *len];
+                let read = file.read_exact_at(&mut buf, *at).ok().and_then(|()| String::from_utf8(buf).ok());
+                Cow::Owned(read.unwrap_or_default())
+            }
+        }
     }
 
     /// The text the user typed, if this message started a turn (not tool
@@ -51,7 +82,7 @@ impl Msg {
     }
 
     pub fn content(&self) -> Vec<Value> {
-        let v: Value = serde_json::from_str(self.json.get()).unwrap_or_default();
+        let v: Value = serde_json::from_str(&self.json()).unwrap_or_default();
         match v.get("content") {
             Some(Value::Array(a)) => a.clone(),
             Some(Value::String(s)) => vec![json!({ "type": "text", "text": s })],
@@ -60,9 +91,12 @@ impl Msg {
     }
 }
 
-impl AsRef<str> for Msg {
-    fn as_ref(&self) -> &str {
-        self.json.get()
+impl crate::api::Message for Msg {
+    fn text(&self) -> crate::api::Text<'_> {
+        match &self.body {
+            Body::Memory(json) => crate::api::Text::Memory(json),
+            Body::Saved { file, at, len } => crate::api::Text::Saved { file, at: *at, len: *len },
+        }
     }
 }
 
@@ -96,7 +130,7 @@ pub struct Summary {
 
 pub struct Session {
     path: PathBuf,
-    file: Option<File>,
+    file: Option<Arc<File>>,
     /// How many messages are already in the file.
     saved: usize,
     pub name: Option<String>,
@@ -154,10 +188,11 @@ impl Session {
             .collect()
     }
 
-    /// Appends finished messages. A trailing user prompt is held back because
-    /// the next turn may still add to it. Tool results are written at once:
-    /// they are what tells a resumed session the tools ran.
-    pub fn save(&mut self, system: &str, messages: &[Msg]) {
+    /// Appends finished messages, and from then on they are read from the
+    /// file instead of being kept in memory. A trailing user prompt is held
+    /// back because the next turn may still add to it. Tool results are
+    /// written at once: they are what tells a resumed session the tools ran.
+    pub fn save(&mut self, system: &str, messages: &mut [Msg]) {
         let end = match messages.last() {
             Some(m) if m.user && !m.has_results() => messages.len() - 1,
             _ => messages.len(),
@@ -167,11 +202,24 @@ impl Session {
         }
         // Written one message at a time: a copy of everything unsaved would
         // double the memory a long turn needs.
-        for m in &messages[self.saved..end] {
-            if !(self.append(system, m.json.get().as_bytes()) && self.append(system, b"\n")) {
+        for m in &mut messages[self.saved..end] {
+            let Body::Memory(json) = &m.body else {
+                self.saved += 1;
+                continue;
+            };
+            if !(self.append(system, json.as_bytes()) && self.append(system, b"\n")) {
                 break;
             }
             self.saved += 1;
+            // Where the file now ends is where this line ends, whoever else
+            // has been appending to it.
+            let end = self.file.as_ref().and_then(|f| (&**f).stream_position().ok());
+            if let (Some(file), Some(end)) = (&self.file, end)
+                && crate::images::pieces(json).len() == 1
+            {
+                let len = json.len();
+                m.body = Body::Saved { file: file.clone(), at: end - 1 - len as u64, len };
+            }
         }
     }
 
@@ -210,19 +258,19 @@ impl Session {
         if self.file.is_none() {
             self.file = self.open(system);
         }
-        self.file.as_mut().is_some_and(|f| f.write_all(bytes).is_ok())
+        self.file.as_ref().is_some_and(|f| (&**f).write_all(bytes).is_ok())
     }
 
-    fn open(&self, system: &str) -> Option<File> {
+    fn open(&self, system: &str) -> Option<Arc<File>> {
         let fresh = !self.path.exists();
         fs::create_dir_all(self.path.parent()?).ok()?;
-        let mut f = OpenOptions::new().create(true).append(true).open(&self.path).ok()?;
+        let mut f = OpenOptions::new().create(true).read(true).append(true).open(&self.path).ok()?;
         if fresh {
             let mut line = serde_json::to_vec(&Header { system: system.to_string() }).ok()?;
             line.push(b'\n');
             f.write_all(&line).ok()?;
         }
-        Some(f)
+        Some(Arc::new(f))
     }
 }
 
@@ -243,17 +291,28 @@ struct Read {
     messages: Vec<Msg>,
 }
 
-/// Replays a session file: header, then messages and metadata in order.
+/// Replays a session file: header, then messages and metadata in order. The
+/// messages stay in the file; only where each one is gets remembered.
 fn read(path: &Path) -> Option<Read> {
-    let mut lines = BufReader::new(File::open(path).ok()?).lines().map_while(Result::ok);
-    let header: Header = serde_json::from_str(&lines.next()?).ok()?;
+    let file = Arc::new(File::open(path).ok()?);
+    let mut lines = BufReader::new(&*file);
+    let mut line = String::new();
+    let mut at = lines.read_line(&mut line).ok()? as u64;
+    let header: Header = serde_json::from_str(&line).ok()?;
     let (mut name, mut messages) = (None, Vec::new());
-    for line in lines {
+    loop {
+        line.clear();
+        let start = at;
+        match lines.read_line(&mut line) {
+            Ok(n) if n > 0 => at += n as u64,
+            _ => break,
+        }
+        let line = line.trim_end_matches('\n');
         if !line.starts_with(META) {
-            messages.extend(Msg::parse(&line));
+            messages.extend(Msg::parse(line, &file, start));
             continue;
         }
-        let Ok(Meta { meta }) = serde_json::from_str::<Meta>(&line) else { continue };
+        let Ok(Meta { meta }) = serde_json::from_str::<Meta>(line) else { continue };
         if let Some(n) = meta.truncate {
             messages.truncate(n);
         }
@@ -288,15 +347,15 @@ mod tests {
         let mut messages = vec![msg("user", "first"), msg("assistant", "one"), msg("user", "second")];
 
         // A trailing user message is held back until its turn finishes.
-        s.save("SYSTEM", &messages);
+        s.save("SYSTEM", &mut messages);
         assert_eq!(s.saved, 2);
         messages.push(msg("assistant", "two"));
-        s.save("SYSTEM", &messages);
+        s.save("SYSTEM", &mut messages);
         s.rename("SYSTEM", "my work");
         s.truncate("SYSTEM", 2); // rewind to before "second"
         s.save(
             "SYSTEM",
-            &[msg("user", "first"), msg("assistant", "one"), msg("user", "again"), msg("assistant", "ok")],
+            &mut [msg("user", "first"), msg("assistant", "one"), msg("user", "again"), msg("assistant", "ok")],
         );
 
         let loaded = Session::load(&Pick::Named("my work".into())).expect("found by name");
@@ -315,16 +374,65 @@ mod tests {
         // Another test may have taken the same millisecond-stamped name.
         s.path.set_file_name(format!("{}-results.jsonl", stem(&s.path)));
         let id = stem(&s.path);
-        let messages = vec![
+        let mut messages = vec![
             Msg::new("user", json!([{ "type": "text", "text": "run it" }])),
             Msg::new("assistant", json!([{ "type": "tool_use", "id": "t1", "name": "bash", "input": {} }])),
             Msg::new("user", json!([{ "type": "tool_result", "tool_use_id": "t1", "content": "hi" }])),
         ];
         // The turn stopped (error, cancel) right after the tools ran.
-        s.save("SYSTEM", &messages);
+        s.save("SYSTEM", &mut messages);
         let loaded = Session::load(&Pick::Named(id)).expect("found by id");
         assert_eq!(loaded.messages.len(), 3, "the real result was saved");
-        assert!(loaded.messages[2].user && loaded.messages[2].json.get().contains("\"hi\""));
+        assert!(loaded.messages[2].user && loaded.messages[2].json().contains("\"hi\""));
         assert!(s.is_saved(3));
+    }
+
+    #[test]
+    fn saved_messages_live_in_the_file_and_read_back_the_same() {
+        crate::tools::test_home();
+        let mut s = Session::new();
+        s.path.set_file_name(format!("{}-disk.jsonl", stem(&s.path)));
+        let id = stem(&s.path);
+        let text = |n: usize| json!([{ "type": "text", "text": format!("message {n} \u{1F600} \"quoted\"\nline") }]);
+        let mut messages = vec![Msg::new("user", text(0)), Msg::new("assistant", text(1))];
+        let before: Vec<String> = messages.iter().map(|m| m.json().into_owned()).collect();
+        s.save("SYSTEM", &mut messages);
+        assert!(messages.iter().all(|m| matches!(m.body, Body::Saved { .. })), "nothing is kept in memory");
+        // Something else appending to the file (a second window on the same
+        // session) must not shift where later messages are found.
+        fs::OpenOptions::new().append(true).open(&s.path).unwrap().write_all(b"{\"meta\":{}}\n").unwrap();
+        s.rename("SYSTEM", "disk");
+        messages.push(Msg::new("user", text(2)));
+        messages.push(Msg::new("assistant", text(3)));
+        s.save("SYSTEM", &mut messages);
+        let after: Vec<String> = messages.iter().map(|m| m.json().into_owned()).collect();
+        assert_eq!(after[..2], before[..]);
+        assert_eq!(messages[3].content()[0]["text"], text(3)[0]["text"]);
+
+        let loaded = Session::load(&Pick::Named(id)).unwrap();
+        assert!(loaded.messages.iter().all(|m| matches!(m.body, Body::Saved { .. })));
+        let reloaded: Vec<String> = loaded.messages.iter().map(|m| m.json().into_owned()).collect();
+        assert_eq!(reloaded, after);
+        assert_eq!(loaded.messages.iter().map(|m| m.user).collect::<Vec<_>>(), [true, false, true, false]);
+    }
+
+    #[test]
+    fn a_message_with_a_stored_image_stays_in_memory() {
+        crate::tools::test_home();
+        let mut s = Session::new();
+        s.path.set_file_name(format!("{}-image.jsonl", stem(&s.path)));
+        let id = stem(&s.path);
+        let png = crate::tools::test_dir("session-image").join("x.png");
+        fs::write(&png, b"\x89PNG\r\n\x1a\nnot much of a picture").unwrap();
+        let image = crate::images::block(&png).unwrap();
+        let mut messages =
+            vec![Msg::new("user", json!([image])), Msg::new("assistant", json!([{ "type": "text", "text": "ok" }]))];
+        assert!(crate::images::pieces(&messages[0].json()).len() > 1, "the test's marker is a real one");
+        s.save("SYSTEM", &mut messages);
+        assert!(matches!(messages[0].body, Body::Memory(_)), "its image is spliced in when it's sent");
+        assert!(matches!(messages[1].body, Body::Saved { .. }));
+        let loaded = Session::load(&Pick::Named(id)).unwrap();
+        assert!(matches!(loaded.messages[0].body, Body::Memory(_)));
+        assert_eq!(loaded.messages[0].json(), messages[0].json());
     }
 }
