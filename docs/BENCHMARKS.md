@@ -10,29 +10,36 @@ Busy = one prompt that makes 20 bash calls with streamed text in between.
 
 |                               | claude-jr | Claude Code | pi       |
 |-------------------------------|-----------|-------------|----------|
-| install size                  | 3.2 MB    | 324.5 MB    | 109.0 MB |
-| startup (screen settles)      | 5 ms      | 167 ms      | ~260 ms  |
-| memory, idle                  | 2.0 MB    | 135.0 MB    | 141.1 MB |
+| install size                  | 1.8 MB    | 324.5 MB    | 109.0 MB |
+| startup (screen settles)      | 4 ms      | 167 ms      | ~260 ms  |
+| memory, idle                  | 0.7 MB    | 135.0 MB    | 141.1 MB |
 | processes / threads, idle     | 1 / 4     | 1 / 15      | 1 / 11   |
 | CPU while idle 10s            | 0 ms      | 70 ms       | 0 ms     |
-| busy: wall time               | 0.10 s    | 1.84 s      | 1.24 s   |
+| busy: wall time               | 0.09 s    | 1.84 s      | 1.24 s   |
 | busy: agent's own CPU         | 30 ms     | 1150 ms     | 580 ms   |
-| busy: agent's own peak memory | 2.5 MB    | 270.2 MB    | 137.5 MB |
-| busy: CPU incl. commands      | 114 ms    | 1285 ms     | 671 ms   |
+| busy: agent's own peak memory | 2.0 MB    | 270.2 MB    | 137.5 MB |
+| busy: CPU incl. commands      | 116 ms    | 1285 ms     | 671 ms   |
 
 Claude Code 2.1.319, pi 1.5.0, claude-jr static x86_64 build. Codex 0.167.0
 was measured idle only (it speaks OpenAI's API): 150 MB, 37 threads, 322 ms
 startup, with a 306 MB binary.
 
+The release binary is built by [`build.sh`](../build.sh): optimised for size, with Rust's standard
+library rebuilt the same way. On Linux, whenever claude-jr goes quiet it hands the pages of its own
+program file back to the kernel ([`src/mem.rs`](../src/mem.rs)), which is why it idles in less
+memory than its own size; they come back from the page cache as they're needed. The conversation
+is kept in the session file rather than in memory: each request reads the saved messages straight
+from it ([`src/session.rs`](../src/session.rs)), so a long session needs no more memory than a short one.
+
 More of claude-jr's own numbers (`bench/`):
 
 | | |
 |---|---|
-| after 60 tool calls (2.5 MB of history) | 4.9 MB peak; `/clear` brings it back to 2 MB |
-| 100 tool calls (4.2 MB of history, beyond a full context) | 6.4 MB peak |
+| 20, 60, 100 or 200 tool calls in one run (up to 8 MB of history) | 3.9 MB peak, the same for each |
+| resuming a session with 1.3 MB of history and working on | 1.6 MB peak |
 | the UI while a reply streams at ~200 tokens/s | 0.6% of one core |
 | a whole session (20 commands) in a container, agent plus the commands it runs | finishes in 6 MB of RAM (Docker's minimum) at 0.1 CPU, and at 0.01 CPU with 16 MB |
-| the binary, compressed (xz) | 1.3 MB |
+| the binary, compressed (xz) | 0.9 MB |
 
 ## SWE-bench Verified
 

@@ -5,7 +5,7 @@
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
-  <b>Claude Junior</b>: a coding agent for the terminal in one 3 MB binary.<br>
+  <b>Claude Junior</b>: a coding agent for the terminal in one 1.8 MB binary.<br>
   It does what the big ones do, at a hundredth of the size.
 </p>
 
@@ -17,8 +17,8 @@
 
 <table align="center">
   <tr>
-    <td align="center"><b>3.2 MB</b><br>binary, no runtime</td>
-    <td align="center"><b>2 MB</b><br>memory when idle</td>
+    <td align="center"><b>1.8 MB</b><br>binary, no runtime</td>
+    <td align="center"><b>0.7 MB</b><br>memory when idle</td>
     <td align="center"><b>5 ms</b><br>to start</td>
     <td align="center"><b>88%</b><br>SWE-bench Verified<br>with Sonnet 5.5</td>
   </tr>
@@ -42,8 +42,8 @@ gets the newest release.
 
 ## Why
 
-- **Tiny.** One static 3.2 MB file. No Node, no Python, nothing to install first.
-- **Light.** 2 MB of memory when idle and 5 to 6 MB in a long session. A whole session, including the commands it runs, fits in a 16 MB container on a twentieth of a CPU core.
+- **Tiny.** One static 1.8 MB file. No Node, no Python, nothing to install first.
+- **Light.** 0.7 MB of memory when idle and under 4 MB however long the session gets: the conversation lives in its file on disk, not in memory. A whole session, including the commands it runs, fits in a 16 MB container on a twentieth of a CPU core.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
 - **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
@@ -55,10 +55,10 @@ Against other agents, on the same fake API so no model time is counted:
 
 |                              | claude-jr | Claude Code | pi       |
 |------------------------------|-----------|-------------|----------|
-| install size                 | 3.2 MB    | 324.5 MB    | 109.0 MB |
+| install size                 | 1.8 MB    | 324.5 MB    | 109.0 MB |
 | startup                      | 5 ms      | 167 ms      | ~260 ms  |
-| memory, idle                 | 2.0 MB    | 135.0 MB    | 141.1 MB |
-| memory, working              | 2.5 MB    | 270.2 MB    | 137.5 MB |
+| memory, idle                 | 0.7 MB    | 135.0 MB    | 141.1 MB |
+| memory, working              | 2.0 MB    | 270.2 MB    | 137.5 MB |
 | its own CPU for 20 tool calls| 30 ms     | 1150 ms     | 580 ms   |
 
 [SWE-bench Verified](https://www.swebench.com/), one attempt per task, official scoring:
