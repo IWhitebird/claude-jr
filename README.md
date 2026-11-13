@@ -48,7 +48,7 @@ gets the newest release.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
 - **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 290 tests with 98% line coverage, including the real app driven in a terminal.
+- **Tested.** 315 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 
