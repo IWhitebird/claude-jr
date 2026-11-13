@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-jr (Claude Junior): a coding agent for the terminal in one 3 MB Rust binary</title>
+<meta name="description" content="claude-jr, or Claude Junior, is a small, fast coding agent for the terminal and a lightweight Claude Code alternative. One 3 MB Rust binary, 2 MB of memory when idle, 5 ms to start. Subagents, skills, MCP, a sandbox, and 88% on SWE-bench Verified.">
+<meta name="keywords" content="claude-jr, claude junior, claude code alternative, coding agent, AI coding agent, terminal, CLI, Rust, Anthropic, Claude, lightweight, minimal">
+<link rel="canonical" href="https://iwhitebird.github.io/claude-jr/">
+<link rel="icon" type="image/png" href="favicon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="claude-jr">
+<meta property="og:title" content="claude-jr (Claude Junior): a coding agent for the terminal in one 3 MB binary">
+<meta property="og:description" content="A small, fast Claude Code alternative written in Rust. 2 MB of memory when idle, 5 ms to start, 88% on SWE-bench Verified.">
+<meta property="og:url" content="https://iwhitebird.github.io/claude-jr/">
+<meta property="og:image" content="https://iwhitebird.github.io/claude-jr/social.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="claude-jr (Claude Junior)">
+<meta name="twitter:description" content="A coding agent for the terminal in one 3 MB Rust binary. 2 MB of memory when idle.">
+<meta name="twitter:image" content="https://iwhitebird.github.io/claude-jr/social.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "claude-jr",
+  "alternateName": "Claude Junior",
+  "description": "A small, fast coding agent for the terminal, written in Rust. A lightweight Claude Code alternative.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS",
+  "softwareVersion": "0.1.2",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://iwhitebird.github.io/claude-jr/",
+  "downloadUrl": "https://github.com/IWhitebird/claude-jr/releases/latest",
+  "codeRepository": "https://github.com/IWhitebird/claude-jr",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+  :root { --bg: #14110f; --fg: #ece6df; --dim: #a69d94; --line: #2c2723; --accent: #d97757; --code: #1d1916; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #faf7f4; --fg: #221d19; --dim: #6b625a; --line: #e4ddd6; --accent: #b8562f; --code: #f0ebe5; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 20px 72px; }
+  header { display: flex; gap: 24px; align-items: center; }
+  header img { width: 96px; height: 96px; image-rendering: pixelated; flex: none; }
+  h1 { font-size: 2.4rem; line-height: 1.1; margin: 0; }
+  h1 small { display: block; font-size: 1rem; color: var(--accent); font-weight: 600; margin-top: 6px; }
+  .lead { font-size: 1.15rem; color: var(--dim); margin: 28px 0 0; }
+  h2 { font-size: 1.25rem; margin: 48px 0 12px; }
+  pre, code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+        padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+  .numbers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 32px 0 0; }
+  .numbers div { border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .numbers b { display: block; font-size: 1.5rem; }
+  .numbers span { color: var(--dim); font-size: 0.9rem; }
+  @media (max-width: 620px) { .numbers { grid-template-columns: repeat(2, 1fr); } }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--dim); font-weight: 500; }
+  td.us { color: var(--accent); font-weight: 600; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); }
+  .small { color: var(--dim); font-size: 0.9rem; }
+  footer { margin-top: 56px; color: var(--dim); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="favicon.png" alt="claude-jr (Claude Junior) mascot" width="96" height="96">
+    <h1>claude-jr <small>Claude Junior</small></h1>
+  </header>
+
+  <p class="lead">A coding agent for the terminal in one 3 MB binary. claude-jr is a small, fast
+  alternative to Claude Code, written in Rust: it talks to Claude, reads and edits your files, and
+  runs commands, asking before anything changes.</p>
+
+  <div class="numbers">
+    <div><b>3.2 MB</b><span>binary, no runtime</span></div>
+    <div><b>2 MB</b><span>memory when idle</span></div>
+    <div><b>5 ms</b><span>to start</span></div>
+    <div><b>88%</b><span>SWE-bench Verified with Sonnet 5.5</span></div>
+  </div>
+
+  <h2>Install</h2>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh</code></pre>
+  <p class="small">Linux and macOS, x86_64 and ARM. On Windows, run it inside WSL. Then run
+  <code>claudejr</code>; it asks for your Anthropic API key the first time.
+  <code>claudejr --update</code> gets the newest release.</p>
+
+  <h2>Why</h2>
+  <ul>
+    <li><b>Tiny.</b> One static 3.2 MB file. No Node, no Python, nothing to install first.</li>
+    <li><b>Light.</b> 2 MB of memory when idle and 5 to 6 MB in a long session. A whole session fits in a 16 MB container on a twentieth of a CPU core.</li>
+    <li><b>Fast.</b> It starts in 5 ms and uses no CPU while it waits.</li>
+    <li><b>Complete.</b> Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.</li>
+    <li><b>Tested.</b> 285 tests with 98% line coverage.</li>
+  </ul>
+
+  <h2>Compared with other agents</h2>
+  <div class="table">
+  <table>
+    <tr><th></th><th>claude-jr</th><th>Claude Code</th><th>pi</th></tr>
+    <tr><td>install size</td><td class="us">3.2 MB</td><td>324.5 MB</td><td>109.0 MB</td></tr>
+    <tr><td>startup</td><td class="us">5 ms</td><td>167 ms</td><td>~260 ms</td></tr>
+    <tr><td>memory, idle</td><td class="us">2.0 MB</td><td>135.0 MB</td><td>141.1 MB</td></tr>
+    <tr><td>memory, working</td><td class="us">2.5 MB</td><td>270.2 MB</td><td>137.5 MB</td></tr>
+  </table>
+  </div>
+  <p class="small">Every agent measured against the same fake API, so no model time is counted.
+  <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">How it's measured</a>.</p>
+
+  <h2>Use</h2>
+  <pre><code>claudejr                        # start in this folder
+claudejr -c                     # continue the last conversation
+claudejr -p "explain main.rs"   # one prompt, print the answer
+claudejr --sandbox              # only allow writes inside this folder</code></pre>
+
+  <footer>
+    <a href="https://github.com/IWhitebird/claude-jr">Source on GitHub</a> ·
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">Guide</a> ·
+    <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a> ·
+    MIT licence
+  </footer>
+</main>
+</body>
+</html>
