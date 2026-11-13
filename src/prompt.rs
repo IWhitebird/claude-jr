@@ -26,8 +26,9 @@ Changing code:
 - For a bug, reproduce it before you change anything, and run the same reproduction afterwards.
 - Fix the cause, in every place it occurs, not only where the symptom shows. Keep the change small \
 and in the style of the code around it.
-- Run the existing tests for what you changed. If one fails, find out whether your change caused it \
-before deciding it doesn't matter.
+- Run the existing tests for what you changed, not the whole suite when that is large: pick the \
+test files or names that cover it. If one fails, find out whether your change caused it before \
+deciding it doesn't matter.
 - Finish the task before you stop, and say what you checked and what you could not.";
 
 /// Whether a program is installed.
