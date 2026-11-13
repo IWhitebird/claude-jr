@@ -149,6 +149,58 @@ def as_message(events):
             "stop_reason": stop, "usage": {"input_tokens": 50, "output_tokens": 40}}
 
 
+def invalid(body):
+    """Why the real API would refuse this request, or None. It checks what an
+    agent can get wrong: who speaks when, and that every tool call is answered
+    in the very next message and nothing else is."""
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return "messages: at least one message is required"
+    turns = []  # consecutive messages from one side count as one, as the API joins them
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            return f"messages.{i}: role must be user or assistant"
+        content = m.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        if not isinstance(content, list) or not content:
+            return f"messages.{i}: content must not be empty"
+        for j, b in enumerate(content):
+            if not isinstance(b, dict) or "type" not in b:
+                return f"messages.{i}.content.{j}: not a content block"
+            if b["type"] == "text" and not str(b.get("text", "")).strip():
+                return f"messages.{i}.content.{j}: text content blocks must contain non-whitespace text"
+            if b["type"] == "tool_use" and m["role"] != "assistant":
+                return f"messages.{i}.content.{j}: tool_use is only allowed in assistant messages"
+            if b["type"] == "tool_result" and m["role"] != "user":
+                return f"messages.{i}.content.{j}: tool_result is only allowed in user messages"
+        if turns and turns[-1][0] == m["role"]:
+            turns[-1][1].extend(content)
+        else:
+            turns.append((m["role"], list(content)))
+    if turns[0][0] != "user":
+        return "messages: the first message must use the user role"
+    if turns[-1][0] != "user":
+        return "messages: the conversation must end with a user message"
+    asked = set()
+    for role, content in turns:
+        if role == "user":
+            answered = [b.get("tool_use_id") for b in content if b["type"] == "tool_result"]
+            if len(set(answered)) != len(answered):
+                return "messages: a tool_use id was answered twice"
+            if set(answered) != asked:
+                missing, extra = asked - set(answered), set(answered) - asked
+                return (f"messages: tool_use ids without a tool_result right after: {sorted(missing)}" if missing
+                        else f"messages: unexpected tool_result ids: {sorted(extra)}")
+            asked = set()
+        else:
+            ids = [b.get("id") for b in content if b["type"] == "tool_use"]
+            if len(set(ids)) != len(ids):
+                return "messages: tool_use ids must be unique"
+            asked = set(ids)
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -177,6 +229,17 @@ class Handler(BaseHTTPRequestHandler):
         if LOG:
             with open(LOG, "a") as f:
                 f.write(json.dumps(body) + "\n")
+        why = invalid(body)
+        if why:
+            out = json.dumps({"type": "error", "error": {"type": "invalid_request_error", "message": why}}).encode()
+            if LOG:
+                with open(LOG + ".invalid", "a") as f:
+                    f.write(why + "\n")
+            self.send_response(400)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(out)))
+            self.end_headers()
+            return self.wfile.write(out)
         done = sum(1 for m in body.get("messages", [])
                    if m["role"] == "user" and isinstance(m["content"], list)
                    and any(b.get("type") == "tool_result" for b in m["content"]))

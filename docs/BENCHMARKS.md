@@ -64,7 +64,8 @@ in the task's own container, with no retries and no hints.
 | Inside the app | `/stats` |
 | Idle and busy CPU, memory | `bench/cpu.sh` |
 | The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
-| Resizing leaves nothing twice (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
+| Resizing leaves nothing twice or missing, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
+| Random keys, pastes and resizes never crash it or send a bad request | `python3 bench/chaos.py target/release/claudejr` |
 | Line coverage of the tests (98%) | `bench/coverage.sh` |
 | SWE-bench Verified, one task at a time in Docker | `bench/swe/run.py --dry-run` (setup at the top of the file) |
 | Memory budget over a long session | `bench/mem.sh` |

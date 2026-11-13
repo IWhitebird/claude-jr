@@ -20,6 +20,8 @@ jobs:
       # be exactly what a fresh run at that size shows.
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python3 bench/resize.py target/release/claudejr
+      # Random keys, pastes and resizes: it must stay up and never send a malformed request.
+      - run: python3 bench/chaos.py target/release/claudejr 4 250
   # The release build (build.sh) on each kind of machine releases are made on.
   release-build:
     strategy:

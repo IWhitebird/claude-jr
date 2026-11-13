@@ -10,6 +10,8 @@ mod input;
 mod md;
 mod paste;
 mod stats;
+#[cfg(test)]
+mod stress;
 mod table;
 mod term;
 mod text;

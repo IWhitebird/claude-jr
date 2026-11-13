@@ -269,9 +269,19 @@ impl Session {
             let mut line = serde_json::to_vec(&Header { system: system.to_string() }).ok()?;
             line.push(b'\n');
             f.write_all(&line).ok()?;
+        } else if !ends_with_newline(&f) {
+            // The last write was cut off (a crash, a full disk). What comes
+            // next must start its own line, or it would be lost with it.
+            f.write_all(b"\n").ok()?;
         }
         Some(Arc::new(f))
     }
+}
+
+fn ends_with_newline(f: &File) -> bool {
+    let Ok(len) = f.metadata().map(|m| m.len()) else { return true };
+    let mut last = [0];
+    len == 0 || (f.read_exact_at(&mut last, len - 1).is_ok() && last[0] == b'\n')
 }
 
 /// Session files for this directory, oldest first (names are millisecond timestamps).
@@ -434,5 +444,102 @@ mod tests {
         let loaded = Session::load(&Pick::Named(id)).unwrap();
         assert!(matches!(loaded.messages[0].body, Body::Memory(_)));
         assert_eq!(loaded.messages[0].json(), messages[0].json());
+    }
+
+    /// A session file with `body` after the header, and its id.
+    fn file_with(tag: &str, body: &str) -> (PathBuf, String) {
+        crate::tools::test_home();
+        let mut s = Session::new();
+        s.path.set_file_name(format!("{}-{tag}.jsonl", stem(&s.path)));
+        fs::create_dir_all(s.path.parent().unwrap()).unwrap();
+        fs::write(&s.path, format!("{{\"system\":\"SYSTEM\"}}\n{body}")).unwrap();
+        (s.path.clone(), stem(&s.path))
+    }
+
+    const USER: &str = r#"{"role":"user","content":[{"type":"text","text":"hello"}]}"#;
+    const REPLY: &str = r#"{"role":"assistant","content":[{"type":"text","text":"hi"}]}"#;
+
+    #[test]
+    fn a_damaged_file_loads_what_is_whole() {
+        // Cut off mid-line (a crash while writing), junk lines, blank lines, a
+        // truncate past the end: none of it may lose the lines that are whole.
+        let body = format!(
+            "{USER}\n\nnot json at all\n{{\"meta\":{{\"truncate\":99}}}}\n{{\"meta\":broken\n{REPLY}\n{{\"role\":\"us"
+        );
+        let (_, id) = file_with("damaged", &body);
+        let loaded = Session::load(&Pick::Named(id)).expect("it still loads");
+        let texts: Vec<String> = loaded.messages.iter().map(|m| m.json().into_owned()).collect();
+        assert_eq!(texts, [USER, REPLY]);
+    }
+
+    #[test]
+    fn files_with_nothing_usable_do_not_load_or_crash() {
+        for (tag, whole) in
+            [("empty", ""), ("binary", "\u{0}\u{1}\u{2}\n\u{3}"), ("no-header", "{\"role\":\"user\"}\n")]
+        {
+            let (path, id) = file_with(tag, "");
+            fs::write(&path, whole).unwrap();
+            assert!(Session::load(&Pick::Named(id)).is_none(), "{tag}");
+        }
+        let (_, id) = file_with("header-only", "");
+        let loaded = Session::load(&Pick::Named(id)).expect("a session with no messages yet");
+        assert!(loaded.messages.is_empty());
+        let _ = Session::list();
+    }
+
+    #[test]
+    fn saving_after_a_cut_off_line_starts_a_new_line() {
+        let (path, id) = file_with("cut", &format!("{USER}\n{REPLY}\n{{\"role\":\"assis"));
+        let Loaded { mut session, mut messages, .. } = Session::load(&Pick::Named(id.clone())).unwrap();
+        assert_eq!(messages.len(), 2);
+        messages.push(Msg::new("user", json!([{ "type": "text", "text": "more" }])));
+        messages.push(Msg::new("assistant", json!([{ "type": "text", "text": "done" }])));
+        session.save("SYSTEM", &mut messages);
+        assert_eq!(messages[3].content()[0]["text"], "done", "read back from where it was written");
+
+        let again = Session::load(&Pick::Named(id)).unwrap();
+        let prompts: Vec<String> = again.messages.iter().filter_map(Msg::prompt).collect();
+        assert_eq!(prompts, ["hello", "more"], "{}", fs::read_to_string(&path).unwrap());
+        assert_eq!(again.messages.len(), 4);
+    }
+
+    #[test]
+    fn a_message_whose_file_is_gone_reads_as_empty_not_a_crash() {
+        let (path, id) = file_with("shrunk", &format!("{USER}\n{REPLY}\n"));
+        let loaded = Session::load(&Pick::Named(id)).unwrap();
+        fs::write(&path, "").unwrap();
+        assert_eq!(loaded.messages[1].json(), "");
+        assert!(loaded.messages[1].content().is_empty());
+        assert_eq!(loaded.messages[0].prompt(), None);
+    }
+
+    #[test]
+    fn big_and_odd_messages_round_trip_through_the_file() {
+        crate::tools::test_home();
+        let mut s = Session::new();
+        s.path.set_file_name(format!("{}-odd.jsonl", stem(&s.path)));
+        let id = stem(&s.path);
+        let odd = [
+            "x".repeat(3_000_000),
+            "line one\nline two\r\n\ttabbed \u{0} nul \u{1b}[31m escape".to_string(),
+            "quotes \" and \\ backslashes \\n and {\"meta\": 1}".to_string(),
+            "{\"meta\":{\"truncate\":0}}".to_string(),
+            "emoji 👨‍👩‍👧‍👦 漢字 \u{202e} \u{feff}".to_string(),
+            String::new(),
+        ];
+        let mut messages: Vec<Msg> = odd
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Msg::new(if i % 2 == 0 { "user" } else { "assistant" }, json!([{ "type": "text", "text": t }]))
+            })
+            .collect();
+        s.save("SYSTEM", &mut messages);
+        let loaded = Session::load(&Pick::Named(id)).unwrap();
+        assert_eq!(loaded.messages.len(), odd.len());
+        for (i, want) in odd.iter().enumerate() {
+            assert_eq!(messages[i].content()[0]["text"], want.as_str(), "message {i}, as saved");
+            assert_eq!(loaded.messages[i].content()[0]["text"], want.as_str(), "message {i}, as loaded");
+        }
     }
 }
