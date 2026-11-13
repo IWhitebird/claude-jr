@@ -115,6 +115,9 @@ pub enum Pick {
 /// A loaded session: where to keep saving, plus what it held.
 pub struct Loaded {
     pub session: Session,
+    /// The session is open in another window, so this is a copy of it that
+    /// goes its own way from here.
+    pub copy: bool,
     pub system: String,
     pub messages: Vec<Msg>,
 }
@@ -182,8 +185,16 @@ impl Session {
                 .find(|p| stem(p) == *want || read(p).is_some_and(|r| r.name.as_deref() == Some(want)))?,
         };
         let Read { system, name, messages } = read(&path)?;
-        let saved = messages.len();
-        Some(Loaded { session: Session { path, file: None, saved, name }, system, messages })
+        let mut session = Session { path, file: None, saved: messages.len(), name };
+        session.file = session.open(&system);
+        // Two windows writing one conversation would leave a file that is
+        // neither's. Whoever has it open keeps it; a latecomer gets a new
+        // file, which the first save fills with everything so far.
+        let copy = session.file.as_ref().is_some_and(|f| matches!(f.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        if copy {
+            session = Session { name: session.name, ..Session::new() };
+        }
+        Some(Loaded { session, copy, system, messages })
     }
 
     /// Saved sessions for this directory, oldest first.
@@ -214,19 +225,13 @@ impl Session {
         // Written one message at a time: a copy of everything unsaved would
         // double the memory a long turn needs.
         for m in &mut messages[self.saved..end] {
-            let Body::Memory(json) = &m.body else {
-                self.saved += 1;
-                continue;
-            };
-            if !(self.append(system, json.as_bytes()) && self.append(system, b"\n")) {
-                break;
-            }
+            // (A message can already be in a file: another session's, which
+            // this one is a copy of.)
+            let json = m.json();
+            let Some(end) = self.line(system, json.as_bytes()) else { break };
             self.saved += 1;
-            // Where the file now ends is where this line ends, whoever else
-            // has been appending to it.
-            let end = self.file.as_ref().and_then(|f| (&**f).stream_position().ok());
-            if let (Some(file), Some(end)) = (&self.file, end)
-                && crate::images::pieces(json).len() == 1
+            if let Some(file) = &self.file
+                && crate::images::pieces(&json).len() == 1
             {
                 let len = json.len();
                 m.body = Body::Saved { file: file.clone(), at: end - 1 - len as u64, len };
@@ -265,6 +270,26 @@ impl Session {
         self.append(system, &line)
     }
 
+    /// Appends one message as a line and returns where the line ends. It goes
+    /// out in a single write, so another window writing to the same session
+    /// can't land in the middle of it, and where this write ended is where
+    /// the line ends whoever else has been appending.
+    fn line(&mut self, system: &str, json: &[u8]) -> Option<u64> {
+        if self.file.is_none() {
+            self.file = self.open(system);
+        }
+        let mut file = &**self.file.as_ref()?;
+        let wrote = file.write_vectored(&[std::io::IoSlice::new(json), std::io::IoSlice::new(b"\n")]).ok()?;
+        // Only a full disk or the like writes less; finish the line then.
+        if wrote < json.len() {
+            file.write_all(&json[wrote..]).ok()?;
+        }
+        if wrote <= json.len() {
+            file.write_all(b"\n").ok()?;
+        }
+        file.stream_position().ok()
+    }
+
     fn append(&mut self, system: &str, bytes: &[u8]) -> bool {
         if self.file.is_none() {
             self.file = self.open(system);
@@ -285,6 +310,8 @@ impl Session {
             // next must start its own line, or it would be lost with it.
             f.write_all(b"\n").ok()?;
         }
+        // Held for as long as the session is open; `load` checks it.
+        let _ = f.try_lock();
         Some(Arc::new(f))
     }
 }
@@ -571,5 +598,70 @@ mod tests {
         let (ms, pid) = name.split_once('-').expect("time-process");
         assert_eq!(pid, std::process::id().to_string());
         assert!(ms.parse::<u64>().unwrap() > 1_700_000_000_000);
+    }
+
+    /// Several handles appending to one file at once (as two programs would,
+    /// should the lock ever not hold): every line still lands whole, and each
+    /// writer reads back exactly what it wrote.
+    #[test]
+    fn concurrent_appends_do_not_tear_each_others_lines() {
+        let (path, id) = file_with("shared", &format!("{USER}\n{REPLY}\n"));
+        let writers: Vec<_> = (0..4)
+            .map(|w| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let mut session = Session { path, file: None, saved: 0, name: None };
+                    let mut messages = Vec::new();
+                    for i in 0..150 {
+                        let text = format!("writer {w} message {i} {}", "x".repeat(1 + (i * 37) % 9000));
+                        let role = if i % 2 == 0 { "user" } else { "assistant" };
+                        messages.push(Msg::new(role, json!([{ "type": "text", "text": text }])));
+                        if i % 2 == 1 {
+                            session.save("SYSTEM", &mut messages);
+                            let last = messages.last().unwrap();
+                            assert!(matches!(last.body, Body::Saved { .. }));
+                            assert_eq!(last.content()[0]["text"], text, "writer {w} reads back its own message {i}");
+                        }
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let loaded = Session::load(&Pick::Named(id)).unwrap();
+        assert_eq!(loaded.messages.len(), 2 + 4 * 150, "every message is there, none torn");
+        for m in &loaded.messages {
+            assert!(serde_json::from_str::<Value>(&m.json()).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_session_open_elsewhere_is_continued_as_a_copy() {
+        let (path, id) = file_with("twice", &format!("{USER}\n{REPLY}\n"));
+        let pick = Pick::Named(id.clone());
+        let first = Session::load(&pick).unwrap();
+        assert!(!first.copy);
+        let Loaded { session: mut second, copy, mut messages, .. } = Session::load(&pick).unwrap();
+        assert!(copy, "the first one still has it open");
+        assert_ne!(second.path, path);
+        assert_eq!(messages.len(), 2);
+
+        // The copy holds the whole conversation once something is saved,
+        // and the original is left exactly as it was.
+        let before = fs::read_to_string(&path).unwrap();
+        messages.push(Msg::new("user", json!([{ "type": "text", "text": "in the second window" }])));
+        messages.push(Msg::new("assistant", json!([{ "type": "text", "text": "noted" }])));
+        second.save("SYSTEM", &mut messages);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        let copied = Session::load(&Pick::Named(stem(&second.path))).unwrap();
+        let prompts: Vec<String> = copied.messages.iter().filter_map(Msg::prompt).collect();
+        assert_eq!(prompts, ["hello", "in the second window"]);
+        assert_eq!(copied.messages.len(), 4);
+        assert_eq!(messages[0].json(), USER, "and its messages now read from its own file");
+
+        // Once the first window is closed, the original can be continued again.
+        drop(first);
+        assert!(!Session::load(&pick).unwrap().copy);
     }
 }

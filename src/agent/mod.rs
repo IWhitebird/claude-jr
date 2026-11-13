@@ -178,6 +178,10 @@ pub struct Handle {
     pub tools: Arc<OnceLock<Arc<Tools>>>,
 }
 
+/// Said when a session being continued is already open in another window.
+const OPEN_ELSEWHERE: &str =
+    "This conversation is open in another claude-jr, so this is a copy of it: what you do here is saved separately.";
+
 pub fn spawn(cfg: Config, emit: impl Fn(Event) + Send + Sync + 'static) -> Handle {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -216,8 +220,12 @@ impl Agent {
         if let (Some(Pick::Named(name)), None) = (&cfg.resume, &loaded) {
             emit(Event::Notice(format!("No saved session named \"{name}\" here; starting a new one.")));
         }
-        let Loaded { session, system, messages } = loaded.unwrap_or_else(|| Loaded {
+        if loaded.as_ref().is_some_and(|l| l.copy) {
+            emit(Event::Notice(OPEN_ELSEWHERE.into()));
+        }
+        let Loaded { session, system, messages, .. } = loaded.unwrap_or_else(|| Loaded {
             session: Session::new(),
+            copy: false,
             system: crate::prompt::system(),
             messages: Vec::new(),
         });
@@ -467,7 +475,7 @@ impl Agent {
     }
 
     fn resume(&mut self, pick: &Pick) {
-        let Some(Loaded { session, system, messages }) = Session::load(pick) else {
+        let Some(Loaded { session, system, messages, copy }) = Session::load(pick) else {
             return (self.core.emit)(Event::Error("couldn't load that conversation".into()));
         };
         self.tools.checkpoints.open(session.checkpoint_dir());
@@ -476,6 +484,9 @@ impl Agent {
 
         (self.core.emit)(Event::Resumed { name: self.session.name.clone(), messages: self.messages.len() });
         (self.core.emit)(Event::Replay(self.transcript()));
+        if copy {
+            (self.core.emit)(Event::Notice(OPEN_ELSEWHERE.into()));
+        }
     }
 
     /// The conversation so far as the UI would have shown it: what the user
