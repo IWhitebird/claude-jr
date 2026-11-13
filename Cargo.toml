@@ -1,6 +1,6 @@
 [package]
 name = "claude-jr"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "claude-jr (Claude Junior): a small, fast coding agent for the terminal, in one Rust binary. A lightweight Claude Code alternative."
 license = "MIT"
