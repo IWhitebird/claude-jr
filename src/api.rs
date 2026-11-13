@@ -264,7 +264,9 @@ impl std::fmt::Display for Cancelled {
 impl std::error::Error for Cancelled {}
 
 pub struct Client {
-    http: ureq::Agent,
+    /// Replaced after Esc: shutting a connection down closes the whole agent.
+    http: std::sync::Mutex<ureq::Agent>,
+    read: Duration,
     url: String,
     /// Empty until the user logs in. Behind a lock so /login applies at once.
     key: std::sync::RwLock<String>,
@@ -278,15 +280,10 @@ impl Client {
     }
 
     fn with_read_timeout(key: String, base: Option<String>, read: Duration) -> Self {
-        let http = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_connect(Some(CONNECT_TIMEOUT))
-            .timeout_per_read(Some(read))
-            .build()
-            .into();
         let base = base.unwrap_or_else(|| "https://api.anthropic.com".into());
         Client {
-            http,
+            http: std::sync::Mutex::new(agent(read)),
+            read,
             url: format!("{}/v1/messages", base.trim_end_matches('/')),
             key: std::sync::RwLock::new(key),
             silence: SILENCE_LIMIT,
@@ -323,22 +320,59 @@ impl Client {
         if key.is_empty() {
             bail!("no API key yet: type /login to add one");
         }
+        let http = self.http.lock().unwrap().clone();
+        // Esc must stop a request at once, even while it waits for the reply
+        // to begin, which no read timeout can pick up again: a watcher closes
+        // the connection, and a fresh agent is put in place for the next one.
+        let done = AtomicBool::new(false);
+        let result = std::thread::scope(|s| {
+            s.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) {
+                        *self.http.lock().unwrap() = agent(self.read);
+                        http.clone().shutdown();
+                        return;
+                    }
+                    sleep(Duration::from_millis(50));
+                }
+            });
+            let result = self.send(&http, &head, &betas, &key, messages, cancel, &mut on);
+            done.store(true, Ordering::Relaxed);
+            result
+        });
+        // Whatever the closed connection made the request fail with, it was Esc.
+        if cancel.load(Ordering::Relaxed) && result.is_err() {
+            return Err(Cancelled.into());
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send<M: AsRef<str>>(
+        &self,
+        http: &ureq::Agent,
+        head: &[u8],
+        betas: &str,
+        key: &str,
+        messages: &[M],
+        cancel: &AtomicBool,
+        on: &mut impl FnMut(Chunk),
+    ) -> Result<Reply> {
         let mut attempt = 0;
         // Since when the API hasn't been reachable, and how often that was tried.
         let mut offline: Option<(Instant, u32)> = None;
         loop {
             attempt += 1;
-            let mut call = self
-                .http
+            let mut call = http
                 .post(&self.url)
-                .header("x-api-key", &key)
+                .header("x-api-key", key)
                 .header("anthropic-version", VERSION)
                 .header("content-type", "application/json");
             if !betas.is_empty() {
-                call = call.header("anthropic-beta", &betas);
+                call = call.header("anthropic-beta", betas);
             }
 
-            let mut body = Body::new(&head, messages);
+            let mut body = Body::new(head, messages);
             call = call.header("content-length", body.len.to_string());
             let mut res = match call.send(ureq::SendBody::from_reader(&mut body)) {
                 Ok(r) => r,
@@ -367,7 +401,7 @@ impl Client {
             let status = res.status().as_u16();
             if status == 200 {
                 let reader = BufReader::new(res.body_mut().as_reader());
-                match read_sse(reader, cancel, self.silence, &mut on) {
+                match read_sse(reader, cancel, self.silence, on) {
                     Err(e) if e.is::<Retryable>() && attempt < MAX_ATTEMPTS => {
                         wait(backoff(attempt, None), cancel)?;
                         continue;
@@ -454,6 +488,15 @@ impl std::io::Read for Body<'_> {
         }
         Ok(0)
     }
+}
+
+fn agent(read: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_per_read(Some(read))
+        .build()
+        .into()
 }
 
 fn backoff(attempt: u32, retry_after: Option<u64>) -> Duration {
@@ -737,6 +780,59 @@ data: {"type":"message_stop"}
             while s.read(&mut buf).map(|n| n > 0).unwrap_or(false) {}
         });
         (base, h)
+    }
+
+    /// Esc stops a request at once even while it waits for the reply to begin
+    /// (no read timeout can be picked up again there), and the next request works.
+    #[test]
+    fn cancel_works_before_the_reply_begins() {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            // First request: read it, then say nothing until the client hangs up.
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            while s.read(&mut buf).map(|n| n > 0).unwrap_or(false) {}
+            // Second request: a normal reply.
+            let (mut s, _) = l.accept().unwrap();
+            let _ = s.read(&mut buf);
+            let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
+                data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+                data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"again\"}}\n\n\
+                data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+                data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n\
+                data: {\"type\":\"message_stop\"}\n\n";
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n";
+            let _ = s.write_all(format!("{head}content-length: {}\r\n\r\n{body}", body.len()).as_bytes());
+        });
+        // The normal client: a 60 s wait for the reply to begin.
+        let client = Client::new("k".into(), Some(base));
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new("claude-opus-5-5", None, "", &tools);
+        let cancel = AtomicBool::new(false);
+        let started = Instant::now();
+        let err = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                sleep(Duration::from_millis(400));
+                cancel.store(true, Ordering::Relaxed);
+            });
+            client.stream(&req, &[] as &[&str], &cancel, |_| {}).err().expect("an error")
+        });
+        assert!(err.is::<Cancelled>(), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+
+        // The next request goes through on a fresh connection.
+        let mut text = String::new();
+        let reply = client.stream(&req, &[] as &[&str], &AtomicBool::new(false), |c| {
+            if let Chunk::Text(t) = c {
+                text.push_str(t);
+            }
+        });
+        assert!(reply.is_ok(), "{:?}", reply.err());
+        assert_eq!(text, "again");
+        server.join().unwrap();
     }
 
     /// A network that is down for a while (longer than the few quick retries
