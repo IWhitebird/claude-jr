@@ -1,6 +1,6 @@
 [package]
 name = "claude-jr"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 # The command is claudejr; the project is claude-jr.
