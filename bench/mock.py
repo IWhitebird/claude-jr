@@ -18,6 +18,14 @@ CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
 SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents"
 TEXT_CHARS = int(os.environ.get("MOCK_TEXT_CHARS", "2000"))  # "bench": streamed text per reply
 DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, like a real stream
+# Requests that go wrong, by position (1 = the first request): "2:500,3:cut".
+# Kinds: a status code (400, 401, 429, 500, 529), cut (the stream stops
+# half-way), early (it stops before any content), garbage (200 with a body
+# that isn't a stream), overloaded (an error event in the stream), half-tool
+# (the stream stops inside a tool call's input).
+FAIL = dict((int(n), kind) for n, kind in
+            (f.split(":") for f in os.environ.get("MOCK_FAIL", "").split(",") if f))
+SEEN = [0]
 
 
 def sse(events):
@@ -273,6 +281,46 @@ class Handler(BaseHTTPRequestHandler):
             events = tool_round(done, usage) if done < ROUNDS else final(usage)
         if body.get("stream") is not True:
             return self.send_json(as_message(events))
+        SEEN[0] += 1
+        kind = FAIL.get(SEEN[0])
+        if kind and kind.isdigit():
+            names = {"400": "invalid_request_error", "401": "authentication_error", "429": "rate_limit_error",
+                     "529": "overloaded_error"}
+            out = json.dumps({"type": "error", "error": {"type": names.get(kind, "api_error"),
+                                                         "message": f"the fake API was told to answer {kind}"}}).encode()
+            self.send_response(int(kind))
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(out)))
+            if kind == "429":
+                self.send_header("retry-after", "0")
+            self.end_headers()
+            return self.wfile.write(out)
+        if kind == "garbage":
+            out = b"<html>502 from some proxy</html>"
+            self.send_response(200)
+            self.send_header("content-type", "text/html")
+            self.send_header("content-length", str(len(out)))
+            self.end_headers()
+            return self.wfile.write(out)
+        if kind in ("cut", "early", "overloaded", "half-tool"):
+            if kind == "early":
+                events = events[:1]
+            elif kind == "half-tool":
+                at = next((i for i, e in enumerate(events) if e.get("delta", {}).get("type") == "input_json_delta"),
+                          len(events) // 2)
+                events = events[:at + 1]
+            else:
+                events = events[:max(2, len(events) // 2)]
+            if kind == "overloaded":
+                events.append({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(sse(events))
+            self.wfile.flush()
+            self.close_connection = True
+            return
         parts = [sse([e]) for e in events]
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")

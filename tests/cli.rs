@@ -405,6 +405,82 @@ fn default_scenario_runs_tools() {
     }
 }
 
+/// Each way a request can go wrong, at each point of a run with tools: the
+/// run either recovers or says what happened, never sends a conversation the
+/// API would refuse, and the saved session can always be continued.
+#[test]
+fn every_kind_of_api_failure_is_survived() {
+    // (what goes wrong, whether the run should still succeed)
+    let kinds = [
+        ("500", true),
+        ("529", true),
+        ("429", true),
+        ("early", true),
+        ("400", false),
+        ("401", false),
+        ("garbage", false),
+        ("cut", false),
+        ("overloaded", false),
+        ("half-tool", false),
+    ];
+    let runs: Vec<_> = kinds
+        .iter()
+        .flat_map(|&(kind, recovers)| (1..=3).map(move |at| (kind, recovers, at)))
+        .map(|(kind, recovers, at)| {
+            std::thread::spawn(move || {
+                let fail = format!("{at}:{kind}");
+                let e = Env::with(&[("MOCK_FAIL", &fail), ("MOCK_ROUNDS", "2")]);
+                let o = e.run(&["-y", "-p", "do the work"]);
+                let what = format!("{fail}: exit {}\n{}\n{}", o.code, o.out, o.err);
+                if recovers {
+                    assert_eq!(o.code, 0, "{what}");
+                    assert!(o.out.contains("Done."), "{what}");
+                } else {
+                    assert_eq!(o.code, 1, "{what}");
+                    assert!(o.err.contains("error:"), "{what}");
+                    if kind == "garbage" {
+                        assert!(
+                            o.err.contains("not as the API does (text/html)") && o.err.contains("502 from some proxy"),
+                            "{what}"
+                        );
+                    }
+                }
+                assert!(!o.err.contains("panicked"), "{what}");
+                // Whatever happened, the conversation goes on from there.
+                let o = e.run(&["-y", "-c", "-p", "carry on"]);
+                assert_eq!(o.code, 0, "{fail}, continued: exit {}\n{}\n{}", o.code, o.out, o.err);
+                assert!(o.out.contains("Done."), "{fail}, continued:\n{}", o.out);
+                let refused = std::fs::read_to_string(e.root.join("requests.jsonl.invalid")).unwrap_or_default();
+                assert!(refused.is_empty(), "{fail}: a malformed conversation was sent: {refused}");
+            })
+        })
+        .collect();
+    let failed: Vec<String> = runs
+        .into_iter()
+        .filter_map(|r| r.join().err())
+        .map(|e| e.downcast_ref::<String>().cloned().unwrap_or_else(|| "a run panicked".into()))
+        .collect();
+    assert!(failed.is_empty(), "{} of {} failed:\n\n{}", failed.len(), kinds.len() * 3, failed.join("\n\n"));
+}
+
+/// A failure that doesn't go away is given up on in reasonable time, with
+/// what the API said.
+#[test]
+fn a_failure_that_persists_is_reported_with_its_cause() {
+    for (kind, want) in
+        [("500", "API error 500: the fake API was told to answer 500"), ("early", "the stream ended before any reply")]
+    {
+        let fail: Vec<String> = (1..=12).map(|n| format!("{n}:{kind}")).collect();
+        let e = Env::with(&[("MOCK_FAIL", &fail.join(","))]);
+        let start = Instant::now();
+        let o = e.run(&["-y", "-p", "hi"]);
+        assert_eq!(o.code, 1, "{kind}: {}", o.err);
+        assert!(o.err.contains(want), "{kind}: {}", o.err);
+        assert_eq!(e.requests().len(), 5, "{kind}: five tries, then it stops");
+        assert!(start.elapsed() < Duration::from_secs(30), "{kind}: {:?}", start.elapsed());
+    }
+}
+
 #[test]
 fn api_failure_is_an_error() {
     let e = Env::new();

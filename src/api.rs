@@ -406,6 +406,12 @@ impl Client {
 
             let status = res.status().as_u16();
             if status == 200 {
+                // A proxy or a sign-in page in the way answers 200 too.
+                let kind = res.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                if !kind.is_empty() && !kind.starts_with("text/event-stream") {
+                    let start: String = res.body_mut().read_to_string().unwrap_or_default().chars().take(200).collect();
+                    bail!("{} answered, but not as the API does ({kind}): {}", self.url, start.trim());
+                }
                 let reader = BufReader::new(res.body_mut().as_reader());
                 match read_sse(reader, cancel, self.silence, on) {
                     Err(e) if e.is::<Retryable>() && attempt < MAX_ATTEMPTS => {

@@ -53,9 +53,12 @@ def run(seed):
         port = s.getsockname()[1]
     scenario = rng.choice(["default", "bench", "features", "web"])
     home = tempfile.mkdtemp()
+    # Some requests go wrong along the way, as they do.
+    kinds = ["500", "529", "429", "400", "cut", "early", "garbage", "overloaded", "half-tool"]
+    fail = ",".join(f"{n}:{rng.choice(kinds)}" for n in sorted(rng.sample(range(1, 40), rng.randint(0, 8))))
     mock = subprocess.Popen(
         [sys.executable, "-I", os.path.join(root, "bench/mock.py"), str(port)],
-        env=dict(os.environ, MOCK_LOG=f"{home}/requests", MOCK_SCENARIO=scenario, MOCK_ROUNDS=str(rng.randint(1, 4)), MOCK_OUTPUT_KB="1",
+        env=dict(os.environ, MOCK_LOG=f"{home}/requests", MOCK_SCENARIO=scenario, MOCK_FAIL=fail, MOCK_ROUNDS=str(rng.randint(1, 4)), MOCK_OUTPUT_KB="1",
                  MOCK_TEXT_CHARS="600", MOCK_DELAY_MS=str(rng.choice([0, 2, 8]))),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.makedirs(f"{home}/claude-jr")
