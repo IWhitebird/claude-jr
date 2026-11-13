@@ -42,8 +42,9 @@ const APPROVE_GUARD: Duration = Duration::from_millis(400);
 fn armed(since: Instant, now: Instant) -> bool {
     now.duration_since(since) >= APPROVE_GUARD
 }
-/// Lines of history kept to redraw after a resize.
-const HISTORY_LINES: usize = 1000;
+/// Lines of history kept to redraw after a resize: far more than a long
+/// working day produces (and about 2 MB at most).
+const HISTORY_LINES: usize = 20_000;
 /// A resize is drawn once the size has stopped changing for this long:
 /// dragging a window edge or zooming sends a burst of them.
 const RESIZE_SETTLE: Duration = Duration::from_millis(60);
@@ -213,8 +214,8 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
             continue;
         }
         if std::mem::take(&mut app.clear_screen) {
+            // /clear has already started the history again, with the header.
             term.clear(true);
-            app.history.clear();
         } else if resized_at.take().is_some() {
             // The terminal keeps an old-width copy in its scrollback; wipe
             // that too and draw the kept history again at the new width.
@@ -404,7 +405,7 @@ impl App {
     // ---- scrollback -----------------------------------------------------
 
     /// Draws a block into scrollback and remembers it for redrawing after a
-    /// resize (only the last couple of screens' worth is kept).
+    /// resize.
     fn add(&mut self, block: Block) {
         let before = self.commits.len();
         block.render(self.cols, &mut self.commits);

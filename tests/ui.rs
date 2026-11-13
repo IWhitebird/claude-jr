@@ -1402,6 +1402,67 @@ fn a_long_reply_streams_through_resizes_inline() {
     stream_and_resize("stream-inline", "inline");
 }
 
+/// Zooming or resizing in a long session draws all of it again, the header
+/// and the first message included, not just the most recent screens.
+#[test]
+fn a_resize_redraws_all_of_a_long_session() {
+    let world = World::new("long-resize", &[("MOCK_ROUNDS", "150")]);
+    let mut app = world.start(&["-y"]);
+    app.send("the first message\r");
+    app.expect("Round 150");
+    app.expect("Done. Here's what happened:");
+    app.expect("ask anything");
+    assert!(app.all().lines().count() > 1200, "long enough to be more than a few screens");
+
+    let whole = |redrawn: &str| {
+        assert_eq!(redrawn.matches("/help for commands").count(), 1, "the header, once");
+        let order =
+            ["/help for commands", "> the first message", "Write(demo.txt)", "Round 2:", "Round 75:", "Round 150:"];
+        let mut from = 0;
+        for part in order {
+            let at = redrawn[from..].find(part).unwrap_or_else(|| panic!("{part:?} is missing or out of order"));
+            from += at + part.len();
+        }
+    };
+    for (rows, cols) in [(30, 80), (20, 60), (40, 100)] {
+        let mark = app.pos;
+        app.resize(rows, cols);
+        whole(&app.all_from(mark));
+    }
+    app.exit();
+
+    // The same after coming back to it.
+    let mut app = world.start(&["-y", "-c"]);
+    app.expect("ask anything");
+    let mark = app.pos;
+    app.resize(30, 80);
+    let redrawn = app.all_from(mark);
+    assert_eq!(redrawn.matches("/help for commands").count(), 1, "the header, once");
+    assert!(redrawn.contains("> the first message") && redrawn.contains("Write(demo.txt)"), "the start of the session");
+    app.exit();
+}
+
+/// After /clear the page starts again with the header, and a resize must
+/// bring that header back too, with what came after it.
+#[test]
+fn the_header_survives_a_resize_after_clear() {
+    let world = World::new("clear-resize", &[("MOCK_ROUNDS", "1")]);
+    let mut app = world.start(&["-y"]);
+    app.turn("before the clear");
+    app.send("/clear\r");
+    app.expect("/help for commands");
+    app.turn("after the clear");
+    for (rows, cols) in [(30, 80), (40, 100)] {
+        let mark = app.pos;
+        app.resize(rows, cols);
+        let redrawn = app.all_from(mark);
+        assert_eq!(redrawn.matches("/help for commands").count(), 1, "the header, once:\n{redrawn}");
+        assert!(redrawn.contains("> after the clear"), "what came after the clear");
+        assert!(!redrawn.contains("before the clear"), "nothing from before it");
+    }
+    app.exit();
+}
+
 // ---- signals ------------------------------------------------------------
 
 #[test]

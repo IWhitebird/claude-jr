@@ -25,6 +25,9 @@ struct Anchor {
     top: usize,
 }
 
+/// Room for an ordinary frame.
+const FRAME_BYTES: usize = 16 * 1024;
+
 pub struct Term {
     out: io::Stdout,
     buf: String,
@@ -65,7 +68,7 @@ impl Term {
         }
         out.write_all(b"\x1b[?2004h")?; // bracketed paste
         out.flush()?;
-        Ok(Term { out, buf: String::with_capacity(16 * 1024), row: 0, anchor, enhanced_keys, last: None, wipe: None })
+        Ok(Term { out, buf: String::with_capacity(FRAME_BYTES), row: 0, anchor, enhanced_keys, last: None, wipe: None })
     }
 
     pub fn size() -> (usize, usize) {
@@ -136,6 +139,10 @@ impl Term {
         }
         self.buf.push_str("\x1b[?2026l");
         self.out.write_all(self.buf.as_bytes())?;
+        // Redrawing a long history after a resize is a big frame; the space
+        // for it isn't kept for the small ones that follow.
+        self.buf.shrink_to(FRAME_BYTES);
+        commits.shrink_to(0);
         self.last = Some((live, cursor));
         self.out.flush()
     }

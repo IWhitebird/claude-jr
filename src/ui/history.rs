@@ -1,7 +1,8 @@
 // What was written to scrollback, kept as source (not as finished lines) so
-// it can be drawn again at a new width when the terminal is resized. Only the
-// most recent ~1000 lines are kept: enough to refill the scrollback after a
-// resize, never the whole conversation.
+// it can be drawn again at a new width when the terminal is resized. It is
+// what's on screen, not what was sent: a tool's output is here as the few
+// lines that were shown. Everything is kept, so a resize loses nothing; only
+// past a very large size do the oldest blocks go, and then a line says so.
 
 use super::md::Markdown;
 use super::text::{ORANGE, Span, clean, span};
@@ -77,16 +78,18 @@ impl Block {
     }
 }
 
-/// The most recent blocks and how many lines each took when drawn.
+/// The blocks drawn so far and how many lines each took.
 #[derive(Default)]
 pub struct History {
     blocks: VecDeque<(Block, usize)>,
     lines: usize,
+    /// Lines of old blocks that were let go.
+    dropped: usize,
 }
 
 impl History {
-    /// Remembers a block that was drawn as `lines` lines, dropping the oldest
-    /// ones while what's left still covers `keep` lines.
+    /// Remembers a block that was drawn as `lines` lines. Past `keep` lines
+    /// the oldest blocks are dropped, but never the header at the top.
     pub fn push(&mut self, block: Block, lines: usize, keep: usize) {
         self.lines += lines;
         match (self.blocks.back_mut(), block) {
@@ -99,12 +102,14 @@ impl History {
             }
             (_, block) => self.blocks.push_back((block, lines)),
         }
-        while let Some((_, first)) = self.blocks.front() {
+        let oldest = usize::from(matches!(self.blocks.front(), Some((Block::Lines(_), _))));
+        while let Some((_, first)) = self.blocks.get(oldest) {
             if self.lines - first < keep {
                 break;
             }
             self.lines -= first;
-            self.blocks.pop_front();
+            self.dropped += first;
+            self.blocks.remove(oldest);
         }
     }
 
@@ -125,13 +130,19 @@ impl History {
 
     pub fn clear(&mut self) {
         self.blocks.clear();
-        self.lines = 0;
+        (self.lines, self.dropped) = (0, 0);
     }
 
     /// Everything kept, drawn at `cols`.
     pub fn render(&self, cols: usize) -> Vec<String> {
         let mut out = Vec::new();
-        for (block, _) in &self.blocks {
+        for (i, (block, _)) in self.blocks.iter().enumerate() {
+            if i == 1 && self.dropped > 0 {
+                let gone =
+                    format!("… {} earlier lines are no longer shown here. The saved session has them.", self.dropped);
+                view::note(&gone, super::text::DIM, cols, &mut out);
+                out.push(String::new());
+            }
             block.render(cols, &mut out);
         }
         out
@@ -143,13 +154,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_only_enough_to_refill_the_screen() {
+    fn everything_is_kept_up_to_the_limit() {
+        let mut h = History::default();
+        h.push(Block::Lines(vec!["the header".into()]), 1, 5000);
+        for i in 0..3000 {
+            h.push(Block::User(format!("message {i}")), 1, 5000);
+        }
+        let drawn = h.render(80);
+        assert_eq!(drawn.len(), 3001);
+        assert_eq!(drawn[0], "the header");
+        assert!(drawn[1].contains("message 0") && drawn[3000].contains("message 2999"));
+    }
+
+    #[test]
+    fn past_the_limit_the_oldest_go_but_the_header_stays_and_a_line_says_so() {
+        let mut h = History::default();
+        h.push(Block::Lines(vec!["the header".into()]), 1, 10);
+        for i in 0..100 {
+            h.push(Block::User(format!("message {i}")), 1, 10);
+        }
+        let drawn: Vec<String> = h.render(80).iter().map(|l| strip(l)).collect();
+        assert_eq!(drawn[0], "the header");
+        assert!(drawn[1].contains("91 earlier lines are no longer shown"), "{}", drawn[1]);
+        assert!(drawn[3].contains("message 91"), "{}", drawn[3]);
+        assert!(drawn.last().unwrap().contains("message 99"));
+        assert_eq!(h.lines, 10);
+
+        // Without a header the oldest block is simply the first one.
         let mut h = History::default();
         for i in 0..100 {
             h.push(Block::User(format!("message {i}")), 1, 10);
         }
         assert_eq!(h.blocks.len(), 10);
-        assert_eq!(h.render(80).last().map(|l| l.contains("message 99")), Some(true));
+        h.clear();
+        assert_eq!((h.lines, h.dropped, h.render(80).len()), (0, 0, 0));
     }
 
     #[test]
