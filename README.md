@@ -33,7 +33,7 @@ asking before anything changes.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh | sh
+curl -fsSL https://claudejr.iwhitebird.com/install | sh
 ```
 
 Linux and macOS, x86_64 and ARM. On Windows, run it inside WSL. Then run
@@ -98,6 +98,6 @@ measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 - [Guide](docs/GUIDE.md): commands, keys, modes, tools, skills, MCP, the sandbox, memory, sessions, config.
 - [Benchmarks](docs/BENCHMARKS.md): every number and how to reproduce it.
 - [Architecture](ARCHITECTURE.md): how it is built.
-- [Website](https://iwhitebird.github.io/claude-jr/)
+- [Website](https://claudejr.iwhitebird.com)
 
 MIT licence.
