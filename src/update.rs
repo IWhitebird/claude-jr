@@ -26,14 +26,29 @@ fn asset() -> Option<String> {
     matches!(std::env::consts::ARCH, "x86_64" | "aarch64").then(|| format!("claudejr-{os}-{}", std::env::consts::ARCH))
 }
 
+/// One of a host's addresses can be unreachable from a given network while
+/// the others work, and each try may land on a different one: a few tries
+/// get past it.
+const TRIES: u32 = 5;
+
 fn get(url: &str) -> Result<ureq::Body, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(5)))
-        .timeout_per_read(Some(Duration::from_secs(60)))
+        .timeout_recv_response(Some(Duration::from_secs(10)))
+        .timeout_per_read(Some(Duration::from_secs(30)))
         .build()
         .into();
-    let res = agent.get(url).header("user-agent", "claudejr").call().map_err(|e| format!("{url}: {e}"))?;
-    Ok(res.into_body())
+    let mut last = String::new();
+    for attempt in 1..=TRIES {
+        match agent.get(url).header("user-agent", "claudejr").call() {
+            Ok(res) => return Ok(res.into_body()),
+            // The server answered: asking again won't change a 404.
+            Err(e @ ureq::Error::StatusCode(_)) => return Err(format!("{url}: {e}")),
+            Err(e) => last = format!("{url}: {e} (tried {attempt} times)"),
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    Err(last)
 }
 
 /// "1.12.3" as numbers, so 1.10 is newer than 1.9.
