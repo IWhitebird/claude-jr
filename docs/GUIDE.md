@@ -158,12 +158,28 @@ claude-jr restarts itself inside [bubblewrap](https://github.com/containers/bubb
 so the kernel enforces the limits for every tool, including its own file edits:
 
 - **writable**: the current directory, its session files, package caches, a private `/tmp`
-- **read-only**: the rest of the system, and toolchains in `$HOME` (`.cargo`, `.rustup`, `.nvm`, ...)
-- **hidden**: everything else in `$HOME`: ssh keys, tokens, other projects
+- **read-only**: the rest of the system, toolchains in `$HOME` (`.cargo`, `.rustup`, `.nvm`, ...),
+  and the project's git hooks and git config, so nothing can be planted that runs on your next
+  git command
+- **hidden**: everything else in `$HOME` (ssh keys, tokens, other projects), your session's
+  sockets in `$XDG_RUNTIME_DIR` (D-Bus, ssh and gpg agents, the desktop), and the Docker,
+  Podman and containerd sockets, any of which would be a way out
 
-`bench/sandbox.sh` checks this: a fake model tries to delete a file outside the
-project and write to `$HOME`, and both must fail. To try the agent on a repo
-without risking anything, use a throwaway worktree:
+What it doesn't cover:
+
+- **The project's own files.** They are writable by design, so a command can still change a
+  `Makefile`, a script, or `.envrc` that you later run outside the sandbox. Review changes
+  before running them.
+- **Package caches.** `~/.cargo/registry`, `~/.npm`, `~/.cache` stay writable so builds work;
+  a command could change downloaded source there that a later build outside the sandbox uses.
+- **The network.** It stays on, because the agent needs the API.
+- **Pasting a screenshot** with ctrl+v doesn't work inside it, since the desktop's clipboard
+  socket is hidden. Dragging an image file in still does.
+
+`bench/sandbox.sh` checks all of this: a fake model tries to delete a file outside the
+project, write to `$HOME`, plant a git hook, change the git config, and reach the Docker
+socket and the session bus. All must fail, while a write and a commit in the project
+must work. To try the agent on a repo without risking anything, use a throwaway worktree:
 
 ```sh
 git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
