@@ -157,8 +157,19 @@ struct MetaFields {
 
 impl Session {
     pub fn new() -> Session {
-        let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-        Session { path: dir().join(format!("{ms}.jsonl")), file: None, saved: 0, name: None }
+        // Named by when it started, so they sort by age, and by which process
+        // started it: runs launched side by side in one folder can begin in
+        // the same millisecond, and must not share a file.
+        static LAST: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        // Never the same twice in one process either.
+        let ms = {
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            *last = now.max(*last + 1);
+            *last
+        };
+        let path = dir().join(format!("{ms}-{}.jsonl", std::process::id()));
+        Session { path, file: None, saved: 0, name: None }
     }
 
     pub fn load(pick: &Pick) -> Option<Loaded> {
@@ -541,5 +552,24 @@ mod tests {
             assert_eq!(messages[i].content()[0]["text"], want.as_str(), "message {i}, as saved");
             assert_eq!(loaded.messages[i].content()[0]["text"], want.as_str(), "message {i}, as loaded");
         }
+    }
+
+    #[test]
+    fn sessions_started_together_get_their_own_files() {
+        crate::tools::test_home();
+        let paths: Vec<PathBuf> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..200).map(|_| Session::new().path).collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect();
+        let distinct: std::collections::HashSet<&PathBuf> = paths.iter().collect();
+        assert_eq!(distinct.len(), paths.len());
+        // The process is in the name, so two programs can't pick the same one,
+        // and the time comes first, so they still sort by age.
+        let name = stem(&paths[0]);
+        let (ms, pid) = name.split_once('-').expect("time-process");
+        assert_eq!(pid, std::process::id().to_string());
+        assert!(ms.parse::<u64>().unwrap() > 1_700_000_000_000);
     }
 }

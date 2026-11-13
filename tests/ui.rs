@@ -1433,7 +1433,7 @@ fn a_resize_redraws_all_of_a_long_session() {
 
     // The same after coming back to it.
     let mut app = world.start(&["-y", "-c"]);
-    app.expect("ask anything");
+    app.shown("Done. Here's what happened:");
     let mark = app.pos;
     app.resize(30, 80);
     let redrawn = app.all_from(mark);

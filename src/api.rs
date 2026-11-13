@@ -406,9 +406,10 @@ impl Client {
 
             let status = res.status().as_u16();
             if status == 200 {
-                // A proxy or a sign-in page in the way answers 200 too.
+                // A proxy or a sign-in page in the way answers 200 too, with
+                // a web page. (Gateways label a real stream in various ways.)
                 let kind = res.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-                if !kind.is_empty() && !kind.starts_with("text/event-stream") {
+                if kind.starts_with("text/html") {
                     let start: String = res.body_mut().read_to_string().unwrap_or_default().chars().take(200).collect();
                     bail!("{} answered, but not as the API does ({kind}): {}", self.url, start.trim());
                 }
@@ -854,7 +855,7 @@ data: {"type":"message_stop"}
         let h = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
             let mut buf = [0u8; 8192];
-            let _ = s.read(&mut buf);
+            read_request(&mut s);
             let ev = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n";
             let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
             s.write_all(format!("{head}{:x}\r\n{ev}\r\n", ev.len()).as_bytes()).unwrap();
@@ -875,11 +876,11 @@ data: {"type":"message_stop"}
             // First request: read it, then say nothing until the client hangs up.
             let (mut s, _) = l.accept().unwrap();
             let mut buf = [0u8; 8192];
-            let _ = s.read(&mut buf);
+            read_request(&mut s);
             while s.read(&mut buf).map(|n| n > 0).unwrap_or(false) {}
             // Second request: a normal reply.
             let (mut s, _) = l.accept().unwrap();
-            let _ = s.read(&mut buf);
+            read_request(&mut s);
             let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
                 data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
                 data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"again\"}}\n\n\
@@ -923,7 +924,7 @@ data: {"type":"message_stop"}
     #[test]
     #[cfg_attr(not(target_os = "linux"), ignore)]
     fn a_network_outage_is_waited_out() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         // A port with nothing behind it yet: connections are refused. On an
         // address no other test uses, so none can be given the port while it
         // is free and answer in the server's place.
@@ -934,8 +935,7 @@ data: {"type":"message_stop"}
             sleep(Duration::from_millis(8500)); // longer than five quick retries take
             let l = std::net::TcpListener::bind(addr).unwrap();
             let (mut s, _) = l.accept().unwrap();
-            let mut buf = [0u8; 8192];
-            let _ = s.read(&mut buf);
+            read_request(&mut s);
             let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
                 data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
                 data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"back\"}}\n\n\
@@ -972,7 +972,7 @@ data: {"type":"message_stop"}
     /// re-sends the request, which is slow and is billed again.
     #[test]
     fn a_slow_start_is_waited_for_not_sent_again() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -980,8 +980,7 @@ data: {"type":"message_stop"}
         std::thread::spawn(move || {
             for mut s in l.incoming().flatten() {
                 seen.fetch_add(1, Ordering::Relaxed);
-                let mut buf = [0u8; 8192];
-                let _ = s.read(&mut buf);
+                read_request(&mut s);
                 sleep(Duration::from_millis(3500));
                 let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
                     data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
@@ -1077,13 +1076,12 @@ data: {"type":"message_stop"}
 
     #[test]
     fn reading_resumes_after_read_timeouts() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         let server = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
-            let mut buf = [0u8; 8192];
-            let _ = s.read(&mut buf);
+            read_request(&mut s);
             let chunk = |s: &mut std::net::TcpStream, d: &str| {
                 s.write_all(format!("{:x}\r\n{d}\r\n", d.len()).as_bytes()).unwrap();
                 s.flush().unwrap();
@@ -1123,6 +1121,32 @@ data: {"type":"message_stop"}
 
     /// What the scripted server saw: the head of each request, lower-cased.
     type Heads = Arc<Mutex<Vec<String>>>;
+
+    /// Reads one whole request, body included. A test server that answers
+    /// and closes with part of the request unread resets the connection.
+    fn read_request(s: &mut std::net::TcpStream) {
+        use std::io::Read;
+        let (mut seen, mut buf) = (Vec::new(), [0u8; 8192]);
+        loop {
+            let n = s.read(&mut buf).unwrap_or(0);
+            seen.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&seen).to_ascii_lowercase();
+            let Some(head) = text.find("\r\n\r\n") else {
+                if n == 0 {
+                    return;
+                }
+                continue;
+            };
+            let len: usize = text[..head]
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            if n == 0 || seen.len() >= head + 4 + len {
+                return;
+            }
+        }
+    }
 
     /// A server that answers request n with `responses[n]` (status, extra
     /// header lines, body) and records each request's head.
