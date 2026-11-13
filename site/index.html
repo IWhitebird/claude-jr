@@ -12,14 +12,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="claude-jr">
 <meta property="og:title" content="claude-jr (Claude Junior): a coding agent in one 1.8 MB binary">
-<meta property="og:description" content="A small, fast Claude Code alternative written in Rust. 0.7 MB of memory when idle, 5 ms to start, 88% on SWE-bench Verified.">
+<meta property="og:description" content="The same job as Claude Code in 180 times less disk and 190 times less memory. 1.8 MB binary, 0.7 MB idle, 5 ms to start, 88% on SWE-bench Verified.">
 <meta property="og:url" content="https://claudejr.iwhitebird.com/">
 <meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="claude-jr (Claude Junior)">
-<meta name="twitter:description" content="A coding agent for the terminal in one 1.8 MB Rust binary. 0.7 MB of memory when idle.">
+<meta name="twitter:description" content="A full coding agent in one 1.8 MB Rust binary. 0.7 MB of memory when idle, 88% on SWE-bench Verified.">
 <meta name="twitter:image" content="https://claudejr.iwhitebird.com/og.png">
 <script type="application/ld+json">
 {
@@ -155,7 +155,8 @@
     <h1>A coding agent for the terminal, in a <em>1.8 MB</em> binary.</h1>
     <p>claude-jr, or Claude Junior, does what Claude Code does: it reads your code, edits files and
       runs commands, asking before anything changes. It is written in Rust with no runtime, so it
-      starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>.</p>
+      starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>: 180 times
+      less disk and 190 times less memory than Claude Code.</p>
 
     <div class="install">
       <code id="cmd">curl -fsSL https://claudejr.iwhitebird.com/install | sh</code>
@@ -187,9 +188,10 @@
   <section>
     <div class="col">
       <h2>Small enough not to notice</h2>
-      <p>There is no Node or Python to install and nothing running in the background. A whole
-        working session, including the commands it runs, fits in a 16 MB container on a twentieth
-        of a CPU core.</p>
+      <p>There is no Node or Python to install and nothing running in the background. Memory
+        stays under 4 MB however long a session runs, because the conversation is kept on disk.
+        A whole working session, including the commands it runs, fits in a 16 MB container on a
+        twentieth of a CPU core.</p>
       <div class="figures">
         <div><b>1.8 MB</b><span>one static binary</span></div>
         <div><b>0.7 MB</b><span>memory when idle</span></div>

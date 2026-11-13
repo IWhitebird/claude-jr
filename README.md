@@ -5,8 +5,8 @@
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
-  <b>Claude Junior</b>: a coding agent for the terminal in one 1.8 MB binary.<br>
-  It does what the big ones do, at a hundredth of the size.
+  <b>Claude Junior</b>: a full coding agent for the terminal in one 1.8 MB binary.<br>
+  The same job as Claude Code, in 180 times less disk and 190 times less memory.
 </p>
 
 <p align="center">
@@ -28,7 +28,8 @@
 
 claude-jr (Claude Junior) is a small, fast alternative to Claude Code, written
 in Rust. It talks to Claude, reads and edits your files, and runs commands,
-asking before anything changes.
+asking before anything changes. On a 100-task sample of SWE-bench Verified it
+resolved 88%.
 
 ## Install
 
@@ -43,11 +44,11 @@ gets the newest release.
 ## Why
 
 - **Tiny.** One static 1.8 MB file. No Node, no Python, nothing to install first.
-- **Light.** 0.7 MB of memory when idle and under 4 MB however long the session gets: the conversation lives in its file on disk, not in memory. A whole session, including the commands it runs, fits in a 16 MB container on a twentieth of a CPU core.
+- **Light.** 0.7 MB of memory when idle, and under 4 MB however long the session gets, because the conversation lives on disk instead of in memory. A whole session, commands included, fits in a 16 MB container on a twentieth of a CPU core.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
 - **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 281 tests with 98% line coverage, including the real app driven in a terminal.
+- **Tested.** 290 tests with 98% line coverage, including the real app driven in a terminal.
 
 ## Benchmarks
 
