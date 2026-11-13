@@ -91,6 +91,7 @@ measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 | shift-tab | change the permission mode |
 | esc | stop the current turn |
 | ctrl-v | paste text or a screenshot |
+| ctrl-s | stash what you've typed; it comes back after your next message |
 
 ## Docs
 

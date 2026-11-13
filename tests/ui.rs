@@ -47,6 +47,7 @@ const CTRL_K: &str = "\x0b";
 const CTRL_U: &str = "\x15";
 const CTRL_V: &str = "\x16";
 const CTRL_W: &str = "\x17";
+const CTRL_S: &str = "\x13";
 
 const SKILL: &str = "---\nname: demo\ndescription: A demo skill.\n---\nSay hello from the demo skill.\n";
 
@@ -830,6 +831,31 @@ fn continuing_shows_the_whole_earlier_conversation() {
     app.expect("Resume a conversation");
     app.send("1");
     app.expect_all(&["> first question", "> second question", "ask anything"]);
+    app.exit();
+}
+
+#[test]
+fn ctrl_s_stashes_the_input_until_the_next_message_is_sent() {
+    let world = World::new("stash", &[("MOCK_ROUNDS", "0")]);
+    let mut app = world.start(&["-y"]);
+    app.send("a long question I'm halfway through");
+    app.expect("> a long question I'm halfway through");
+    // Put it aside: the box is empty and says how to get it back.
+    app.send(CTRL_S);
+    app.expect("ctrl+s brings back what you stashed");
+    // Ctrl+s on an empty box brings it straight back, and again puts it aside.
+    app.send(CTRL_S);
+    app.expect("> a long question I'm halfway through");
+    app.send(CTRL_S);
+    app.expect("ctrl+s brings back what you stashed");
+    // Send something else first: the stashed text comes back afterwards, unsent.
+    app.send("quick one\r");
+    app.expect_all(&["> quick one", "Done. Here's what happened:", "> a long question I'm halfway through"]);
+    world.sent("quick one");
+    assert!(!world.log().contains("halfway through"), "the stashed text was not sent");
+    app.send("\r");
+    app.expect_all(&["Done. Here's what happened:", "ask anything"]);
+    world.sent("halfway through");
     app.exit();
 }
 

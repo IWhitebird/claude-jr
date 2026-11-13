@@ -73,7 +73,8 @@ paste           ctrl+v pastes text too; a long paste shows as a short [Pasted #N
 type / to list commands: up/down pick, tab completes, enter runs
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
 shift+tab: normal → accept edits → plan → auto → skip permissions
-esc stops · ctrl-c clears the input, twice quits · up/down for history";
+esc stops · ctrl-c clears the input, twice quits · up/down for history
+ctrl-s stashes what you've typed; it comes back after your next message";
 
 /// The commands, shown in a list as soon as `/` is typed.
 const COMMANDS: &[(&str, &str)] = &[
@@ -304,6 +305,8 @@ struct App {
     prompt_since: Instant,
     /// Messages typed while the agent was busy (or before a key), sent in order.
     queued: VecDeque<String>,
+    /// What ctrl+s put aside, to be typed again once the next message is sent.
+    stash: Option<String>,
     /// Big pastes, shown in the input as short labels.
     pastes: paste::Pastes,
     cost: f64,
@@ -343,6 +346,7 @@ impl App {
             menu_at: 0,
             prompt_since: Instant::now(),
             queued: VecDeque::new(),
+            stash: None,
             pastes: paste::Pastes::default(),
             cost: 0.0,
             context: 0,
@@ -849,6 +853,22 @@ impl App {
             KeyCode::Char('u') if ctrl => self.input.kill_to_start(),
             KeyCode::Char('k') if ctrl => self.input.kill_to_end(),
             KeyCode::Char('w') if ctrl => self.input.delete_word(),
+            // Put what's typed aside to send something else first; it comes back
+            // after that message is sent, or at once with ctrl+s again.
+            KeyCode::Char('s') if ctrl => match self.stash.take() {
+                Some(stashed) if self.input.is_empty() => self.input.insert(&stashed),
+                stashed => {
+                    self.stash = stashed;
+                    if !self.input.is_empty() {
+                        let text = self.input.take_secret();
+                        // A second stash is kept with the first rather than lost.
+                        self.stash = Some(match self.stash.take() {
+                            Some(older) => format!("{older}\n{text}"),
+                            None => text,
+                        });
+                    }
+                }
+            },
             // The terminal's own paste arrives as a paste event; ctrl+v reads
             // the clipboard itself, so it can take an image as well as text.
             KeyCode::Char('v') if ctrl => match crate::images::clipboard() {
@@ -869,6 +889,9 @@ impl App {
                         self.answer(text);
                     } else if !text.trim().is_empty() {
                         self.submit(text);
+                        if let Some(stashed) = self.stash.take() {
+                            self.input.insert(&stashed);
+                        }
                     }
                 }
             }
@@ -1306,7 +1329,13 @@ impl App {
                 Some(view::input_box(&self.input.masked(), "sk-ant-…", cols, &mut out))
             }
             None => {
-                let hint = if self.work.is_some() { "type to queue a message" } else { "ask anything, or /help" };
+                let hint = if self.stash.is_some() {
+                    "ctrl+s brings back what you stashed"
+                } else if self.work.is_some() {
+                    "type to queue a message"
+                } else {
+                    "ask anything, or /help"
+                };
                 Some(view::input_box(&self.input, hint, cols, &mut out))
             }
         };
