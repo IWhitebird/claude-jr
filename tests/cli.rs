@@ -113,7 +113,7 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("ANTHROPIC_API_KEY", "mock")
-            .env("CLAUDE_JR_OFFLINE_SECS", "2")
+            .env("CLAUDE_JR_OFFLINE_SECS", "15")
             .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", self.port));
         // Coverage runs (bench/coverage.sh) collect the binary's profile through this.
         if let Some(p) = std::env::var_os("LLVM_PROFILE_FILE") {
@@ -284,7 +284,7 @@ fn json_output_is_one_object_with_the_final_answer() {
     // A failed run is still one JSON object, with the reason.
     let closed = Env::new();
     let mut cmd = closed.command(&["-p", "hi", "-y", "--output-format", "json"]);
-    cmd.env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9");
+    cmd.env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9").env("CLAUDE_JR_OFFLINE_SECS", "1");
     let o = exec(cmd);
     assert_ne!(o.code, 0);
     let r: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap_or_else(|e| panic!("{e}: {}", o.out));
