@@ -21,11 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
       - if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: ./build.sh ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/claudejr ${{ matrix.name }}
       # The binary must run and carry the tag's version (the Intel Mac build can't run on this runner).
       - if: matrix.target != 'x86_64-apple-darwin'

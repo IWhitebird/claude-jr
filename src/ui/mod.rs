@@ -177,10 +177,14 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
                 Some(Ok(m)) => Some(m),
                 Some(Err(RecvTimeoutError::Timeout)) => None,
                 Some(Err(RecvTimeoutError::Disconnected)) => break,
-                None => match rx.recv() {
-                    Ok(m) => Some(m),
-                    Err(_) => break,
-                },
+                None => {
+                    // Going quiet: give back what the last burst of work needed.
+                    crate::mem::trim();
+                    match rx.recv() {
+                        Ok(m) => Some(m),
+                        Err(_) => break,
+                    }
+                }
             }
         };
         // Handle everything that's waiting, then draw once.

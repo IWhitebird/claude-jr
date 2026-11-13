@@ -2,6 +2,7 @@ mod agent;
 mod api;
 mod config;
 mod images;
+mod mem;
 mod permission;
 mod print;
 mod prompt;

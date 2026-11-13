@@ -17,7 +17,8 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 - `cargo fmt --check`
 
 ## Release build
-`CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-linux-musl`
+`CC_x86_64_unknown_linux_musl=gcc ./build.sh x86_64-unknown-linux-musl`
+(nightly, std rebuilt for size; plain `cargo build --release` works too, about 0.7 MB bigger)
 
 ## Rules
 - Keep dependencies minimal; no new crates without a reason.

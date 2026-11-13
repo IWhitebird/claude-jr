@@ -16,12 +16,19 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
-  # macOS has release builds, so keep it compiling.
-  macos:
-    runs-on: macos-latest
+  # The release build (build.sh) on each kind of machine releases are made on.
+  release-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
-      - run: ./target/release/claudejr --version
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: ./build.sh ${{ matrix.target }}
+      - run: ./target/${{ matrix.target }}/release/claudejr --version

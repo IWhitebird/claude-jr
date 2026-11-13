@@ -326,18 +326,20 @@ impl Client {
         // the connection, and a fresh agent is put in place for the next one.
         let done = AtomicBool::new(false);
         let result = std::thread::scope(|s| {
-            s.spawn(|| {
+            let watcher = s.spawn(|| {
                 while !done.load(Ordering::Relaxed) {
                     if cancel.load(Ordering::Relaxed) {
                         *self.http.lock().unwrap() = agent(self.read);
                         http.clone().shutdown();
                         return;
                     }
-                    sleep(Duration::from_millis(50));
+                    std::thread::park_timeout(Duration::from_millis(50));
                 }
             });
             let result = self.send(&http, &head, &betas, &key, messages, cancel, &mut on);
             done.store(true, Ordering::Relaxed);
+            // Woken at once, so a finished request never waits out the watcher's nap.
+            watcher.thread().unpark();
             result
         });
         // Whatever the closed connection made the request fail with, it was Esc.
