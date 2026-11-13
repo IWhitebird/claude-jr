@@ -10,6 +10,8 @@ mod fs;
 pub mod mcp;
 pub mod memory;
 pub mod skill;
+#[cfg(test)]
+mod stress;
 mod todo;
 
 use serde_json::value::RawValue;

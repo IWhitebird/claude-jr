@@ -136,8 +136,13 @@ impl Env {
     }
 }
 
-fn exec(mut cmd: Command) -> Out {
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+fn exec(cmd: Command) -> Out {
+    exec_with(cmd, Stdio::null())
+}
+
+/// Runs `cmd` with `stdin` as its standard input.
+fn exec_with(mut cmd: Command, stdin: Stdio) -> Out {
+    let mut child = cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let mut so = child.stdout.take().unwrap();
     let mut se = child.stderr.take().unwrap();
     let t_out = std::thread::spawn(move || {
@@ -194,6 +199,52 @@ fn help_and_version() {
         assert_eq!(o.out.trim(), format!("claude-jr {}", env!("CARGO_PKG_VERSION")));
     }
     assert!(e.requests().is_empty());
+}
+
+#[test]
+fn the_prompt_can_be_piped_in() {
+    let e = Env::new();
+    let piped = |bytes: &[u8]| {
+        let path = e.root.join("prompt.txt");
+        std::fs::write(&path, bytes).unwrap();
+        exec_with(e.command(&["-y", "-p"]), std::fs::File::open(path).unwrap().into())
+    };
+    let o = piped(b"summarize this\nplease");
+    ok(&o);
+    assert!(o.out.contains("Done."), "{}", o.out);
+    assert!(e.requests_text().contains("summarize this\\nplease"), "the piped text is the prompt");
+
+    // Bytes that aren't text still make a prompt, and a big one is fine.
+    ok(&piped(b"caf\xe9 \xff\xfe"));
+    ok(&piped(&vec![b'a'; 2_000_000]));
+
+    // Nothing piped, or only blank space, is no prompt at all.
+    let before = e.requests().len();
+    for (args, stdin, want) in [
+        (&["-y", "-p"][..], &b""[..], "-p needs a value"),
+        (&["-y", "-p"][..], &b" \n\t\n"[..], "-p needs a prompt"),
+        (&["-y", "-p", ""][..], &b""[..], "-p needs a prompt"),
+        (&["-y", "-p", "  \n"][..], &b""[..], "-p needs a prompt"),
+    ] {
+        let path = e.root.join("prompt.txt");
+        std::fs::write(&path, stdin).unwrap();
+        let o = exec_with(e.command(args), std::fs::File::open(path).unwrap().into());
+        assert_eq!(o.code, 2, "{args:?}: {}", o.err);
+        assert!(o.err.contains(want), "{args:?}: {}", o.err);
+    }
+    assert_eq!(e.requests().len(), before, "nothing was sent for them");
+}
+
+#[test]
+fn an_api_address_that_cannot_be_one_fails_at_once() {
+    let e = Env::new();
+    let mut cmd = e.command(&["-y", "-p", "hi"]);
+    cmd.env("ANTHROPIC_BASE_URL", "not a url").env("CLAUDE_JR_OFFLINE_SECS", "30");
+    let start = Instant::now();
+    let o = exec(cmd);
+    assert_eq!(o.code, 1, "{}", o.err);
+    assert!(o.err.contains("isn't valid") && o.err.contains("ANTHROPIC_BASE_URL"), "{}", o.err);
+    assert!(start.elapsed() < Duration::from_secs(10), "it didn't wait as if the network were down");
 }
 
 #[test]

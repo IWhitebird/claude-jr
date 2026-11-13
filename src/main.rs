@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
-  -p, --print PROMPT   run one prompt, print the reply, exit
+  -p, --print PROMPT   run one prompt, print the reply, exit (or pipe the prompt in: cmd | claudejr -p)
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
@@ -70,7 +70,8 @@ fn parse_args() -> Result<Cli, String> {
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
         match a.as_str() {
-            "-p" | "--print" => args.prompt = Some(value()?),
+            // With nothing after it, the prompt is whatever is piped in.
+            "-p" | "--print" => args.prompt = Some(it.next().map_or_else(piped, Ok)?),
             "-m" | "--model" => args.model = Some(value()?),
             "-e" | "--effort" => args.effort = Some(value()?),
             "-y" | "--yes" | "--dangerously-skip-permissions" => args.yes = true,
@@ -94,7 +95,20 @@ fn parse_args() -> Result<Cli, String> {
             _ => return Err(format!("unknown argument: {a}\n\n{USAGE}")),
         }
     }
+    if args.prompt.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err("-p needs a prompt; it was empty".into());
+    }
     Ok(Cli::Run(args))
+}
+
+/// The prompt for a bare `-p`: standard input, when something is piped into it.
+fn piped() -> Result<String, String> {
+    use std::io::{IsTerminal, Read};
+    let mut bytes = Vec::new();
+    if std::io::stdin().is_terminal() || std::io::stdin().read_to_end(&mut bytes).is_err() || bytes.is_empty() {
+        return Err("-p needs a value".into());
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn main() -> ExitCode {

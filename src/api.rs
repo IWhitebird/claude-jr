@@ -385,6 +385,10 @@ impl Client {
                     continue;
                 }
                 Err(e @ ureq::Error::Timeout(_)) => return Err(e.into()),
+                // An address that can't be one won't get better by waiting.
+                Err(e @ (ureq::Error::BadUri(_) | ureq::Error::Http(_))) => {
+                    bail!("the API address {:?} isn't valid ({e}); check ANTHROPIC_BASE_URL", self.url)
+                }
                 // The API couldn't be reached at all, so nothing was sent:
                 // keep trying for a while without using up attempts.
                 Err(e) => {

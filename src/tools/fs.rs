@@ -14,6 +14,8 @@ const MAX_LINES: usize = 2000;
 const MAX_LINE_CHARS: usize = 2000;
 /// Larger files are still edited, just without a diff preview.
 const MAX_PREVIEW: u64 = 1024 * 1024;
+/// An edit holds the whole file in memory, twice.
+const MAX_EDIT: u64 = 64 * 1024 * 1024;
 
 pub static READ: LazyLock<Box<RawValue>> = LazyLock::new(|| {
     def(json!({
@@ -69,6 +71,40 @@ fn path(t: &Tools, input: &Value) -> Result<PathBuf, String> {
     input["path"].as_str().map(|p| t.resolve(p)).ok_or_else(|| "missing path".into())
 }
 
+/// Refuses what isn't a plain file. Opening a pipe waits for someone to
+/// write to it, and a device like /dev/zero never ends.
+fn plain_file(path: &Path) -> Result<(), String> {
+    match fs::metadata(path) {
+        Ok(m) if !m.is_file() && !m.is_dir() => {
+            Err(format!("{} is a device, pipe or socket, not a file. Use bash if you need it.", path.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Reads one line, keeping at most `keep` bytes of it: a file can be one
+/// line many gigabytes long. Returns how many bytes the line had.
+fn read_line(r: &mut impl BufRead, keep: usize, line: &mut Vec<u8>) -> std::io::Result<usize> {
+    let mut total = 0;
+    loop {
+        let chunk = r.fill_buf()?;
+        if chunk.is_empty() {
+            return Ok(total);
+        }
+        let (used, done) = match chunk.iter().position(|&b| b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (chunk.len(), false),
+        };
+        let room = keep.saturating_sub(line.len());
+        line.extend_from_slice(&chunk[..used.min(room)]);
+        r.consume(used);
+        total += used;
+        if done {
+            return Ok(total);
+        }
+    }
+}
+
 fn mtime(p: &Path) -> Option<SystemTime> {
     fs::metadata(p).and_then(|m| m.modified()).ok()
 }
@@ -93,7 +129,7 @@ fn check_fresh(t: &Tools, path: &Path) -> Result<(), String> {
 
 pub fn preview(t: &Tools, name: &str, input: &Value) -> Option<Diff> {
     let path = t.resolve(input["path"].as_str()?);
-    if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_PREVIEW) {
+    if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_PREVIEW) || plain_file(&path).is_err() {
         return None;
     }
     match name {
@@ -117,6 +153,7 @@ pub fn read(t: &Tools, input: &Value) -> Output {
     if path.is_dir() {
         return Err(format!("{} is a directory. Use bash ls.", path.display()));
     }
+    plain_file(&path)?;
     if crate::images::media_type(&path).is_some() {
         return super::image_output(&path);
     }
@@ -134,7 +171,8 @@ pub fn read(t: &Tools, input: &Value) -> Output {
     let (mut n, mut shown, mut more) = (0, 0, false);
     loop {
         buf.clear();
-        if r.read_until(b'\n', &mut buf).map_err(|e| e.to_string())? == 0 {
+        // Four bytes a character at most, so nothing shown is cut short by this.
+        if read_line(&mut r, MAX_LINE_CHARS * 4 + 2, &mut buf).map_err(|e| e.to_string())? == 0 {
             break;
         }
         n += 1;
@@ -167,6 +205,7 @@ pub fn read(t: &Tools, input: &Value) -> Output {
 pub fn write(t: &Tools, input: &Value) -> Output {
     let path = path(t, input)?;
     let content = input["content"].as_str().ok_or("missing content")?;
+    plain_file(&path)?;
     check_fresh(t, &path)?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -190,6 +229,10 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
     }
     if old == new {
         return Err("old_string and new_string are the same".into());
+    }
+    plain_file(&path)?;
+    if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_EDIT) {
+        return Err(format!("{} is too big to edit this way (over 64 MB). Use bash, for example sed.", path.display()));
     }
     // No read is asked for first: old_string matching exactly is the proof
     // that the model knows what is there now.
