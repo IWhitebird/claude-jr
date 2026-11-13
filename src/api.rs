@@ -837,11 +837,15 @@ data: {"type":"message_stop"}
 
     /// A network that is down for a while (longer than the few quick retries
     /// other failures get) is waited out, and nothing is sent until it is back.
+    // 127.0.0.2 is loopback on Linux; elsewhere it may not exist.
     #[test]
+    #[cfg_attr(not(target_os = "linux"), ignore)]
     fn a_network_outage_is_waited_out() {
         use std::io::{Read, Write};
-        // A port with nothing behind it yet: connections are refused.
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // A port with nothing behind it yet: connections are refused. On an
+        // address no other test uses, so none can be given the port while it
+        // is free and answer in the server's place.
+        let l = std::net::TcpListener::bind("127.0.0.2:0").unwrap();
         let addr = l.local_addr().unwrap();
         drop(l);
         let server = std::thread::spawn(move || {
