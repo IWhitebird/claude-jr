@@ -8,7 +8,7 @@
 <link rel="canonical" href="https://claudejr.iwhitebird.com/">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" type="image/png" href="/favicon.png">
-<meta name="theme-color" content="#120f0d">
+<meta name="theme-color" content="#f5f2ea">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="claude-jr">
 <meta property="og:title" content="claude-jr (Claude Junior): a coding agent in one 3 MB binary">
@@ -39,21 +39,23 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Silkscreen&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=JetBrains+Mono:wght@400;600&family=Silkscreen&display=swap">
 <style>
-  /* Dark, warm, terminal-born. One accent (the mascot's orange); the cap's blue and yellow appear only in the mascot. */
+  /* Warm ivory paper, near-black ink, serif headlines and one clay accent; the terminal stays dark as the one contrast piece. */
   :root {
-    --bg: #120f0d;
-    --bg-2: #1a1613;
-    --panel: #1e1915;
-    --line: #2e2722;
-    --fg: #f1ebe4;
-    --dim: #a79c92;
-    --faint: #6f655d;
-    --accent: #e0805c;
-    --accent-2: #f2a48b;
+    color-scheme: light;
+    --bg: #f5f2ea;
+    --bg-2: #faf8f3;
+    --panel: #ffffff;
+    --line: #e2ddd2;
+    --fg: #191714;
+    --dim: #5e5952;
+    --faint: #8c867c;
+    --accent: #c96442;
+    --accent-2: #b4532f;
     --good: #8fc27a;
     --ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: "Source Serif 4", "Tiempos Headline", Georgia, "Times New Roman", serif;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --pixel: "Silkscreen", var(--mono);
   }
@@ -68,7 +70,7 @@
 
   /* nav */
   nav { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
-        background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--line); }
+        background: color-mix(in srgb, var(--bg) 88%, transparent); border-bottom: 1px solid var(--line); }
   nav .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-family: var(--pixel); font-size: 18px; }
   .brand img { width: 28px; height: 24px; image-rendering: pixelated; }
@@ -78,19 +80,20 @@
   .gh { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border: 1px solid var(--line);
         border-radius: 8px; color: var(--fg) !important; background: var(--panel); }
   .gh:hover { border-color: var(--faint); }
+  .brand { color: var(--fg); }
   @media (max-width: 640px) { nav .links a:not(.gh) { display: none; } }
 
   /* hero */
   .hero { padding: 88px 0 56px; position: relative; overflow: hidden; }
   .hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 640px; z-index: -1;
-                  background: radial-gradient(closest-side, rgba(224,128,92,0.18), transparent 70%); }
+                  background: radial-gradient(closest-side, rgba(201,100,66,0.10), transparent 70%); }
   .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; }
   .hero-grid > * { min-width: 0; }
   @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } .hero { padding-top: 56px; } }
   .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px;
-             color: var(--accent-2); border: 1px solid #4a3328; background: #241812; padding: 5px 12px; border-radius: 999px; }
+             color: var(--accent-2); border: 1px solid #ead9cc; background: #f8ece3; padding: 5px 12px; border-radius: 999px; }
   .eyebrow b { color: var(--fg); font-weight: 600; }
-  h1 { font-size: clamp(2.4rem, 5.4vw, 4rem); line-height: 1.04; letter-spacing: -0.035em; margin: 22px 0 18px; font-weight: 700; text-wrap: balance; }
+  h1 { font-family: var(--serif); font-size: clamp(2.6rem, 5.6vw, 4.3rem); line-height: 1.04; letter-spacing: -0.02em; margin: 22px 0 20px; font-weight: 500; text-wrap: balance; }
   h1 .jr { color: var(--accent); }
   .sub { font-size: 1.15rem; color: var(--dim); max-width: 34em; margin: 0; }
   .sub b { color: var(--fg); font-weight: 600; }
@@ -103,23 +106,24 @@
   .install code .p { color: var(--accent); user-select: none; margin-right: 10px; }
   .copy { flex: none; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--dim);
           font: 600 13px var(--ui); padding: 0 18px; align-self: stretch; cursor: pointer; }
-  .copy:hover { color: var(--fg); background: #241e19; }
+  .copy:hover { color: var(--fg); background: #f1ede5; }
   .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .install-note { margin-top: 12px; font-size: 13.5px; color: var(--faint); }
   .install-note code { font-family: var(--mono); color: var(--dim); }
 
   /* terminal */
   .term { background: #0c0a09; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
-          box-shadow: 0 30px 80px -20px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.02) inset; }
-  .term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 14px; background: #171310; border-bottom: 1px solid var(--line); }
+          box-shadow: 0 30px 70px -28px rgba(60,40,20,0.45); }
+  .term { border-color: #2e2722; }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 14px; background: #171310; border-bottom: 1px solid #2e2722; }
   .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a322c; display: block; }
-  .term-bar span { margin-left: 10px; font: 12px var(--mono); color: var(--faint); }
+  .term-bar span { margin-left: 10px; font: 12px var(--mono); color: #6f655d; }
   .term pre { margin: 0; padding: 18px 18px 20px; font: 13px/1.62 var(--mono); color: #d9d1c9; overflow-x: auto; }
   .t-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
   .t-head img { width: 54px; height: 46px; image-rendering: pixelated; }
-  .t-head div { font: 12.5px/1.55 var(--mono); color: var(--dim); }
-  .t-head b { color: var(--accent); font-weight: 600; }
-  .o { color: var(--accent); } .d { color: var(--faint); } .add { color: var(--good); } .w { color: #f1ebe4; font-weight: 600; }
+  .t-head div { font: 12.5px/1.55 var(--mono); color: #a79c92; }
+  .t-head b { color: #e0805c; font-weight: 600; }
+  .o { color: #e0805c; } .d { color: #6f655d; } .add { color: var(--good); } .w { color: #f1ebe4; font-weight: 600; }
   .ln { display: block; }
   @media (prefers-reduced-motion: no-preference) {
     .ln { animation: in 0.4s ease both; }
@@ -132,11 +136,11 @@
 
   /* numbers */
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 14px;
-           background: var(--bg-2); margin: 24px 0 0; }
+           background: var(--panel); margin: 28px 0 0; }
   .stat { padding: 26px 24px; border-right: 1px solid var(--line); }
   .stat:last-child { border-right: 0; }
-  .stat b { display: block; font-size: 2.1rem; letter-spacing: -0.03em; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .stat b small { font-size: 1rem; color: var(--dim); font-weight: 600; margin-left: 3px; }
+  .stat b { display: block; font-family: var(--serif); font-size: 2.5rem; letter-spacing: -0.02em; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .stat b small { font-family: var(--ui); font-size: 1rem; color: var(--dim); font-weight: 500; margin-left: 4px; }
   .stat span { color: var(--dim); font-size: 14px; }
   @media (max-width: 760px) {
     .stats { grid-template-columns: 1fr 1fr; }
@@ -145,20 +149,20 @@
   }
 
   section { padding: 88px 0 0; }
-  .kicker { font: 600 12.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
-  h2 { font-size: clamp(1.7rem, 3.2vw, 2.4rem); letter-spacing: -0.03em; line-height: 1.12; margin: 10px 0 14px; text-wrap: balance; }
+  .kicker { font: 500 13px var(--ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-2); }
+  h2 { font-family: var(--serif); font-weight: 500; font-size: clamp(1.9rem, 3.4vw, 2.7rem); letter-spacing: -0.015em; line-height: 1.12; margin: 10px 0 14px; text-wrap: balance; }
   .lede { color: var(--dim); max-width: 40em; margin: 0 0 36px; font-size: 1.05rem; }
 
   /* comparison */
   .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 820px) { .compare { grid-template-columns: 1fr; } }
   .card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 24px; min-width: 0; }
-  .card h3 { margin: 0 0 4px; font-size: 1rem; }
+  .card h3 { margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
   .card p.m { margin: 0 0 20px; color: var(--faint); font-size: 13.5px; }
   .bar { display: grid; grid-template-columns: 110px 1fr 84px; align-items: center; gap: 12px; margin: 12px 0; font-size: 14px; }
   .bar .name { color: var(--dim); }
-  .bar .track { display: block; height: 12px; background: #2a231e; border-radius: 99px; overflow: hidden; }
-  .bar .fill { display: block; height: 100%; border-radius: 99px; background: #5b514a; min-width: 6px; }
+  .bar .track { display: block; height: 12px; background: #ece7dd; border-radius: 99px; overflow: hidden; }
+  .bar .fill { display: block; height: 100%; border-radius: 99px; background: #b9b2a6; min-width: 6px; }
   .bar.us .name { color: var(--fg); font-weight: 600; }
   .bar.us .fill { background: var(--accent); }
   .bar .val { text-align: right; font: 13px var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -173,14 +177,14 @@
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
   .feature { background: var(--bg-2); padding: 24px; }
   .feature .ic { font: 15px var(--mono); color: var(--accent); margin-bottom: 12px; display: block; }
-  .feature h3 { margin: 0 0 6px; font-size: 1.02rem; }
+  .feature h3 { margin: 0 0 6px; font-family: var(--serif); font-weight: 600; font-size: 1.18rem; }
   .feature p { margin: 0; color: var(--dim); font-size: 14.5px; }
-  .feature kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--fg); background: var(--panel); }
+  .feature kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--fg); background: var(--bg); }
 
   /* swe-bench */
   .swe { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 20px; align-items: stretch; }
   @media (max-width: 820px) { .swe { grid-template-columns: 1fr; } }
-  .big { font-size: clamp(3.4rem, 8vw, 5.4rem); font-weight: 700; letter-spacing: -0.05em; line-height: 1; color: var(--accent); }
+  .big { font-family: var(--serif); font-size: clamp(3.8rem, 9vw, 6rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1; color: var(--accent); }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 14.5px; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 11px 12px 11px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -198,7 +202,7 @@
 
   /* cta + footer */
   .cta { margin: 96px 0 0; text-align: center; padding: 56px 24px; border: 1px solid var(--line); border-radius: 18px;
-         background: radial-gradient(600px 220px at 50% 0%, rgba(224,128,92,0.14), transparent), var(--bg-2); }
+         background: radial-gradient(600px 220px at 50% 0%, rgba(201,100,66,0.09), transparent), var(--bg-2); }
   .cta img { width: 72px; height: 61px; image-rendering: pixelated; }
   .cta h2 { margin-top: 18px; }
   .cta .install { margin: 26px auto 0; text-align: left; }
@@ -383,7 +387,7 @@
 
 <footer>
   <div class="wrap">
-    <span>claude-jr (Claude Junior) · MIT licence</span>
+    <span>claude-jr (Claude Junior) · MIT licence · An independent project, not affiliated with Anthropic</span>
     <nav>
       <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
       <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">Guide</a>
