@@ -113,6 +113,7 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("ANTHROPIC_API_KEY", "mock")
+            .env("CLAUDE_JR_OFFLINE_SECS", "2")
             .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", self.port));
         // Coverage runs (bench/coverage.sh) collect the binary's profile through this.
         if let Some(p) = std::env::var_os("LLVM_PROFILE_FILE") {

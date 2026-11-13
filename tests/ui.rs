@@ -236,6 +236,7 @@ impl World {
             .env("XDG_CONFIG_HOME", self.root.join("cfg"))
             .env("XDG_DATA_HOME", self.root.join("data"))
             .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", self.port))
+            .env("CLAUDE_JR_OFFLINE_SECS", "2")
             .current_dir(self.proj())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

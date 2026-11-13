@@ -21,6 +21,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// request would be sent, and billed, a second time), so it has to be longer
 /// than the model ever takes to start answering.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to keep trying when the API can't be reached at all (no network,
+/// DNS failing, connection refused): long enough to ride out a Wi-Fi drop.
+const OFFLINE_PATIENCE: Duration = Duration::from_secs(120);
 /// A stream with no bytes at all (not even pings) for this long is dead.
 const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
@@ -266,6 +269,7 @@ pub struct Client {
     /// Empty until the user logs in. Behind a lock so /login applies at once.
     key: std::sync::RwLock<String>,
     silence: Duration,
+    offline: Duration,
 }
 
 impl Client {
@@ -286,6 +290,11 @@ impl Client {
             url: format!("{}/v1/messages", base.trim_end_matches('/')),
             key: std::sync::RwLock::new(key),
             silence: SILENCE_LIMIT,
+            // CLAUDE_JR_OFFLINE_SECS: for scripts that would rather fail fast.
+            offline: std::env::var("CLAUDE_JR_OFFLINE_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .map_or(OFFLINE_PATIENCE, Duration::from_secs),
         }
     }
 
@@ -315,6 +324,8 @@ impl Client {
             bail!("no API key yet: type /login to add one");
         }
         let mut attempt = 0;
+        // Since when the API hasn't been reachable, and how often that was tried.
+        let mut offline: Option<(Instant, u32)> = None;
         loop {
             attempt += 1;
             let mut call = self
@@ -331,12 +342,27 @@ impl Client {
             call = call.header("content-length", body.len.to_string());
             let mut res = match call.send(ureq::SendBody::from_reader(&mut body)) {
                 Ok(r) => r,
-                Err(_) if attempt < MAX_ATTEMPTS => {
+                // The request went out and no reply began in time: it may have
+                // been worked on (and billed), so this counts as an attempt.
+                Err(ureq::Error::Timeout(_)) if attempt < MAX_ATTEMPTS => {
                     wait(backoff(attempt, None), cancel)?;
                     continue;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e @ ureq::Error::Timeout(_)) => return Err(e.into()),
+                // The API couldn't be reached at all, so nothing was sent:
+                // keep trying for a while without using up attempts.
+                Err(e) => {
+                    let (since, tries) = offline.get_or_insert((Instant::now(), 0));
+                    if since.elapsed() >= self.offline {
+                        bail!("can't reach the API after {}s: {e}", since.elapsed().as_secs());
+                    }
+                    *tries += 1;
+                    wait(backoff(*tries, None).min(Duration::from_secs(4)), cancel)?;
+                    attempt -= 1;
+                    continue;
+                }
             };
+            offline = None;
 
             let status = res.status().as_u16();
             if status == 200 {
@@ -711,6 +737,53 @@ data: {"type":"message_stop"}
             while s.read(&mut buf).map(|n| n > 0).unwrap_or(false) {}
         });
         (base, h)
+    }
+
+    /// A network that is down for a while (longer than the few quick retries
+    /// other failures get) is waited out, and nothing is sent until it is back.
+    #[test]
+    fn a_network_outage_is_waited_out() {
+        use std::io::{Read, Write};
+        // A port with nothing behind it yet: connections are refused.
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        drop(l);
+        let server = std::thread::spawn(move || {
+            sleep(Duration::from_millis(8500)); // longer than five quick retries take
+            let l = std::net::TcpListener::bind(addr).unwrap();
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n\n\
+                data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+                data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"back\"}}\n\n\
+                data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+                data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n\
+                data: {\"type\":\"message_stop\"}\n\n";
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n";
+            let _ = s.write_all(format!("{head}content-length: {}\r\n\r\n{body}", body.len()).as_bytes());
+        });
+        let mut client = Client::new("k".into(), Some(format!("http://{addr}")));
+        client.offline = Duration::from_secs(60);
+        let tools = RawValue::from_string("[]".into()).unwrap();
+        let req = Request::new("claude-opus-5-5", None, "", &tools);
+        let mut text = String::new();
+        let started = Instant::now();
+        let reply = client.stream(&req, &[] as &[&str], &AtomicBool::new(false), |c| {
+            if let Chunk::Text(t) = c {
+                text.push_str(t);
+            }
+        });
+        assert!(reply.is_ok(), "{:?}", reply.err());
+        assert_eq!(text, "back");
+        assert!(started.elapsed() >= Duration::from_secs(8));
+        server.join().unwrap();
+
+        // With no patience left it gives up, and says how long it tried.
+        let mut client = Client::new("k".into(), Some("http://127.0.0.1:9".into()));
+        client.offline = Duration::from_millis(600);
+        let err = client.stream(&req, &[] as &[&str], &AtomicBool::new(false), |_| {}).err().unwrap();
+        assert!(err.to_string().starts_with("can't reach the API after"), "{err}");
     }
 
     /// The model can take a while to begin its reply. Giving up on that wait

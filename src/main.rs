@@ -40,7 +40,8 @@ Config: ~/.config/claude-jr/config.json and ./.claude-jr.json
   { \"model\": \"...\", \"effort\": \"high\", \"allow\": [\"bash:cargo *\", \"edit\"] }
 Project instructions: AGENTS.md or CLAUDE.md in this directory or its parents.
 API key: type /login inside claude-jr (saved to ~/.config/claude-jr/credentials),
-or set ANTHROPIC_API_KEY. Also read: ANTHROPIC_BASE_URL, CLAUDE_JR_MODEL.";
+or set ANTHROPIC_API_KEY. Also read: ANTHROPIC_BASE_URL, CLAUDE_JR_MODEL,
+CLAUDE_JR_OFFLINE_SECS (how long to keep trying with no network; default 120).";
 
 #[derive(Default)]
 struct Args {
