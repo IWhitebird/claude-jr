@@ -3,34 +3,61 @@
 // With CLAUDE_JR_REPORT=<file>, also writes what the run used there as JSON
 // (requests, tokens, cost), for scripts such as bench/evals.
 // With --output-format json, stdout gets one JSON object at the end instead:
-// the same totals plus `result` (the final answer) and `error`.
+// the same totals plus `result` (the final answer), `error` and the files
+// that changed. With --output-format stream-json, stdout gets the run log as
+// it happens (see log.rs), ending with that same object. --log FILE writes
+// the run log to a file, whatever stdout shows.
 // With --max-cost, the run stops once it has spent that many dollars.
 
 use crate::agent::{self, Command, Event};
+use crate::log::Log;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 
+/// What goes to stdout.
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum Format {
+    /// The reply as it comes.
+    #[default]
+    Text,
+    /// One JSON object at the end.
+    Json,
+    /// The run log, a JSON object per line.
+    Stream,
+}
+
 #[derive(Default)]
 pub struct Options {
-    /// Print one JSON object at the end instead of the reply as it comes.
-    pub json: bool,
+    pub format: Format,
     /// Stop once this many dollars have been spent.
     pub max_cost: Option<f64>,
+    /// Write the run log here.
+    pub log: Option<std::path::PathBuf>,
 }
 
 /// Returns true if the turn finished without an error.
-pub fn run(cfg: agent::Config, prompt: String, options: Options) -> bool {
+pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool, String> {
+    let mut sinks: Vec<Box<dyn Write + Send>> = Vec::new();
+    if let Some(path) = &options.log {
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(path);
+        sinks.push(Box::new(file.map_err(|e| format!("can't write the log {}: {e}", path.display()))?));
+    }
+    if options.format == Format::Stream {
+        sinks.push(Box::new(std::io::stdout()));
+    }
+    let mut log = Log::new(sinks);
+    log.started(&prompt, &cfg.model);
     let (tx, rx) = mpsc::channel();
     let agent = agent::spawn(cfg, move |e| {
         let _ = tx.send(e);
     });
     crate::signals::watch(agent.tools.clone(), false);
-    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx, &options, &agent.cancel);
+    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx, &options, &agent.cancel, &mut log);
     if let Some(tools) = agent.tools.get() {
         tools.shutdown();
     }
-    ok
+    Ok(ok)
 }
 
 /// Untrusted text with every control character removed except newline (and
@@ -65,10 +92,10 @@ struct Report {
 }
 
 /// Prints events until the turn ends.
-fn print(events: Receiver<Event>, options: &Options, cancel: &AtomicBool) -> bool {
+fn print(events: Receiver<Event>, options: &Options, cancel: &AtomicBool, log: &mut Log) -> bool {
     let start = std::time::Instant::now();
     let mut report = Report::default();
-    let ok = print_events(events, &mut report, options, cancel);
+    let ok = print_events(events, &mut report, options, cancel, log);
     report.ok = ok;
     report.duration_ms = start.elapsed().as_millis() as u64;
     if let Ok(path) = std::env::var("CLAUDE_JR_REPORT")
@@ -76,24 +103,32 @@ fn print(events: Receiver<Event>, options: &Options, cancel: &AtomicBool) -> boo
     {
         let _ = std::fs::write(path, json);
     }
-    if options.json
-        && let Ok(serde_json::Value::Object(mut fields)) = serde_json::to_value(&report)
-    {
-        fields.insert("result".into(), report.result.trim().into());
-        println!("{}", serde_json::Value::Object(fields));
+    let mut fields = serde_json::to_value(&report).unwrap_or_default();
+    fields["result"] = report.result.trim().into();
+    let fields = log.finish(fields);
+    if options.format == Format::Json {
+        println!("{fields}");
     }
     ok
 }
 
-fn print_events(events: Receiver<Event>, report: &mut Report, options: &Options, cancel: &AtomicBool) -> bool {
-    let mut out = std::io::stdout().lock();
+fn print_events(
+    events: Receiver<Event>,
+    report: &mut Report,
+    options: &Options,
+    cancel: &AtomicBool,
+    log: &mut Log,
+) -> bool {
+    // (Not locked: in stream mode the log writes to stdout too.)
+    let mut out = std::io::stdout();
     // Whether stdout / stderr were left in the middle of a line.
     let (mut mid_out, mut mid_err) = (false, false);
     for ev in events {
+        log.see(&ev);
         match ev {
             // With JSON output the reply goes to stderr as it comes, like the
             // rest of the progress, and to stdout once at the end.
-            Event::Text(t) if options.json => {
+            Event::Text(t) if options.format != Format::Text => {
                 let t = safe(&t, true);
                 eprint!("{t}");
                 mid_err = !t.ends_with('\n');
@@ -120,6 +155,7 @@ fn print_events(events: Receiver<Event>, report: &mut Report, options: &Options,
             }
             Event::Tool { label: label_text, .. } => {
                 // What was said before a tool call is not the final answer.
+                // (In text mode it was printed as it came and isn't kept.)
                 report.result.clear();
                 eprintln!("● {}", label(&label_text));
             }
@@ -163,7 +199,7 @@ fn print_events(events: Receiver<Event>, report: &mut Report, options: &Options,
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
-            Event::Ready { .. } | Event::ToolStart(_) | Event::ToolInput(_) | Event::Activity(_) => {}
+            Event::Ready { .. } | Event::ToolStart(_) | Event::ToolInput(_) | Event::Activity(_) | Event::Step(_) => {}
         }
     }
     false

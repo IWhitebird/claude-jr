@@ -2,6 +2,7 @@ mod agent;
 mod api;
 mod config;
 mod images;
+mod log;
 mod mem;
 mod permission;
 mod print;
@@ -28,7 +29,9 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
-      --output-format json   with -p: print one JSON object at the end (result, cost, tokens)
+      --output-format json   with -p: print one JSON object at the end (result, files, cost)
+      --output-format stream-json   with -p: print each step as a JSON line while it runs
+      --log FILE       with -p: write each step to FILE as a JSON line (what ran, what allowed it)
       --max-cost USD   with -p: stop once this many dollars have been spent
       --update         replace this binary with the newest release
   -h, --help           show this help
@@ -52,7 +55,8 @@ struct Args {
     yes: bool,
     resume: Option<Pick>,
     sandbox: bool,
-    json: bool,
+    format: print::Format,
+    log: Option<std::path::PathBuf>,
     max_cost: Option<f64>,
 }
 
@@ -81,10 +85,12 @@ fn parse_args() -> Result<Cli, String> {
             "--update" => return Ok(Cli::Update),
             "--sandbox" => args.sandbox = true,
             "--output-format" => match value()?.as_str() {
-                "json" => args.json = true,
-                "text" => args.json = false,
-                other => return Err(format!("unknown output format: {other} (text or json)")),
+                "json" => args.format = print::Format::Json,
+                "stream-json" => args.format = print::Format::Stream,
+                "text" => args.format = print::Format::Text,
+                other => return Err(format!("unknown output format: {other} (text, json or stream-json)")),
             },
+            "--log" => args.log = Some(value()?.into()),
             "--max-cost" => {
                 let v = value()?;
                 let usd = v.trim_start_matches('$').parse::<f64>().ok().filter(|usd| *usd > 0.0);
@@ -192,8 +198,8 @@ fn run() -> Result<ExitCode, String> {
 
     match args.prompt {
         Some(prompt) => {
-            let options = print::Options { json: args.json, max_cost: args.max_cost };
-            Ok(if print::run(cfg, prompt, options) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+            let options = print::Options { format: args.format, max_cost: args.max_cost, log: args.log };
+            Ok(if print::run(cfg, prompt, options)? { ExitCode::SUCCESS } else { ExitCode::FAILURE })
         }
         None => {
             let bottom = file.layout.as_deref() != Some("inline");

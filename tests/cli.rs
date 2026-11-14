@@ -347,6 +347,79 @@ fn json_output_is_one_object_with_the_final_answer() {
     assert!(o.err.contains("unknown output format: xml"), "{}", o.err);
 }
 
+fn json_lines(text: &str) -> Vec<serde_json::Value> {
+    text.lines().map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("not a JSON line ({e}): {l}"))).collect()
+}
+
+#[test]
+fn stream_json_and_the_log_file_record_every_step() {
+    let e = Env::new();
+    let log = e.root.join("run.jsonl");
+    let o = e.run(&["-p", "do the demo", "-y", "--output-format", "stream-json", "--log", log.to_str().unwrap()]);
+    ok(&o);
+    // stdout is nothing but the log, a JSON object per line.
+    let lines = json_lines(&o.out);
+    let kinds: Vec<&str> = lines.iter().map(|l| l["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds.first(), Some(&"start"));
+    assert_eq!(kinds.last(), Some(&"result"));
+    assert_eq!(lines[0]["prompt"], "do the demo");
+    let steps: Vec<&serde_json::Value> = lines.iter().filter(|l| l["type"] == "step").collect();
+    let tools: Vec<&str> = steps.iter().map(|s| s["tool"].as_str().unwrap()).collect();
+    assert_eq!(tools, ["bash", "write", "read", "edit", "bash"]);
+    assert!(steps.iter().all(|s| s["ok"] == true && s["ms"].is_u64()), "{steps:?}");
+    assert_eq!(steps[0]["allowed_by"], "skip-permissions mode");
+    assert_eq!(steps[2]["allowed_by"], "needs no approval");
+    assert_eq!(steps[1]["input"]["path"], "demo.txt");
+    assert_eq!(steps[3]["input"]["new_string"], "TWO");
+    assert_eq!(kinds.iter().filter(|k| **k == "usage").count(), 3, "one per request");
+    assert!(kinds.contains(&"text"));
+
+    let result = lines.last().unwrap();
+    assert_eq!(result["ok"], true);
+    assert!(result["result"].as_str().unwrap().starts_with("Done. Here's what happened:"));
+    assert_eq!(result["files"][0]["path"], "demo.txt");
+    assert!(result["cost_usd"].as_f64().unwrap() > 0.0);
+
+    // The file holds the same lines.
+    let filed = json_lines(&std::fs::read_to_string(&log).unwrap());
+    assert_eq!(filed.len(), lines.len());
+    assert_eq!(filed.last().unwrap()["result"], result["result"]);
+}
+
+#[test]
+fn the_log_says_what_was_refused_and_what_a_rule_allowed() {
+    let e = Env::with(&[("MOCK_CMD", "echo hi")]);
+    e.write_config(r#"{"allow": ["bash:echo *"]}"#);
+    let log = e.root.join("run.jsonl");
+    let o = e.run(&["-p", "do the demo", "--log", log.to_str().unwrap()]);
+    ok(&o);
+    assert!(o.out.contains("Done."), "text output is unchanged by --log: {}", o.out);
+    let lines = json_lines(&std::fs::read_to_string(&log).unwrap());
+    let step = |tool: &str| lines.iter().find(|l| l["type"] == "step" && l["tool"] == tool).unwrap().clone();
+    assert_eq!(step("bash")["allowed_by"], "allow rule");
+    let write = step("write");
+    assert!(write["allowed_by"].is_null() && write["ok"] == false, "{write}");
+    assert!(write["result"].as_str().unwrap().contains("Not allowed"), "{write}");
+    assert!(lines.last().unwrap()["files"].as_array().unwrap().is_empty(), "nothing was changed");
+
+    // In a git repository the files come from git, so what commands change counts too.
+    let e = Env::with(&[("MOCK_CMD", "echo made > by-a-command.txt"), ("MOCK_ROUNDS", "1")]);
+    let git =
+        |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&e.proj).output().unwrap().status.success());
+    git(&["init", "-q"]);
+    let o = e.run(&["-p", "go", "-y", "--output-format", "json"]);
+    ok(&o);
+    let r: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap();
+    let files: Vec<&str> = r["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(files, ["by-a-command.txt", "demo.txt"]);
+    assert_eq!(r["files"][0]["status"], "new");
+
+    // A log that can't be written is said up front, before anything is sent.
+    let o = e.run(&["-p", "go", "--log", "/nonexistent-dir/run.jsonl"]);
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("can't write the log"), "{}", o.err);
+}
+
 #[test]
 fn max_cost_stops_the_run() {
     let e = Env::new();

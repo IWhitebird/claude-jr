@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Instant;
 
 const TOO_LONG: &str = "the conversation no longer fits in the model's context. Run /compact, then continue.";
 
@@ -150,8 +151,10 @@ impl Core {
     fn call_one(&self, ctx: &Ctx, c: &Call) -> Value {
         let label = ctx.tools.label(&c.name, &c.input);
         (ctx.emit)(Event::Tool { label: label.clone(), diff: ctx.tools.preview(&c.name, &c.input) });
-        let out = self.check(ctx, c, &ctx.tools.full_label(&c.name, &c.input)).and_then(|()| self.exec(ctx, c));
-        (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary(&c.name, &out) });
+        let started = Instant::now();
+        let allowed = self.check(ctx, c, &ctx.tools.full_label(&c.name, &c.input));
+        let out = allowed.clone().and_then(|_| self.exec(ctx, c));
+        self.finished(ctx, c, allowed.ok(), &out, started);
         tool_result(&c.id, out)
     }
 
@@ -159,7 +162,8 @@ impl Core {
     /// results are shown in order when all are done.
     fn call_group(&self, ctx: &Ctx, calls: &[Call]) -> Vec<Value> {
         let labels: Vec<String> = calls.iter().map(|c| ctx.tools.label(&c.name, &c.input)).collect();
-        let allowed: Vec<Result<(), String>> =
+        let started = Instant::now();
+        let allowed: Vec<Result<&'static str, String>> =
             calls.iter().map(|c| self.check(ctx, c, &ctx.tools.full_label(&c.name, &c.input))).collect();
         (ctx.emit)(Event::Activity(format!("running {} tools at once", calls.len())));
 
@@ -167,7 +171,7 @@ impl Core {
             let handles: Vec<_> = calls
                 .iter()
                 .zip(&allowed)
-                .map(|(c, ok)| s.spawn(move || ok.clone().and_then(|()| self.exec(ctx, c))))
+                .map(|(c, ok)| s.spawn(move || ok.clone().and_then(|_| self.exec(ctx, c))))
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("the tool crashed".into()))).collect()
         });
@@ -175,24 +179,40 @@ impl Core {
         calls
             .iter()
             .zip(labels)
+            .zip(allowed)
             .zip(outs)
-            .map(|((c, label), out)| {
+            .map(|(((c, label), allowed), out)| {
                 (ctx.emit)(Event::Tool { label, diff: None });
-                (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: tools::summary(&c.name, &out) });
+                self.finished(ctx, c, allowed.ok(), &out, started);
                 tool_result(&c.id, out)
             })
             .collect()
     }
 
+    /// Shows a call's result and puts the call in the run log.
+    fn finished(&self, ctx: &Ctx, c: &Call, allowed_by: Option<&'static str>, out: &Output, started: Instant) {
+        let summary = tools::summary(&c.name, out);
+        (ctx.emit)(Event::ToolResult { ok: out.is_ok(), summary: summary.clone() });
+        (ctx.emit)(Event::Step(super::Step {
+            tool: c.name.clone(),
+            input: c.input.clone(),
+            allowed_by,
+            ok: out.is_ok(),
+            result: summary,
+            ms: started.elapsed().as_millis() as u64,
+            agent: None,
+        }));
+    }
+
     /// Everything that has to pass before a call runs.
-    fn check(&self, ctx: &Ctx, c: &Call, label: &str) -> Result<(), String> {
+    fn check(&self, ctx: &Ctx, c: &Call, label: &str) -> Result<&'static str, String> {
         if self.cancel.load(Ordering::Relaxed) {
             return Err("Cancelled by the user.".into());
         }
         if let Some(e) = c.input.get("_invalid_json") {
             return Err(format!("The tool input was not valid JSON ({e}). Try again."));
         }
-        self.permit(ctx, &c.name, &c.input, label)
+        self.permit_by(ctx, &c.name, &c.input, label)
     }
 
     fn exec(&self, ctx: &Ctx, c: &Call) -> Output {

@@ -90,29 +90,36 @@ enum Verdict {
 }
 
 impl Core {
-    /// Ok if the call may run; otherwise the reason, which goes back to the model.
+    #[cfg(test)]
     pub fn permit(&self, ctx: &Ctx, name: &str, input: &Value, label: &str) -> Result<(), String> {
+        self.permit_by(ctx, name, input, label).map(|_| ())
+    }
+
+    /// Ok if the call may run, with what allowed it (for the run log);
+    /// otherwise the reason, which goes back to the model.
+    pub fn permit_by(&self, ctx: &Ctx, name: &str, input: &Value, label: &str) -> Result<&'static str, String> {
         let access = tools::access(name);
         let mode = self.mode.get();
         let subject = ctx.tools.subject(name, input);
         let inside_project = auto_edit_ok(name, &subject);
         match (mode, access) {
-            (_, Access::Free) | (Mode::Bypass, _) => return Ok(()),
-            (Mode::AcceptEdits | Mode::Auto, Access::Edit) if inside_project => return Ok(()),
+            (_, Access::Free) => return Ok("needs no approval"),
+            (Mode::Bypass, _) => return Ok("skip-permissions mode"),
+            (Mode::AcceptEdits | Mode::Auto, Access::Edit) if inside_project => return Ok("accept-edits mode"),
             (Mode::Plan, Access::Edit) => {
                 return Err("Plan mode is on: don't change files. Put the change in your plan.".into());
             }
             _ => {}
         }
         if self.rules.lock().unwrap().allows(name, &subject) {
-            return Ok(());
+            return Ok("allow rule");
         }
 
         let mut why = None;
         if mode == Mode::Auto {
             (ctx.emit)(Event::Activity(format!("reviewing {label}")));
             match self.review(ctx, name, &subject) {
-                Verdict::Allow => return Ok(()),
+                Verdict::Allow => return Ok("reviewer"),
                 Verdict::Block(reason) => why = Some(reason),
                 Verdict::Unsure => {}
             }
@@ -129,10 +136,10 @@ impl Core {
         let (tx, rx) = mpsc::channel();
         (ctx.emit)(Event::Ask { label, reply: tx });
         match rx.recv() {
-            Ok(Answer::Yes) => Ok(()),
+            Ok(Answer::Yes) => Ok("user"),
             Ok(Answer::Always) => {
                 self.rules.lock().unwrap().add(Rules::always(name, &subject));
-                Ok(())
+                Ok("user, always")
             }
             _ => Err("The user did not allow this tool call.".into()),
         }

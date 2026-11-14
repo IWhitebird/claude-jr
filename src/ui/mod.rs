@@ -713,6 +713,7 @@ impl App {
                 self.set_activity("listening".into());
             }
             Event::Activity(a) => self.set_activity(a),
+            Event::Step(_) => {}
             Event::Usage { usage, cost, main } => {
                 self.cost += cost.unwrap_or(0.0);
                 if main {

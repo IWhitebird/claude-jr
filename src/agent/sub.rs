@@ -37,6 +37,7 @@ impl Core {
             Event::Tool { label, .. } => parent(Event::SubStep { id, label }),
             Event::Ask { label, reply } => parent(Event::Ask { label: format!("{task} · {label}"), reply }),
             Event::Usage { usage, cost, .. } => parent(Event::Usage { usage, cost, main: false }),
+            Event::Step(step) => parent(Event::Step(super::Step { agent: Some(task.to_string()), ..step })),
             _ => {}
         };
         let defs = self.sub_defs.lock().unwrap().clone();

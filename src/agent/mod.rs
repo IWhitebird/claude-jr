@@ -145,6 +145,8 @@ pub enum Event {
         ok: bool,
         summary: String,
     },
+    /// A tool call from start to finish, for the run log.
+    Step(Step),
     /// What's going on right now, for the status line (subagents, reviews).
     Activity(String),
     /// Tokens used by one request. `main` is false for subagents and reviews,
@@ -157,6 +159,21 @@ pub enum Event {
     Done,
     Cancelled,
     Error(String),
+}
+
+/// What one tool call was, who let it run and how it went.
+pub struct Step {
+    pub tool: String,
+    pub input: Value,
+    /// Why it was allowed to run ("mode", "rule", "reviewer", "user", ...),
+    /// or None if it was refused.
+    pub allowed_by: Option<&'static str>,
+    pub ok: bool,
+    /// The result as the user is shown it: a line or a few.
+    pub result: String,
+    pub ms: u64,
+    /// The subagent that made the call, if one did.
+    pub agent: Option<String>,
 }
 
 pub type Emit = Arc<dyn Fn(Event) + Send + Sync>;
