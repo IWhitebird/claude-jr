@@ -20,7 +20,7 @@
     <td align="center"><b>1.8 MB</b><br>binary, no runtime</td>
     <td align="center"><b>0.7 MB</b><br>memory when idle</td>
     <td align="center"><b>5 ms</b><br>to start</td>
-    <td align="center"><b>88%</b><br>SWE-bench Verified<br>with Sonnet 5.5</td>
+    <td align="center"><b>88%</b><br>SWE-bench Verified<br>100-task sample, Sonnet 5.5</td>
   </tr>
 </table>
 
