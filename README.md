@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Claude Junior</b>: a full coding agent for the terminal in one 1.8 MB binary.<br>
-  The same job as Claude Code, in 180 times less disk and 190 times less memory.
+  A small, fast alternative to Claude Code: 180 times less disk and 190 times less memory.
 </p>
 
 <p align="center">
