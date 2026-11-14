@@ -187,6 +187,55 @@ git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
 
 Linux only for now.
 
+## Running many at once (from 0.2.0, not released yet)
+
+Three pieces make a run something another program, or another agent, can
+start, watch and collect.
+
+**A worktree of its own.** `--worktree` does the work in a git worktree on a
+new branch, so several runs in one repository can't touch each other's files
+or yours. It starts from the current commit and lives outside the repository.
+A headless run commits what it changed; a worktree in which nothing changed is
+removed again.
+
+```sh
+claudejr --worktree -y -p "fix the flaky test"
+# The work is on branch claudejr/6a7d01 (1 commit) ...
+```
+
+**A record of what it did.** `--log FILE` writes one JSON line per step:
+each tool call with its input, what allowed it to run (the mode, an allow
+rule, the reviewer, you) or that it was refused, how it went and how long it
+took. `--output-format stream-json` prints the same lines to stdout as they
+happen. Both end with the result, which `--output-format json` prints alone:
+the final answer, the files changed, the branch, cost and tokens.
+
+**Tasks.** A task is a run that carries on in the background:
+
+```sh
+id=$(claudejr task start -y "add tests for the parser")   # returns at once
+claudejr task list                # what is running, what finished
+claudejr task wait $id            # blocks until it has finished
+claudejr task result $id          # the outcome as JSON, or how far it is
+claudejr task log $id -f          # follow every step
+claudejr task merge $id           # take its branch, clean up
+claudejr task drop $id            # or throw it away
+```
+
+In a git repository each task gets its own worktree and branch, named after
+its id. A group of tasks can share one budget, and all stop when it is used
+up:
+
+```sh
+for t in "fix lint in api" "fix lint in ui" "fix lint in tools"; do
+  claudejr task start -y --group lint --budget 2.00 "$t"
+done
+claudejr task wait
+```
+
+Each worker holds about half a megabyte, so the number you can run at once is
+set by your API rate limits, not by memory.
+
 ## Memory and sessions
 
 - **In RAM**: only the current conversation, kept as the exact JSON text sent
