@@ -5,6 +5,7 @@
 // so its state sits behind small locks and every method takes `&self`.
 
 mod bash;
+pub use bash::kill_group;
 pub mod checkpoint;
 mod fs;
 pub mod mcp;

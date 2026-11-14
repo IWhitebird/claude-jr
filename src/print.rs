@@ -37,6 +37,8 @@ pub struct Options {
     pub log: Option<std::path::PathBuf>,
     /// The worktree the run is in, to be wrapped up when it ends.
     pub worktree: Option<Worktree>,
+    /// Set when a task's worker was told to stop (see `run`).
+    pub stopped: std::sync::Arc<AtomicBool>,
 }
 
 /// Returns true if the turn finished without an error.
@@ -55,7 +57,16 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
     let agent = agent::spawn(cfg, move |e| {
         let _ = tx.send(e);
     });
-    crate::signals::watch(agent.tools.clone(), false);
+    if std::env::var_os(crate::task::ENV).is_some() {
+        // A task that is cancelled winds down like any other run, so what it
+        // did is still committed and its result still written.
+        for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT, signal_hook::consts::SIGHUP] {
+            let _ = signal_hook::flag::register(signal, options.stopped.clone());
+            let _ = signal_hook::flag::register(signal, agent.cancel.clone());
+        }
+    } else {
+        crate::signals::watch(agent.tools.clone(), false);
+    }
     let sent = agent.commands.send(Command::Send(prompt.clone())).is_ok();
     let mut report = Report::default();
     let start = std::time::Instant::now();
@@ -110,6 +121,9 @@ fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
     }
     let mut fields = serde_json::to_value(report).unwrap_or_default();
     fields["result"] = report.result.trim().into();
+    if options.stopped.load(Ordering::Relaxed) {
+        fields["cancelled"] = true.into();
+    }
     // Before the commit: afterwards nothing counts as changed any more.
     fields["files"] = log.files();
     if let Some(worktree) = &options.worktree {
@@ -118,6 +132,9 @@ fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
         fields["worktree"] = left;
     }
     log.finish(&fields);
+    if let Some(dir) = std::env::var_os(crate::task::ENV) {
+        let _ = crate::task::write_json(&std::path::Path::new(&dir).join("result.json"), &fields);
+    }
     if options.format == Format::Json {
         println!("{fields}");
     }
@@ -150,6 +167,7 @@ fn print_events(
                 let _ = out.write_all(t.as_bytes());
                 let _ = out.flush();
                 mid_out = !t.ends_with('\n');
+                report.result.push_str(&t);
             }
             Event::Thinking(t) => {
                 let t = safe(&t, true);
@@ -166,7 +184,6 @@ fn print_events(
             }
             Event::Tool { label: label_text, .. } => {
                 // What was said before a tool call is not the final answer.
-                // (In text mode it was printed as it came and isn't kept.)
                 report.result.clear();
                 eprintln!("● {}", label(&label_text));
             }
@@ -188,8 +205,13 @@ fn print_events(
                 let _ = reply.send(String::new());
             }
             Event::Done => return true,
-            // Only the cost limit cancels a -p run.
-            Event::Cancelled => return report.error.is_none(),
+            // Only a cost limit cancels a -p run, or `task cancel`.
+            Event::Cancelled => {
+                if options.stopped.load(Ordering::Relaxed) {
+                    report.error.get_or_insert("cancelled".into());
+                }
+                return report.error.is_none();
+            }
             Event::Error(e) => {
                 eprintln!("error: {}", label(&e));
                 report.error.get_or_insert(label(&e));
@@ -202,6 +224,16 @@ fn print_events(
                 report.cache_read_tokens += usage.cache_read_input_tokens;
                 report.cache_write_tokens += usage.cache_creation_input_tokens;
                 report.cost_usd += cost.unwrap_or(0.0);
+                // A group's budget is spent by all its workers together.
+                let group = std::env::var_os(crate::task::BUDGET_ENV)
+                    .and_then(|file| crate::task::spend(std::path::Path::new(&file), cost.unwrap_or(0.0)))
+                    .filter(|(spent, budget)| spent >= budget && report.error.is_none());
+                if let Some((spent, budget)) = group {
+                    let msg = format!("stopped: the group's budget of ${budget:.2} is used up (${spent:.2} spent)");
+                    eprintln!("{msg}");
+                    report.error = Some(msg);
+                    cancel.store(true, Ordering::Relaxed);
+                }
                 if let Some(max) = options.max_cost.filter(|max| report.cost_usd >= *max && report.error.is_none()) {
                     let msg =
                         format!("stopped: the cost limit of ${max:.2} was reached (${:.2} spent)", report.cost_usd);

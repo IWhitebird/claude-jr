@@ -10,6 +10,7 @@ mod prompt;
 mod sandbox;
 mod session;
 mod signals;
+mod task;
 mod tools;
 mod ui;
 mod update;
@@ -24,6 +25,7 @@ use worktree::Worktree;
 const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
   -p, --print PROMPT   run one prompt, print the reply, exit (or pipe the prompt in: cmd | claudejr -p)
+      task ...         run tasks in the background: claudejr task --help
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
@@ -70,11 +72,16 @@ enum Cli {
     Show(String),
     Sessions,
     Update,
+    /// `claudejr task ...`, with what came after it.
+    Task(Vec<String>),
 }
 
 fn parse_args() -> Result<Cli, String> {
     let mut args = Args::default();
-    let mut it = std::env::args().skip(1);
+    let mut it = std::env::args().skip(1).peekable();
+    if it.peek().is_some_and(|a| a == "task") {
+        return Ok(Cli::Task(it.skip(1).collect()));
+    }
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
         match a.as_str() {
@@ -147,6 +154,13 @@ fn run() -> Result<ExitCode, String> {
             print_sessions();
             return Ok(ExitCode::SUCCESS);
         }
+        Cli::Task(args) => {
+            let (text, ok) = task::cli(&args)?;
+            if !text.is_empty() {
+                println!("{text}");
+            }
+            return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+        }
     };
     let interactive = args.prompt.is_none();
     let project = config::project_files();
@@ -168,7 +182,11 @@ fn run() -> Result<ExitCode, String> {
     let file = config::Config::load()?;
     // (Inside the sandbox, the worktree was made before it was entered.)
     let worktree = match Worktree::current() {
-        None if args.worktree => Some(Worktree::create(&worktree::new_id())?),
+        None if args.worktree => {
+            // A task's worktree and branch carry the task's id.
+            let id = std::env::var("CLAUDE_JR_ID").unwrap_or_else(|_| worktree::new_id());
+            Some(Worktree::create(&id)?)
+        }
         current => current,
     };
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
@@ -208,7 +226,13 @@ fn run() -> Result<ExitCode, String> {
 
     match args.prompt {
         Some(prompt) => {
-            let options = print::Options { format: args.format, max_cost: args.max_cost, log: args.log, worktree };
+            let options = print::Options {
+                format: args.format,
+                max_cost: args.max_cost,
+                log: args.log,
+                worktree,
+                stopped: Default::default(),
+            };
             Ok(if print::run(cfg, prompt, options)? { ExitCode::SUCCESS } else { ExitCode::FAILURE })
         }
         None => {
