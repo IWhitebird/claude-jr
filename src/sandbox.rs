@@ -53,6 +53,20 @@ pub fn active() -> bool {
     std::env::var_os(ENV).is_some()
 }
 
+fn protect_git(cmd: &mut Command, git: &Path) {
+    if git.is_dir() {
+        let hooks = git.join("hooks");
+        if hooks.is_dir() {
+            cmd.arg("--ro-bind").arg(&hooks).arg(&hooks);
+        } else {
+            cmd.arg("--tmpfs").arg(&hooks);
+        }
+        if git.join("config").is_file() {
+            cmd.arg("--ro-bind").arg(git.join("config")).arg(git.join("config"));
+        }
+    }
+}
+
 /// Replaces this process with a sandboxed copy of itself. Only returns on error.
 pub fn exec(cfg: &SandboxConfig) -> String {
     if !cfg!(target_os = "linux") {
@@ -102,17 +116,12 @@ pub fn exec(cfg: &SandboxConfig) -> String {
     // A git hook runs on your next git command, outside the sandbox; the config
     // can point git at hooks elsewhere. With no hooks folder yet, an empty one
     // that vanishes at the end, so none can be created either.
-    let git = cwd.join(".git");
-    if git.is_dir() {
-        let hooks = git.join("hooks");
-        if hooks.is_dir() {
-            cmd.arg("--ro-bind").arg(&hooks).arg(&hooks);
-        } else {
-            cmd.arg("--tmpfs").arg(&hooks);
-        }
-        if git.join("config").is_file() {
-            cmd.arg("--ro-bind").arg(git.join("config")).arg(git.join("config"));
-        }
+    protect_git(&mut cmd, &cwd.join(".git"));
+    // A worktree's commits are stored in the repository it belongs to.
+    if let Some(worktree) = crate::worktree::Worktree::current() {
+        let git = worktree.git_dir();
+        cmd.arg("--bind").arg(&git).arg(&git);
+        protect_git(&mut cmd, &git);
     }
     cmd.arg("--chdir").arg(&cwd);
     cmd.args(["--setenv", ENV, "1"]);

@@ -89,7 +89,15 @@ pub fn project_files() -> Vec<&'static str> {
 
 /// Has the user said to trust the current folder's project files?
 pub fn is_trusted() -> bool {
-    std::env::current_dir().is_ok_and(|d| is_trusted_dir(&d))
+    std::env::current_dir().is_ok_and(|d| is_trusted_dir(&origin(&d)))
+}
+
+/// A worktree made by --worktree is as trusted as the folder it is a copy of.
+fn origin(dir: &Path) -> PathBuf {
+    match crate::worktree::Worktree::current() {
+        Some(w) => dir.strip_prefix(&w.path).map_or_else(|_| dir.to_path_buf(), |rest| w.repo.join(rest)),
+        None => dir.to_path_buf(),
+    }
 }
 
 fn is_trusted_dir(dir: &Path) -> bool {

@@ -11,6 +11,7 @@
 
 use crate::agent::{self, Command, Event};
 use crate::log::Log;
+use crate::worktree::Worktree;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -34,6 +35,8 @@ pub struct Options {
     pub max_cost: Option<f64>,
     /// Write the run log here.
     pub log: Option<std::path::PathBuf>,
+    /// The worktree the run is in, to be wrapped up when it ends.
+    pub worktree: Option<Worktree>,
 }
 
 /// Returns true if the turn finished without an error.
@@ -53,11 +56,17 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
         let _ = tx.send(e);
     });
     crate::signals::watch(agent.tools.clone(), false);
-    let ok = agent.commands.send(Command::Send(prompt)).is_ok() && print(rx, &options, &agent.cancel, &mut log);
+    let sent = agent.commands.send(Command::Send(prompt.clone())).is_ok();
+    let mut report = Report::default();
+    let start = std::time::Instant::now();
+    report.ok = sent && print_events(rx, &mut report, &options, &agent.cancel, &mut log);
+    report.duration_ms = start.elapsed().as_millis() as u64;
+    // The commands it started are stopped before the worktree is wrapped up.
     if let Some(tools) = agent.tools.get() {
         tools.shutdown();
     }
-    Ok(ok)
+    finish(&report, &options, &prompt, &mut log);
+    Ok(report.ok)
 }
 
 /// Untrusted text with every control character removed except newline (and
@@ -91,25 +100,27 @@ struct Report {
     result: String,
 }
 
-/// Prints events until the turn ends.
-fn print(events: Receiver<Event>, options: &Options, cancel: &AtomicBool, log: &mut Log) -> bool {
-    let start = std::time::Instant::now();
-    let mut report = Report::default();
-    let ok = print_events(events, &mut report, options, cancel, log);
-    report.ok = ok;
-    report.duration_ms = start.elapsed().as_millis() as u64;
+/// Writes the run's outcome: the report file, the log's last line, the JSON
+/// object. A run in a worktree has its changes committed first.
+fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
     if let Ok(path) = std::env::var("CLAUDE_JR_REPORT")
-        && let Ok(json) = serde_json::to_string_pretty(&report)
+        && let Ok(json) = serde_json::to_string_pretty(report)
     {
         let _ = std::fs::write(path, json);
     }
-    let mut fields = serde_json::to_value(&report).unwrap_or_default();
+    let mut fields = serde_json::to_value(report).unwrap_or_default();
     fields["result"] = report.result.trim().into();
-    let fields = log.finish(fields);
+    // Before the commit: afterwards nothing counts as changed any more.
+    fields["files"] = log.files();
+    if let Some(worktree) = &options.worktree {
+        let left = worktree.finish(Some(prompt));
+        eprintln!("{}", crate::worktree::summary(&left));
+        fields["worktree"] = left;
+    }
+    log.finish(&fields);
     if options.format == Format::Json {
         println!("{fields}");
     }
-    ok
 }
 
 fn print_events(

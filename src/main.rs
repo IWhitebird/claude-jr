@@ -13,11 +13,13 @@ mod signals;
 mod tools;
 mod ui;
 mod update;
+mod worktree;
 
 use agent::Mode;
 use session::{Pick, Session};
 use std::io::IsTerminal;
 use std::process::ExitCode;
+use worktree::Worktree;
 
 const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
@@ -26,6 +28,7 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
       --sandbox        only let it write inside this directory (Linux, bubblewrap)
+      --worktree       work in a git worktree and branch of its own, leaving this folder alone
   -m, --model MODEL    model id (default: claude-opus-5-5)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
@@ -57,6 +60,7 @@ struct Args {
     sandbox: bool,
     format: print::Format,
     log: Option<std::path::PathBuf>,
+    worktree: bool,
     max_cost: Option<f64>,
 }
 
@@ -84,6 +88,7 @@ fn parse_args() -> Result<Cli, String> {
             "--sessions" => return Ok(Cli::Sessions),
             "--update" => return Ok(Cli::Update),
             "--sandbox" => args.sandbox = true,
+            "--worktree" => args.worktree = true,
             "--output-format" => match value()?.as_str() {
                 "json" => args.format = print::Format::Json,
                 "stream-json" => args.format = print::Format::Stream,
@@ -161,6 +166,11 @@ fn run() -> Result<ExitCode, String> {
         }
     }
     let file = config::Config::load()?;
+    // (Inside the sandbox, the worktree was made before it was entered.)
+    let worktree = match Worktree::current() {
+        None if args.worktree => Some(Worktree::create(&worktree::new_id())?),
+        current => current,
+    };
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
         return Err(sandbox::exec(&file.sandbox));
     }
@@ -198,12 +208,15 @@ fn run() -> Result<ExitCode, String> {
 
     match args.prompt {
         Some(prompt) => {
-            let options = print::Options { format: args.format, max_cost: args.max_cost, log: args.log };
+            let options = print::Options { format: args.format, max_cost: args.max_cost, log: args.log, worktree };
             Ok(if print::run(cfg, prompt, options)? { ExitCode::SUCCESS } else { ExitCode::FAILURE })
         }
         None => {
             let bottom = file.layout.as_deref() != Some("inline");
             ui::run(cfg, bottom).map_err(|e| format!("terminal error: {e}"))?;
+            if let Some(worktree) = worktree {
+                println!("{}", worktree::summary(&worktree.finish(None)));
+            }
             Ok(ExitCode::SUCCESS)
         }
     }

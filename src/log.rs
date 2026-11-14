@@ -109,13 +109,15 @@ impl Log {
         }
     }
 
-    /// The last line: the run's outcome. `fields` are the totals; the files
-    /// the run changed are added here.
-    pub fn finish(&mut self, mut fields: Value) -> Value {
+    /// The files the run changed, as they stand now.
+    pub fn files(&self) -> Value {
+        json!(changed_files(&self.edited))
+    }
+
+    /// The last line: the run's outcome.
+    pub fn finish(&mut self, fields: &Value) {
         self.flush_text();
-        fields["files"] = json!(changed_files(&self.edited));
         self.line("result", fields.clone());
-        fields
     }
 }
 
@@ -206,8 +208,8 @@ mod tests {
         log.see(&step("write", json!({ "path": "a.txt", "content": "x".repeat(5000) }), None, false));
         log.see(&Event::Text("All done.".into()));
         log.see(&Event::Done);
-        let fields = log.finish(json!({ "ok": true }));
-        assert!(fields["files"].is_array());
+        assert!(log.files().is_array());
+        log.finish(&json!({ "ok": true }));
 
         let lines = lines(&buffer);
         let kinds: Vec<&str> = lines.iter().map(|l| l["type"].as_str().unwrap()).collect();
