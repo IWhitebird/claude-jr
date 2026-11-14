@@ -1297,6 +1297,63 @@ fn a_cancelled_task_stops_its_commands_and_keeps_what_it_did() {
 }
 
 #[test]
+fn a_merge_that_conflicts_is_undone_and_says_where() {
+    let e = Env::new();
+    let git = repository(&e);
+    let id = task(&e, &["start", "-y", "add the demo file"]).out.trim().to_string();
+    ok(&task(&e, &["wait", &id]));
+    // Meanwhile the same file was written differently on the main branch.
+    std::fs::write(e.proj.join("demo.txt"), "something else entirely\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "ours"]);
+    let head = git(&["rev-parse", "HEAD"]);
+
+    let o = task(&e, &["merge", &id]);
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("conflicts with the current branch in: demo.txt. Nothing was merged."), "{}", o.err);
+    // Nothing is left half-merged, and the task's work is still there to look at.
+    assert_eq!(git(&["status", "--porcelain"]), "");
+    assert_eq!(git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read_to_string(e.proj.join("demo.txt")).unwrap(), "something else entirely\n");
+    assert_eq!(git(&["show", &format!("claudejr/{id}:demo.txt")]), "one\nTWO\nthree");
+    assert_eq!(task_json(&e, &["result", &id])["status"], "done");
+    ok(&task(&e, &["drop", &id]));
+}
+
+#[test]
+fn a_running_task_cannot_be_merged_and_its_log_can_be_followed() {
+    let e = Env::with(&[("MOCK_CMD", "sleep 1.5"), ("MOCK_ROUNDS", "1")]);
+    let _git = repository(&e);
+    let id = task(&e, &["start", "-y", "-m", "claude-haiku-5-5", "slow one"]).out.trim().to_string();
+    until(&e, &id, "the worker starting", |s| s["status"] == "running");
+    let o = task(&e, &["merge", &id]);
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("is still running"), "{}", o.err);
+
+    // Following the log returns when the task has finished, with all of it.
+    let start = Instant::now();
+    let followed = task(&e, &["log", &id, "-f"]);
+    ok(&followed);
+    assert!(start.elapsed() > Duration::from_millis(500), "it waited for the task");
+    let lines = json_lines(&followed.out);
+    assert_eq!(lines.first().unwrap()["type"], "start");
+    assert_eq!(lines.last().unwrap()["type"], "result");
+    assert_eq!(lines[0]["model"], "claude-haiku-5-5", "options are handed on to the worker");
+    assert_eq!(e.requests()[0]["model"], "claude-haiku-5-5");
+    assert_eq!(task_json(&e, &["result", &id])["status"], "done");
+
+    // Two tasks whose ids begin alike can't be told apart by that beginning.
+    let other = task(&e, &["start", "-y", "another"]).out.trim().to_string();
+    ok(&task(&e, &["wait", &other]));
+    let shared: String = id.chars().zip(other.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a).collect();
+    if !shared.is_empty() {
+        let o = task(&e, &["result", &shared]);
+        assert_eq!(o.code, 2);
+        assert!(o.err.contains("is the start of 2 tasks' ids"), "{}", o.err);
+    }
+}
+
+#[test]
 fn a_group_of_tasks_shares_one_budget() {
     let e = Env::with(&[("MOCK_ROUNDS", "30")]);
     let _git = repository(&e);
