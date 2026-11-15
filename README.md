@@ -5,8 +5,8 @@
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
-  <b>Claude Junior</b>: a full coding agent for the terminal in one 1.8 MB binary.<br>
-  A small, fast alternative to Claude Code: 180 times less disk and 190 times less memory.
+  <b>Claude Junior</b>: a full coding agent for the terminal in one 2 MB binary.<br>
+  Use it on its own, or as the workers your main agent hands tasks to: half a megabyte each.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 <table align="center">
   <tr>
-    <td align="center"><b>1.8 MB</b><br>binary, no runtime</td>
+    <td align="center"><b>2 MB</b><br>binary, no runtime</td>
     <td align="center"><b>0.7 MB</b><br>memory when idle</td>
     <td align="center"><b>5 ms</b><br>to start</td>
     <td align="center"><b>88%</b><br>SWE-bench Verified<br>100-task sample, Sonnet 5.5</td>
@@ -27,9 +27,13 @@
 ---
 
 claude-jr (Claude Junior) is a small, fast alternative to Claude Code, written
-in Rust. It talks to Claude, reads and edits your files, and runs commands,
-asking before anything changes. On a 100-task sample of SWE-bench Verified it
-resolved 88%.
+in Rust. It reads and edits your files and runs commands, asking before
+anything changes, with Claude or any other model. On a 100-task sample of
+SWE-bench Verified it resolved 88%.
+
+It is also built to be run many at once. Claude Code, Cursor or Codex can hand
+it tasks over MCP; each worker gets its own git worktree and branch and holds
+about half a megabyte, so a thousand of them fit in 500 MB.
 
 ## Install
 
@@ -38,17 +42,20 @@ curl -fsSL https://claudejr.iwhitebird.com/install | sh
 ```
 
 Linux and macOS, x86_64 and ARM. On Windows, run it inside WSL. Then run
-`claudejr`; it asks for your Anthropic API key the first time. `claudejr --update`
-gets the newest release.
+`claudejr`; it asks for your Anthropic API key the first time, or start it with
+another provider's model (`claudejr -m ollama/qwen3`). `claudejr --update` gets
+the newest release.
 
 ## Why
 
-- **Tiny.** One static 1.8 MB file. No Node, no Python, nothing to install first.
+- **Tiny.** One static 2 MB file. No Node, no Python, nothing to install first.
 - **Light.** 0.7 MB of memory when idle, and under 4 MB however long the session gets, because the conversation lives on disk instead of in memory. A whole session, commands included, fits in a 16 MB container on a twentieth of a CPU core.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
 - **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
+- **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
+- **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU.
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 315 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
+- **Tested.** 369 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 
@@ -56,11 +63,14 @@ Against other agents, on the same fake API so no model time is counted:
 
 |                              | claude-jr | Claude Code | pi       |
 |------------------------------|-----------|-------------|----------|
-| install size                 | 1.8 MB    | 324.5 MB    | 109.0 MB |
+| install size                 | 2.0 MB    | 324.5 MB    | 109.0 MB |
 | startup                      | 5 ms      | 167 ms      | ~260 ms  |
 | memory, idle                 | 0.7 MB    | 135.0 MB    | 141.1 MB |
-| memory, working              | 2.0 MB    | 270.2 MB    | 137.5 MB |
-| its own CPU for 20 tool calls| 30 ms     | 1150 ms     | 580 ms   |
+| memory, working              | 2.1 MB    | 270.2 MB    | 137.5 MB |
+| its own CPU for 20 tool calls| 40 ms     | 1150 ms     | 580 ms   |
+
+A thousand claude-jr agents working at once hold 488 MB between them
+(`bench/density.py`).
 
 [SWE-bench Verified](https://www.swebench.com/), one attempt per task, official scoring:
 
@@ -82,6 +92,10 @@ measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 | `claudejr -p "explain main.rs"` | one prompt, print the answer, exit |
 | `claudejr -p "..." --output-format json --max-cost 2` | for scripts: JSON result, stop at $2 |
 | `claudejr --sandbox` | only allow writes inside this folder |
+| `claudejr -m ollama/qwen3` | use another provider's model (`openai/...`, `gemini/...`, `groq/...`) |
+| `claudejr task start -y "fix the flaky test"` | run a task in the background, on its own branch |
+| `claudejr fleet -y --budget 5 "task one" "task two"` | run a list of tasks side by side |
+| `claudejr install claude-code` | let Claude Code hand tasks to claude-jr workers |
 | `claudejr --update` | get the newest release |
 
 | Inside it | |
@@ -96,7 +110,7 @@ measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Docs
 
-- [Guide](docs/GUIDE.md): commands, keys, modes, tools, skills, MCP, the sandbox, memory, sessions, config.
+- [Guide](docs/GUIDE.md): commands, keys, modes, tools, skills, MCP, the sandbox, other models, tasks and fleets, working for another agent, config.
 - [Benchmarks](docs/BENCHMARKS.md): every number and how to reproduce it.
 - [Architecture](ARCHITECTURE.md): how it is built.
 - [Website](https://claudejr.iwhitebird.com)

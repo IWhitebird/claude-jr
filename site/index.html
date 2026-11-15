@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claude-jr (Claude Junior): a coding agent for the terminal in one 1.8 MB binary</title>
-<meta name="description" content="claude-jr, or Claude Junior, is a small, fast coding agent for the terminal: a lightweight Claude Code alternative written in Rust. One 1.8 MB binary, 0.7 MB of memory when idle, 5 ms to start, 88% on SWE-bench Verified.">
+<title>claude-jr (Claude Junior): a coding agent for the terminal in one 2 MB binary</title>
+<meta name="description" content="claude-jr, or Claude Junior, is a small, fast coding agent for the terminal: a lightweight Claude Code alternative written in Rust. One 2 MB binary, 0.7 MB of memory when idle, 5 ms to start, 88% on SWE-bench Verified.">
 <link rel="canonical" href="https://claudejr.iwhitebird.com/">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" type="image/png" href="/favicon.png">
 <meta name="theme-color" content="#f4f1e9">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="claude-jr">
-<meta property="og:title" content="claude-jr (Claude Junior): a coding agent in one 1.8 MB binary">
-<meta property="og:description" content="A small, fast alternative to Claude Code: 180 times less disk and 190 times less memory. 1.8 MB binary, 0.7 MB idle, 5 ms to start, 88% on SWE-bench Verified.">
+<meta property="og:title" content="claude-jr (Claude Junior): a coding agent in one 2 MB binary">
+<meta property="og:description" content="A small, fast alternative to Claude Code, and the workers your main agent hands tasks to: half a megabyte each. 2 MB binary, 0.7 MB idle, 5 ms to start, 88% on SWE-bench Verified.">
 <meta property="og:url" content="https://claudejr.iwhitebird.com/">
 <meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
 <meta property="og:image:width" content="1280">
@@ -20,7 +20,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:creator" content="@ifrogeee">
 <meta name="twitter:title" content="claude-jr (Claude Junior)">
-<meta name="twitter:description" content="A full coding agent in one 1.8 MB Rust binary. 0.7 MB of memory when idle, 88% on SWE-bench Verified.">
+<meta name="twitter:description" content="A full coding agent in one 2 MB Rust binary. 0.7 MB of memory when idle, 88% on SWE-bench Verified.">
 <meta name="twitter:image" content="https://claudejr.iwhitebird.com/og.png">
 <script type="application/ld+json">
 {
@@ -155,11 +155,12 @@
 
 <main>
   <div class="intro col">
-    <h1>A coding agent for the terminal, in a <em>1.8 MB</em> binary.</h1>
+    <h1>A coding agent for the terminal, in a <em>2 MB</em> binary.</h1>
     <p>claude-jr, or Claude Junior, is a small alternative to Claude Code: it reads your code, edits files and
       runs commands, asking before anything changes. It is written in Rust with no runtime, so it
-      starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>: 180 times
-      less disk and 190 times less memory than Claude Code.</p>
+      starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>: 160 times
+      less disk and 190 times less memory than Claude Code. It runs alone, or as the workers
+      Claude Code, Cursor or Codex hand tasks to: a thousand of them fit in 500 MB.</p>
 
     <div class="install">
       <code id="cmd">curl -fsSL https://claudejr.iwhitebird.com/install | sh</code>
@@ -170,7 +171,7 @@
 
   <figure class="shot col wide">
     <div class="term" role="img" aria-label="A claude-jr session: it finds a struct, edits it, and builds the project">
-<pre><span class="hd"><img src="/logo.svg" alt="" width="56" height="48"><span><b>claude-jr</b> 0.1.5<br>claude-opus-5-5 · ~/proj/cli<br>/help for commands · shift+tab to change mode</span></span><span class="b">&gt; add a --verbose flag to the cli</span>
+<pre><span class="hd"><img src="/logo.svg" alt="" width="56" height="48"><span><b>claude-jr</b> 0.2.0<br>claude-opus-5-5 · ~/proj/cli<br>/help for commands · shift+tab to change mode</span></span><span class="b">&gt; add a --verbose flag to the cli</span>
 
 <span class="o">●</span> Bash(grep -n "struct Args" -A12 src/cli.rs)
 <span class="g">  ⎿ 9:pub struct Args {  … +11 lines</span>
@@ -196,7 +197,7 @@
         A whole working session, including the commands it runs, fits in a 16 MB container on a
         twentieth of a CPU core.</p>
       <div class="figures">
-        <div><b>1.8 MB</b><span>one static binary</span></div>
+        <div><b>2 MB</b><span>one static binary</span></div>
         <div><b>0.7 MB</b><span>memory when idle</span></div>
         <div><b>5 ms</b><span>to start</span></div>
         <div><b>0 ms</b><span>CPU while it waits</span></div>
@@ -206,7 +207,7 @@
         <table>
           <thead><tr><th></th><th class="us">claude-jr</th><th>Claude Code</th><th>pi</th></tr></thead>
           <tbody>
-            <tr><td>Install size</td><td class="us">1.8 MB</td><td>324.5 MB</td><td>109.0 MB</td></tr>
+            <tr><td>Install size</td><td class="us">2.0 MB</td><td>324.5 MB</td><td>109.0 MB</td></tr>
             <tr><td>Memory, idle</td><td class="us">0.7 MB</td><td>135.0 MB</td><td>141.1 MB</td></tr>
             <tr><td>Memory, working</td><td class="us">2.0 MB</td><td>270.2 MB</td><td>137.5 MB</td></tr>
             <tr><td>Startup</td><td class="us">5 ms</td><td>167 ms</td><td>~260 ms</td></tr>
@@ -235,7 +236,10 @@
     <div class="col">
       <h2>What's in it</h2>
       <dl class="list">
-        <div><dt>Subagents</dt><dd>Side tasks go to agents that work in parallel and report back.</dd></div>
+        <div><dt>Workers for other agents</dt><dd><code>claudejr install claude-code</code> (or cursor, or codex) lets your main agent start claude-jr workers over MCP, then read, merge or drop what each one did.</dd></div>
+        <div><dt>Tasks and fleets</dt><dd>Runs carry on in the background, each in its own git worktree and branch, with a shared budget and a log of every step. <code>claudejr fleet</code> runs a whole list.</dd></div>
+        <div><dt>Any model</dt><dd>Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with <code>-m provider/model</code>.</dd></div>
+        <div><dt>Subagents</dt><dd>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</dd></div>
         <div><dt>Permission modes</dt><dd>From asking about everything to an auto mode where a small model reviews each command. <kbd>shift</kbd> <kbd>tab</kbd> switches.</dd></div>
         <div><dt>A sandbox</dt><dd>With <code>--sandbox</code> on Linux it can only write to your project; keys, sockets and the rest of your home stay out of reach.</dd></div>
         <div><dt>Rewind and resume</dt><dd>Go back to before any message with its file changes undone. Every session is saved as it goes.</dd></div>
@@ -257,6 +261,10 @@
             <tr><td><code>claudejr -c</code></td><td>continue the last conversation</td></tr>
             <tr><td><code>claudejr -p "explain main.rs"</code></td><td>one prompt, then exit</td></tr>
             <tr><td><code>claudejr --sandbox</code></td><td>only write inside this folder</td></tr>
+            <tr><td><code>claudejr -m ollama/qwen3</code></td><td>use another provider's model</td></tr>
+            <tr><td><code>claudejr task start -y "…"</code></td><td>run a task in the background, on its own branch</td></tr>
+            <tr><td><code>claudejr fleet -y "…" "…"</code></td><td>run a list of tasks side by side</td></tr>
+            <tr><td><code>claudejr install claude-code</code></td><td>let Claude Code hand tasks to workers</td></tr>
             <tr><td><code>claudejr --update</code></td><td>get the newest release</td></tr>
             <tr><td><code>/</code></td><td>every command, inside it</td></tr>
           </tbody>
