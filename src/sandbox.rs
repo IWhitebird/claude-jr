@@ -53,6 +53,18 @@ pub fn active() -> bool {
     std::env::var_os(ENV).is_some()
 }
 
+/// Whether a sandbox can be made here: Linux, with a bubblewrap that works
+/// (some systems have it installed but forbid what it needs).
+pub fn available() -> bool {
+    cfg!(target_os = "linux")
+        && Command::new("bwrap")
+            .args(["--ro-bind", "/", "/", "true"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
 fn protect_git(cmd: &mut Command, git: &Path) {
     if git.is_dir() {
         let hooks = git.join("hooks");

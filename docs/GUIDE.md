@@ -273,6 +273,49 @@ claudejr task wait
 Each worker holds about half a megabyte, so the number you can run at once is
 set by your API rate limits, not by memory.
 
+**A fleet.** The same in one command: a list of tasks, run a few at a time,
+with a table at the end of what each did and the branch it left.
+
+```sh
+claudejr fleet -y --max 4 --budget 5 "fix lint in api" "fix lint in ui" "fix lint in tools"
+claudejr fleet -y --merge --file tasks.txt     # one task per line; merge each branch when done
+```
+
+**Subagents in worktrees.** Inside a session the agent can do the same with
+its own subagents: one started with `worktree: true` works in its own copy of
+the repository, its work is committed when it finishes, and its report ends
+with the branch for the main agent to merge. A subagent can start subagents of
+its own, one level down and no further, and at most 16 run at once.
+
+## Working for another agent
+
+Another coding agent can hand work to claude-jr workers and stay the one you
+talk to. `claudejr mcp` is an MCP server whose tools start tasks, wait for
+them, read their results, logs and diffs, and merge or drop their branches.
+
+```sh
+claudejr install claude-code     # this project: .mcp.json and a skill
+claudejr install cursor          # this project: .cursor/mcp.json and a rule
+claudejr install codex           # ~/.codex/config.toml
+claudejr install claude-code --user     # every project
+claudejr uninstall claude-code   # takes it out again
+```
+
+What the workers may do is yours to decide, not the calling agent's: it is set
+when you install, with the server's options.
+
+| Installed with | Workers can |
+|---|---|
+| nothing, on Linux with bubblewrap | edit and run commands, confined to their worktree |
+| nothing, elsewhere | read only; the install says so |
+| `-y` | edit and run commands |
+| `-y --sandbox` | the same, confined to their worktree (Linux) |
+| `-m MODEL` | use that model (a call can still name another) |
+| `--budget USD` | spend that much between them, then stop |
+
+Any other MCP client can use it too: the command is `claudejr mcp` plus those
+options, over stdio.
+
 ## Memory and sessions
 
 - **In RAM**: only the current conversation, kept as the exact JSON text sent

@@ -66,6 +66,7 @@ in the task's own container, with no retries and no hints.
 | The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
 | Resizing leaves nothing twice or missing, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
 | Random keys, pastes and resizes never crash it or send a bad request | `python3 bench/chaos.py target/release/claudejr` |
+| The MCP server, checked by the official MCP SDK's own client | `python bench/mcp_client.py target/release/claudejr` (needs `pip install mcp`) |
 | A real model of another provider answers, calls tools and keeps its history | `bench/provider.sh ollama/qwen2.5:3b` (or any `PROVIDER/MODEL`, with its key set) |
 | Line coverage of the tests (98%) | `bench/coverage.sh` |
 | SWE-bench Verified, one task at a time in Docker | `bench/swe/run.py --dry-run` (setup at the top of the file) |

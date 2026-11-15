@@ -2,6 +2,7 @@ mod agent;
 mod api;
 mod config;
 mod images;
+mod install;
 mod log;
 mod mem;
 mod openai;
@@ -31,6 +32,7 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
       task ...         run tasks in the background: claudejr task --help
       fleet ...        run a list of tasks side by side: claudejr fleet --help
       mcp ...          serve tasks to another agent over MCP: claudejr mcp --help
+      install AGENT    set that up for claude-code, cursor or codex: claudejr install --help
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
@@ -84,6 +86,8 @@ enum Cli {
     Fleet(Vec<String>),
     /// `claudejr mcp ...`.
     Mcp(Vec<String>),
+    /// `claudejr install ...` (true) or `claudejr uninstall ...`.
+    Install(Vec<String>, bool),
 }
 
 fn parse_args() -> Result<Cli, String> {
@@ -97,6 +101,9 @@ fn parse_args() -> Result<Cli, String> {
     }
     if it.peek().is_some_and(|a| a == "mcp") {
         return Ok(Cli::Mcp(it.skip(1).collect()));
+    }
+    if let Some(install) = it.peek().and_then(|a| ["uninstall", "install"].iter().position(|verb| a == verb)) {
+        return Ok(Cli::Install(it.skip(1).collect(), install == 1));
     }
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -183,6 +190,14 @@ fn run() -> Result<ExitCode, String> {
         }
         Cli::Mcp(args) => {
             serve::run(serve::parse(&args)?)?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Install(args, _) if args.iter().any(|a| a == "--help" || a == "-h") => {
+            println!("{}", install::USAGE);
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Install(args, install) => {
+            println!("{}", install::run(&args, install)?);
             return Ok(ExitCode::SUCCESS);
         }
         Cli::Fleet(args) => {
