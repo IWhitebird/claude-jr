@@ -187,7 +187,7 @@ git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
 
 Linux only for now.
 
-## Other models (from 0.2.0, not released yet)
+## Other models
 
 A model id with a provider's name in front goes to that provider; a plain id
 is Anthropic's, as before.
@@ -224,7 +224,7 @@ Things to know:
 - A conversation can be continued with a different provider's model: the
   history is kept in one format and translated for whoever is asked.
 
-## Running many at once (from 0.2.0, not released yet)
+## Running many at once
 
 Three pieces make a run something another program, or another agent, can
 start, watch and collect.
