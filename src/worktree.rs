@@ -60,11 +60,23 @@ impl Worktree {
     /// after `id`, and moves into it (into the same subfolder, if we were in one).
     pub fn create(id: &str) -> Result<Worktree, String> {
         let here = std::env::current_dir().map_err(|e| e.to_string())?;
-        let not_git = |_| "--worktree needs a git repository; this folder isn't in one".to_string();
-        let repo = PathBuf::from(git(&here, &["rev-parse", "--show-toplevel"]).map_err(not_git)?);
-        let subfolder = git(&here, &["rev-parse", "--show-prefix"])?;
+        let (worktree, inside) = Worktree::make(&here, id)?;
+        std::env::set_current_dir(&inside).map_err(|e| e.to_string())?;
+        let value =
+            format!("{}\t{}\t{}\t{}", worktree.repo.display(), worktree.path.display(), worktree.branch, worktree.base);
+        // SAFETY: called at start-up, before any other thread exists.
+        unsafe { std::env::set_var(ENV, value) };
+        Ok(worktree)
+    }
+
+    /// Makes a worktree of the repository `here` is in, named after `id`.
+    /// Returns it and the folder in it that corresponds to `here`.
+    pub fn make(here: &Path, id: &str) -> Result<(Worktree, PathBuf), String> {
+        let not_git = |_| "a worktree needs a git repository; this folder isn't in one".to_string();
+        let repo = PathBuf::from(git(here, &["rev-parse", "--show-toplevel"]).map_err(not_git)?);
+        let subfolder = git(here, &["rev-parse", "--show-prefix"])?;
         let base = git(&repo, &["rev-parse", "HEAD"])
-            .map_err(|_| "--worktree needs at least one commit to start from".to_string())?;
+            .map_err(|_| "a worktree needs at least one commit to start from".to_string())?;
         let name = repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let branch = format!("claudejr/{id}");
         let path = data_dir().join("worktrees").join(format!("{name}-{id}"));
@@ -75,13 +87,21 @@ impl Worktree {
             git(&repo, &["worktree", "add", "-q", "-b", &branch, &path_text, &base])
                 .map_err(|e| format!("couldn't make the worktree: {e}"))?;
         }
-        std::env::set_current_dir(path.join(&subfolder)).map_err(|e| e.to_string())?;
-        let worktree = Worktree { repo, path, branch, base };
-        let value =
-            format!("{}\t{}\t{}\t{}", worktree.repo.display(), worktree.path.display(), worktree.branch, worktree.base);
-        // SAFETY: called at start-up, before any other thread exists.
-        unsafe { std::env::set_var(ENV, value) };
-        Ok(worktree)
+        let inside = path.join(&subfolder);
+        Ok((Worktree { repo, path, branch, base }, inside))
+    }
+
+    /// Removes the worktree's folder and keeps its branch: once the work is
+    /// committed, the branch is all of it.
+    pub fn remove_folder(&self) {
+        let _one_at_a_time = lock();
+        let _ = git(&self.repo, &["worktree", "remove", "--force", &self.path.to_string_lossy()]);
+    }
+
+    /// The files this worktree's commits changed, one per line with git's
+    /// status letter in front ("M src/a.rs").
+    pub fn changed(&self) -> String {
+        git(&self.repo, &["diff", "--name-status", &self.base, &self.branch]).unwrap_or_default().replace('\t', " ")
     }
 
     /// Where the repository keeps its own data (`.git`), which a sandboxed
@@ -110,8 +130,11 @@ impl Worktree {
             .unwrap_or(0);
         let uncommitted = dirty();
         if commits == 0 && !uncommitted {
-            // Not from inside the folder that is about to go.
-            let _ = std::env::set_current_dir(&self.repo);
+            // Not from inside the folder that is about to go. (A subagent's
+            // worktree is never the folder the program itself is in.)
+            if std::env::current_dir().is_ok_and(|d| d.starts_with(&self.path)) {
+                let _ = std::env::set_current_dir(&self.repo);
+            }
             let path = self.path.to_string_lossy();
             let _one_at_a_time = lock();
             let _ = git(&self.repo, &["worktree", "remove", "--force", &path]);
@@ -163,9 +186,27 @@ pub fn summary(left: &Value) -> String {
     )
 }
 
-/// A short id for a worktree or a task: the time and the process, so two
-/// started together differ.
+/// A short id for a worktree or a task: the time, the process, and a count
+/// within the process, so two started together differ wherever they start.
 pub fn new_id() -> String {
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-    format!("{:x}{:x}", ms % 0xff_ffff, std::process::id() % 0xfff)
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{:06x}{:03x}{:x}", ms % 0xff_ffff, std::process::id() % 0xfff, n % 0xfff)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ids_made_together_differ() {
+        let ids: Vec<String> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..500).map(|_| super::new_id()).collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect();
+        let distinct: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(distinct.len(), ids.len());
+        assert!(ids.iter().all(|id| id.len() >= 10 && id.len() <= 12 && id.chars().all(|c| c.is_ascii_hexdigit())));
+    }
 }

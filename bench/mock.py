@@ -10,14 +10,14 @@
 #
 #   python3 bench/mock.py PORT      (0: any free port; the port is printed)
 
-import json, os, sys, time
+import json, os, re, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
 OUTPUT_KB = int(os.environ.get("MOCK_OUTPUT_KB", "1"))
 LOG = os.environ.get("MOCK_LOG")
 CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
-SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents"
+SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents", "team", "nested"
 TEXT_CHARS = int(os.environ.get("MOCK_TEXT_CHARS", "2000"))  # "bench": streamed text per reply
 DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, like a real stream
 # Requests that go wrong, by position (1 = the first request): "2:500,3:cut".
@@ -387,6 +387,41 @@ class Handler(BaseHTTPRequestHandler):
                 events = reply([tool("b1", "bash", {"command": "sleep 60", "background": True})], "tool_use", usage)
             else:
                 events = text_reply("Started the dev server.\n", usage)
+        elif SCENARIO == "team":
+            # Two subagents, each in a worktree of its own, write a file each;
+            # the main agent then merges the branches they report.
+            asked = json.dumps(body["messages"][0])
+            if "You are a subagent" in body.get("system", ""):
+                name = re.search(r"write (\S+\.txt)", asked).group(1)
+                events = (reply([tool("w1", "write", {"path": name, "content": name + "\n"})], "tool_use", usage)
+                          if done == 0 else text_reply(f"Wrote {name}.", usage))
+            elif done == 0:
+                events = reply([tool("a1", "agent", {"description": "write alpha", "prompt": "write alpha.txt",
+                                                     "worktree": True}),
+                                tool("a2", "agent", {"description": "write beta", "prompt": "write beta.txt",
+                                                     "worktree": True})], "tool_use", usage)
+            elif done == 1:
+                branches = re.findall(r"git merge (claudejr/\w+)", json.dumps(body["messages"][-1]))
+                merge = " && ".join(f"git merge -q --no-edit {b}" for b in branches) or "echo no branches reported"
+                events = reply([tool("m1", "bash", {"command": merge})], "tool_use", usage)
+            else:
+                events = text_reply("Merged both.\n", usage)
+        elif SCENARIO == "nested":
+            # The main agent starts a subagent, which starts one of its own,
+            # which does the work. Each level reports to the one above.
+            asked = json.dumps(body["messages"][0])
+            if "leaf:" in asked:
+                # Tries to go one level deeper than is allowed, if it is offered the tool.
+                can = any(t.get("name") == "agent" for t in body.get("tools", []))
+                first = (tool("x1", "agent", {"description": "too deep", "prompt": "leaf: again"}) if can
+                         else tool("b1", "bash", {"command": "echo leaf-did-it"}))
+                events = reply([first], "tool_use", usage) if done == 0 else text_reply("The leaf did it.", usage)
+            elif "middle:" in asked:
+                events = (reply([tool("a2", "agent", {"description": "the leaf", "prompt": "leaf: do it"})],
+                                "tool_use", usage) if done == 0 else text_reply("The middle is done.", usage))
+            else:
+                events = (reply([tool("a1", "agent", {"description": "the middle", "prompt": "middle: delegate"})],
+                                "tool_use", usage) if done == 0 else text_reply("All levels done.\n", usage))
         elif SCENARIO == "web":
             events = web(usage)
         elif SCENARIO == "bench":

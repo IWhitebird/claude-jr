@@ -272,13 +272,14 @@ impl Agent {
             emit,
             interactive: cfg.interactive,
             connector: tools.mcp.connector(),
-            sub_defs: Mutex::new(tools.definitions(false, web, false)),
+            sub_defs: Mutex::new(tools.definitions(false, web, false, true)),
+            leaf_defs: Mutex::new(tools.definitions(false, web, false, false)),
             sub_system: OnceLock::new(),
             request: Mutex::default(),
         };
         let mut agent = Agent {
             web: cfg.web,
-            defs: tools.definitions(true, web, cfg.interactive),
+            defs: tools.definitions(true, web, cfg.interactive, true),
             core: Arc::new(core),
             tools,
             system,
@@ -386,7 +387,8 @@ impl Agent {
         }
 
         let emit = self.core.emit.clone();
-        let ctx = Ctx { system: &self.system, defs: &self.defs, tools: &self.tools, emit: &*emit, main: true };
+        let ctx =
+            Ctx { system: &self.system, defs: &self.defs, tools: &self.tools, emit: &*emit, main: true, depth: 0 };
         // Saved after every round of tool calls, not only at the end: a long
         // turn that is killed can then be continued with -c.
         let (session, system) = (&mut self.session, &self.system);
@@ -488,8 +490,9 @@ impl Agent {
         *self.core.model.lock().unwrap() = model;
         if had != has {
             let web = has && self.web;
-            self.defs = self.tools.definitions(true, web, self.core.interactive);
-            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web, false);
+            self.defs = self.tools.definitions(true, web, self.core.interactive, true);
+            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web, false, true);
+            *self.core.leaf_defs.lock().unwrap() = self.tools.definitions(false, web, false, false);
         }
     }
 

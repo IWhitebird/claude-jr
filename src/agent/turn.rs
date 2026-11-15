@@ -34,6 +34,8 @@ pub struct Core {
     pub connector: Option<Box<RawValue>>,
     /// Tool definitions for subagents; rebuilt if /model changes what's available.
     pub sub_defs: Mutex<Box<RawValue>>,
+    /// The same without the agent tool, for subagents too deep to start more.
+    pub leaf_defs: Mutex<Box<RawValue>>,
     pub sub_system: OnceLock<String>,
     /// The user's latest message, so auto mode's reviewer knows the intent.
     pub request: Mutex<String>,
@@ -47,6 +49,8 @@ pub struct Ctx<'a> {
     pub emit: &'a (dyn Fn(Event) + Send + Sync),
     /// The main agent (true) or a subagent.
     pub main: bool,
+    /// How many agents started one another to get here: 0 for the main one.
+    pub depth: u8,
 }
 
 struct Call {
@@ -518,7 +522,8 @@ mod tests {
         let rig = Rig::new("turn-badjson", Mode::Bypass, vec![]);
         let call = Call { id: json!("x1"), name: "bash".into(), input: json!({"_invalid_json": "EOF while parsing"}) };
         let emit = rig.agent.core.emit.clone();
-        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let ctx =
+            Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true, depth: 0 };
         let out = rig.agent.core.call_one(&ctx, &call);
         assert_eq!(out["is_error"], true);
         assert_eq!(out["tool_use_id"], "x1");
@@ -588,7 +593,8 @@ mod tests {
         let rig = Rig::new("turn-cancel-early", Mode::Bypass, vec![ok(text_reply("never read"))]);
         rig.agent.core.cancel.store(true, Ordering::Relaxed);
         let emit = rig.agent.core.emit.clone();
-        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let ctx =
+            Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true, depth: 0 };
         let mut messages = vec![Msg::new("user", json!([{ "type": "text", "text": "hi" }]))];
         let end = rig.agent.core.turn(&ctx, &mut messages, &mut |_| {});
         assert!(matches!(end, Event::Cancelled));
@@ -601,7 +607,8 @@ mod tests {
         rig.agent.core.cancel.store(true, Ordering::Relaxed);
         let call = Call { id: json!("c"), name: "bash".into(), input: json!({"command": "touch ran.txt"}) };
         let emit = rig.agent.core.emit.clone();
-        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let ctx =
+            Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true, depth: 0 };
         let out = rig.agent.core.call_one(&ctx, &call);
         assert_eq!(out["content"], "Cancelled by the user.");
         assert!(!rig.dir.join("ran.txt").exists());

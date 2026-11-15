@@ -211,7 +211,8 @@ mod tests {
 
     fn check(rig: &Rig, name: &str, input: Value) -> Result<(), String> {
         let emit = rig.agent.core.emit.clone();
-        let ctx = Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true };
+        let ctx =
+            Ctx { system: "", defs: &rig.agent.defs, tools: &rig.agent.tools, emit: &*emit, main: true, depth: 0 };
         rig.agent.core.permit(&ctx, name, &input, &format!("{name}(label)"))
     }
 

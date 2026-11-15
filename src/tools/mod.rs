@@ -101,9 +101,14 @@ impl Tools {
     }
 
     pub fn child(&self) -> Tools {
+        self.child_in(self.root.clone())
+    }
+
+    /// A subagent's tools working in `root` (a worktree of its own).
+    pub fn child_in(&self, root: PathBuf) -> Tools {
         Tools {
-            cwd: Mutex::new(self.root.clone()),
-            root: self.root.clone(),
+            cwd: Mutex::new(root.clone()),
+            root,
             sub: true,
             seen: Mutex::default(),
             jobs: bash::Jobs::default(),
@@ -115,6 +120,11 @@ impl Tools {
         }
     }
 
+    /// The folder these tools work in.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn skills(&self) -> &[Skill] {
         &self.skills
     }
@@ -123,14 +133,20 @@ impl Tools {
     /// don't get `agent` (no nesting) or `ask_user` (they can't reach the user).
     /// `web` adds Anthropic's web search and fetch, which run on their side.
     /// `user`: someone is there to answer `ask_user` (not so in -p mode).
-    pub fn definitions(&self, main: bool, web: bool, user: bool) -> Box<RawValue> {
+    /// The tools offered to the model. `main`: the main agent, which may
+    /// also ask the user (if `user`) and keep notes. `delegate`: may start
+    /// subagents.
+    pub fn definitions(&self, main: bool, web: bool, user: bool, delegate: bool) -> Box<RawValue> {
         let mut defs = vec![fs::READ.clone(), fs::WRITE.clone(), fs::EDIT.clone(), bash::BASH.clone()];
         defs.extend([bash::JOBS.clone(), todo::TODO.clone()]);
+        if main && user {
+            defs.push(ASK_USER.clone());
+        }
+        if delegate {
+            defs.push(AGENT.clone());
+        }
         if main {
-            if user {
-                defs.push(ASK_USER.clone());
-            }
-            defs.extend([AGENT.clone(), memory::MEMORY.clone()]);
+            defs.push(memory::MEMORY.clone());
         }
         if !self.skills.is_empty() {
             defs.push(skill::definition(&self.skills));
@@ -401,12 +417,17 @@ static AGENT: std::sync::LazyLock<Box<RawValue>> = std::sync::LazyLock::new(|| {
         "description": "Start a subagent with its own fresh context for a self-contained task, such as \
             searching a large codebase or researching a question, and get back its final report. \
             Several agent calls in one reply run in parallel. The subagent can't see this conversation, \
-            so give it everything it needs in the prompt. It can't ask the user questions.",
+            so give it everything it needs in the prompt. It can't ask the user questions. \
+            When subagents will change files at the same time, give each one worktree: true: it then works \
+            in its own copy of the repository, on its own branch, starting from the last commit (commit \
+            first if it needs changes you haven't committed). Its work is committed for it and its report \
+            ends with the branch, which you merge with git merge.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "description": { "type": "string", "description": "3-6 words, shown to the user" },
-                "prompt": { "type": "string", "description": "The full task" }
+                "prompt": { "type": "string", "description": "The full task" },
+                "worktree": { "type": "boolean", "description": "Work in a git worktree and branch of its own" }
             },
             "required": ["description", "prompt"]
         }
@@ -501,7 +522,7 @@ mod tests {
         assert_eq!(t.subject("memory", &input), "add: uses pnpm");
         assert!(t.child().run("memory", &input, &AtomicBool::new(false)).is_err());
         for main in [true, false] {
-            let defs = t.child().definitions(main, false, true);
+            let defs = t.child().definitions(main, false, true, main);
             let names: Vec<String> = serde_json::from_str::<Vec<Value>>(defs.get())
                 .unwrap()
                 .iter()
@@ -580,7 +601,7 @@ mod tests {
     fn definitions_carry_streaming_and_optional_web_tools() {
         let (t, _dir) = test_tools("mod-defs");
         let defs = |main: bool, web: bool| -> Vec<Value> {
-            serde_json::from_str(t.definitions(main, web, true).get()).unwrap()
+            serde_json::from_str(t.definitions(main, web, true, main).get()).unwrap()
         };
         let plain = defs(true, false);
         assert!(plain.iter().all(|d| d["name"] != "web_search"));
