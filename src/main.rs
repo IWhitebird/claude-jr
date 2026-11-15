@@ -28,6 +28,7 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
   -p, --print PROMPT   run one prompt, print the reply, exit (or pipe the prompt in: cmd | claudejr -p)
       task ...         run tasks in the background: claudejr task --help
+      fleet ...        run a list of tasks side by side: claudejr fleet --help
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
@@ -77,6 +78,8 @@ enum Cli {
     Update,
     /// `claudejr task ...`, with what came after it.
     Task(Vec<String>),
+    /// `claudejr fleet ...`.
+    Fleet(Vec<String>),
 }
 
 fn parse_args() -> Result<Cli, String> {
@@ -84,6 +87,9 @@ fn parse_args() -> Result<Cli, String> {
     let mut it = std::env::args().skip(1).peekable();
     if it.peek().is_some_and(|a| a == "task") {
         return Ok(Cli::Task(it.skip(1).collect()));
+    }
+    if it.peek().is_some_and(|a| a == "fleet") {
+        return Ok(Cli::Fleet(it.skip(1).collect()));
     }
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -156,6 +162,18 @@ fn run() -> Result<ExitCode, String> {
         Cli::Sessions => {
             print_sessions();
             return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Task(args) | Cli::Fleet(args) if args.iter().any(|a| a == "--help" || a == "-h") => {
+            println!(
+                "{}",
+                if std::env::args().nth(1).as_deref() == Some("fleet") { task::FLEET_USAGE } else { task::USAGE }
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Fleet(args) => {
+            let (text, ok) = task::fleet(&args)?;
+            println!("{text}");
+            return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });
         }
         Cli::Task(args) => {
             let (text, ok) = task::cli(&args)?;
