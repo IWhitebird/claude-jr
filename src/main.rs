@@ -10,6 +10,7 @@ mod print;
 mod prompt;
 mod provider;
 mod sandbox;
+mod serve;
 mod session;
 mod signals;
 mod task;
@@ -29,6 +30,7 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
   -p, --print PROMPT   run one prompt, print the reply, exit (or pipe the prompt in: cmd | claudejr -p)
       task ...         run tasks in the background: claudejr task --help
       fleet ...        run a list of tasks side by side: claudejr fleet --help
+      mcp ...          serve tasks to another agent over MCP: claudejr mcp --help
   -c, --continue       continue the last conversation in this directory
   -r, --resume NAME    continue a conversation by name (see /rename) or id
       --sessions       list saved conversations for this directory
@@ -80,6 +82,8 @@ enum Cli {
     Task(Vec<String>),
     /// `claudejr fleet ...`.
     Fleet(Vec<String>),
+    /// `claudejr mcp ...`.
+    Mcp(Vec<String>),
 }
 
 fn parse_args() -> Result<Cli, String> {
@@ -90,6 +94,9 @@ fn parse_args() -> Result<Cli, String> {
     }
     if it.peek().is_some_and(|a| a == "fleet") {
         return Ok(Cli::Fleet(it.skip(1).collect()));
+    }
+    if it.peek().is_some_and(|a| a == "mcp") {
+        return Ok(Cli::Mcp(it.skip(1).collect()));
     }
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -168,6 +175,14 @@ fn run() -> Result<ExitCode, String> {
                 "{}",
                 if std::env::args().nth(1).as_deref() == Some("fleet") { task::FLEET_USAGE } else { task::USAGE }
             );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Mcp(args) if args.iter().any(|a| a == "--help" || a == "-h") => {
+            println!("{}", serve::USAGE);
+            return Ok(ExitCode::SUCCESS);
+        }
+        Cli::Mcp(args) => {
+            serve::run(serve::parse(&args)?)?;
             return Ok(ExitCode::SUCCESS);
         }
         Cli::Fleet(args) => {

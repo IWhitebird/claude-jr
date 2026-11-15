@@ -303,6 +303,50 @@ pub fn merge(id: &str) -> Result<String, String> {
     Ok(format!("merged {branch}"))
 }
 
+/// What a finished task changed, as a diff against the commit it started from.
+pub fn diff(id: &str) -> Result<String, String> {
+    let dir = find(id)?;
+    let task = state(&dir);
+    if task["status"] == "running" {
+        return Err(format!("{} is still running; its diff is there when it has finished", name(&dir)));
+    }
+    let w = &task["result"]["worktree"];
+    let (Some(repo), Some(base), Some(branch)) = (w["repository"].as_str(), w["base"].as_str(), w["branch"].as_str())
+    else {
+        return Err(format!("{} left no branch (it changed nothing, or didn't run in a worktree)", name(&dir)));
+    };
+    let diff = git(repo, &["diff", base, branch])?;
+    Ok(if diff.is_empty() { "(no differences)".into() } else { diff })
+}
+
+/// The last `last` steps of a task, a line each: what was called, whether
+/// it was allowed, how it went.
+pub fn steps(id: &str, last: usize) -> Result<String, String> {
+    let dir = find(id)?;
+    let log = fs::read_to_string(dir.join("log.jsonl")).unwrap_or_default();
+    let steps: Vec<Value> =
+        log.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|l| l["type"] == "step").collect();
+    if steps.is_empty() {
+        return Ok("(no steps yet)".into());
+    }
+    let lines: Vec<String> = steps[steps.len().saturating_sub(last.max(1))..]
+        .iter()
+        .map(|s| {
+            let input: String = s["input"].to_string().chars().take(160).collect();
+            let how = match (s["allowed_by"].is_null(), s["ok"].as_bool()) {
+                (true, _) => "refused",
+                (_, Some(true)) => "ok",
+                _ => "failed",
+            };
+            let result: String =
+                s["result"].as_str().unwrap_or("").lines().next().unwrap_or("").chars().take(120).collect();
+            let agent = s["agent"].as_str().map(|a| format!("[{a}] ")).unwrap_or_default();
+            format!("{agent}{} {input} -> {how}: {result}", s["tool"].as_str().unwrap_or(""))
+        })
+        .collect();
+    Ok(format!("{} steps in all; the last {}:\n{}", steps.len(), lines.len(), lines.join("\n")))
+}
+
 /// Forgets a task: stops it if it is running, removes its worktree, its
 /// branch and its folder.
 pub fn drop(id: &str) -> Result<String, String> {
