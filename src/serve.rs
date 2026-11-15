@@ -89,6 +89,7 @@ pub fn run(options: Options) -> Result<(), String> {
     let out = Arc::new(Mutex::new(std::io::stdout()));
     let server = Arc::new(Server { start: Mutex::new(options.start) });
     let mut calls = Vec::new();
+    crate::mem::trim();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -103,6 +104,8 @@ pub fn run(options: Options) -> Result<(), String> {
             }
         }));
         calls.retain(|c| !c.is_finished());
+        // Between calls the server only waits: what it loaded to start goes back.
+        crate::mem::trim();
     }
     Ok(())
 }
