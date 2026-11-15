@@ -1,5 +1,5 @@
 // /stats: memory and CPU used by claude-jr and the processes it started,
-// read straight from /proc (Linux only).
+// read straight from /proc on Linux and asked of `ps` elsewhere.
 
 use std::time::Duration;
 
@@ -11,8 +11,42 @@ struct Proc {
     cpu: Duration,
 }
 
-/// Reads /proc/<pid> ("self" for us).
+/// What is known about process `pid` ("self" for us).
 fn read(pid: &str) -> Option<Proc> {
+    read_proc(pid).or_else(|| read_ps(pid))
+}
+
+/// Where there is no /proc (macOS): what `ps` says. It doesn't know the
+/// peak or, in a form every system shares, the number of threads.
+fn read_ps(pid: &str) -> Option<Proc> {
+    let pid = if pid == "self" { std::process::id().to_string() } else { pid.to_string() };
+    let out = std::process::Command::new("ps").args(["-o", "rss=,time=,comm=", "-p", &pid]).output().ok()?;
+    let line = String::from_utf8_lossy(&out.stdout);
+    let mut fields = line.split_whitespace();
+    let rss_kb: u64 = fields.next()?.parse().ok()?;
+    let cpu = cpu_time(fields.next()?)?;
+    let name = fields.next()?.rsplit('/').next()?.to_string();
+    Some(Proc { name, rss_kb, peak_kb: rss_kb, threads: 0, cpu })
+}
+
+/// CPU time as `ps` prints it: "0:01.50" (minutes, seconds) on macOS,
+/// "00:00:01" (hours, minutes, seconds) on Linux, with days in front
+/// ("1-02:03:04") for a long-lived process.
+fn cpu_time(text: &str) -> Option<Duration> {
+    let (days, rest) = match text.split_once('-') {
+        Some((days, rest)) => (days.parse::<f64>().ok()?, rest),
+        None => (0.0, text),
+    };
+    let mut seconds = days * 86400.0;
+    let parts: Vec<&str> = rest.split(':').collect();
+    for (i, part) in parts.iter().rev().enumerate() {
+        seconds += part.parse::<f64>().ok()? * [1.0, 60.0, 3600.0].get(i)?;
+    }
+    Some(Duration::from_secs_f64(seconds))
+}
+
+/// Reads /proc/<pid>.
+fn read_proc(pid: &str) -> Option<Proc> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let field = |key: &str| {
         status.lines().find_map(|l| l.strip_prefix(key)).and_then(|v| v.split_whitespace().next()?.parse().ok())
@@ -43,13 +77,13 @@ fn clock_ticks() -> u64 {
 }
 
 pub fn report(uptime: Duration, children: &[u32]) -> String {
-    let Some(me) = read("self") else { return "Stats need Linux (/proc).".into() };
+    let Some(me) = read("self") else { return "Couldn't read this process's memory and CPU use.".into() };
     let busy = me.cpu.as_secs_f64() / uptime.as_secs_f64().max(0.001) * 100.0;
+    let threads = if me.threads > 0 { format!("{} threads  ", me.threads) } else { String::new() };
     let mut s = format!(
-        "claude-jr     {:>6} memory (peak {})  {} threads  {:.2}s CPU in {} ({busy:.2}% average)",
+        "claude-jr     {:>6} memory (peak {})  {threads}{:.2}s CPU in {} ({busy:.2}% average)",
         kb(me.rss_kb),
         kb(me.peak_kb),
-        me.threads,
         me.cpu.as_secs_f64(),
         clock(uptime),
     );
@@ -85,8 +119,22 @@ mod tests {
     #[test]
     fn reads_own_process() {
         let me = super::read("self").unwrap();
-        assert!(me.rss_kb > 0 && me.threads > 0);
+        assert!(me.rss_kb > 0);
         assert!(super::report(std::time::Duration::from_secs(1), &[]).starts_with("claude-jr"));
+    }
+
+    /// The way it is read where there is no /proc; `ps` is on Linux too.
+    #[test]
+    fn ps_can_be_asked_instead_of_proc() {
+        let me = super::read_ps("self").expect("ps knows this process");
+        assert!(me.rss_kb > 500 && me.peak_kb == me.rss_kb && !me.name.is_empty(), "{} {}", me.rss_kb, me.name);
+        assert!(super::read_ps(&std::process::id().to_string()).is_some());
+        assert!(super::read_ps("4294967294").is_none() && super::read_ps("no-such-pid").is_none());
+        let secs = |t: &str| super::cpu_time(t).map(|d| d.as_secs_f64());
+        assert_eq!(secs("0:01.50"), Some(1.5));
+        assert_eq!(secs("00:02:03"), Some(123.0));
+        assert_eq!(secs("1-00:00:01"), Some(86401.0));
+        assert_eq!((secs("soon"), secs("1:2:3:4")), (None, None));
     }
 
     #[test]
@@ -94,7 +142,7 @@ mod tests {
         let me = std::process::id();
         let report = super::report(std::time::Duration::from_secs(90), &[me, u32::MAX - 1]);
         let lines: Vec<&str> = report.lines().collect();
-        assert!(lines[0].contains("1m 30s") && lines[0].contains("threads"), "{report}");
+        assert!(lines[0].contains("1m 30s") && lines[0].contains("memory (peak"), "{report}");
         // The live process is shown; the one that doesn't exist is skipped without a fuss.
         assert_eq!(lines.len(), 3, "{report}");
         assert!(lines[1].contains(&format!("(pid {me})")) && lines[1].contains("memory"), "{report}");

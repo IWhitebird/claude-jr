@@ -166,11 +166,14 @@ pub struct Translated {
 impl Translated {
     fn file(&mut self) -> Option<Arc<File>> {
         if self.file.is_none() && !self.unusable {
+            // A name nothing else has, made fresh: a second one in this
+            // process must not open (and empty) the first one's file.
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let dir = crate::config::data_dir();
-            let path = dir.join(format!("chat-{}.tmp", std::process::id()));
-            let made = std::fs::create_dir_all(&dir).and_then(|()| {
-                std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&path)
-            });
+            let path = dir.join(format!("chat-{}-{n}.tmp", std::process::id()));
+            let made = std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path));
             let _ = std::fs::remove_file(&path);
             match made {
                 Ok(f) => self.file = Some(Arc::new(f)),

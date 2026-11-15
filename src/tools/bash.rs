@@ -706,7 +706,9 @@ mod tests {
     fn user_shell_runs_without_a_model() {
         let (t, dir) = test_tools("bash-user-shell");
         let cancel = AtomicBool::new(false);
-        assert_eq!(t.user_shell("pwd", &cancel).unwrap().trim_end(), dir.canonicalize().unwrap().to_str().unwrap());
+        // (Compared as real paths: the temp folder is behind a symlink on macOS.)
+        let pwd = PathBuf::from(t.user_shell("pwd", &cancel).unwrap().trim_end());
+        assert_eq!(pwd.canonicalize().unwrap(), dir.canonicalize().unwrap());
         assert!(t.user_shell("exit 5", &cancel).unwrap_err().contains("Exit code 5"));
         assert_eq!(t.user_shell("true", &cancel).unwrap(), "(no output)");
     }

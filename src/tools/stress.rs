@@ -208,9 +208,11 @@ fn reading_odd_files_answers() {
         let t2 = t.child();
         std::thread::spawn(move || tx.send(run(&t2, "read", json!({ "path": "fifo" }))));
         let out = rx.recv_timeout(std::time::Duration::from_secs(5));
-        // Unblock the reader either way, so the test's thread can end.
-        let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(std::fs::OpenOptions::new().write(true), 0o4000)
-            .open(&fifo);
+        if out.is_err() {
+            // A reader stuck on the pipe: open the other end so its thread can
+            // end. (Opened for both, which never waits on any system.)
+            let _ = std::fs::OpenOptions::new().read(true).write(true).open(&fifo);
+        }
         assert!(out.is_ok_and(|o| o.is_err()), "reading a pipe should be refused, not waited on");
     }
     let _ = std::fs::remove_dir_all(dir);
