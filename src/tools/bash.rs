@@ -122,11 +122,13 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
         let dir = PathBuf::from(dir.trim_end());
         if dir.is_dir() {
             // Said out loud, so the next command isn't written for the old place.
+            // The same folder under another name (reached through a symlink,
+            // as temp folders are on macOS) is not a move.
             let mut cwd = t.cwd.lock().unwrap();
-            if dir != *cwd {
+            if dir != *cwd && dir.canonicalize().ok() != cwd.canonicalize().ok() {
                 text = join(&text, &format!("(working directory is now {})", dir.display()));
+                *cwd = dir;
             }
-            *cwd = dir;
         }
         let _ = std::fs::remove_file(&cwd_file);
     }
@@ -700,6 +702,24 @@ mod tests {
         assert!(out.len() < MAX_BYTES + 100);
         assert!(out.starts_with("qqq") && out.ends_with("qqq"));
         assert_eq!(tool(&t, "bash", json!({})).unwrap_err(), "missing command");
+    }
+
+    #[test]
+    fn a_project_behind_a_symlink_is_not_a_change_of_directory() {
+        let (_, real) = test_tools("bash-symlink");
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        let link = real.with_extension("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let t = Tools::new(link.clone(), Vec::new(), crate::tools::mcp::Servers::default());
+        // The shell reports the real path; that is still where we started.
+        assert_eq!(tool(&t, "bash", json!({"command": "true"})).unwrap(), "(no output)");
+        assert_eq!(tool(&t, "bash", json!({"command": "echo hi"})).unwrap().trim_end(), "hi");
+        // A real move is still said, once.
+        let moved = tool(&t, "bash", json!({"command": "cd sub"})).unwrap();
+        assert!(moved.contains("(working directory is now") && moved.contains("sub"), "{moved}");
+        assert_eq!(tool(&t, "bash", json!({"command": "true"})).unwrap(), "(no output)");
+        let _ = std::fs::remove_file(link);
     }
 
     #[test]
