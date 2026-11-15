@@ -293,6 +293,7 @@ pub fn merge(id: &str) -> Result<String, String> {
             ),
         });
     }
+    let _one_at_a_time = crate::worktree::lock();
     let _ = git(&repo, &["worktree", "remove", "--force", &path]);
     let _ = git(&repo, &["branch", "-q", "-d", &branch]);
     Ok(format!("merged {branch}"))
@@ -307,6 +308,7 @@ pub fn drop(id: &str) -> Result<String, String> {
     }
     // (Read again: a cancelled worker may just have left its worktree behind.)
     if let Some((repo, path, branch)) = worktree_of(&state(&dir)) {
+        let _one_at_a_time = crate::worktree::lock();
         let _ = git(&repo, &["worktree", "remove", "--force", &path]);
         let _ = git(&repo, &["branch", "-q", "-D", &branch]);
     }

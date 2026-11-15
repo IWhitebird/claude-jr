@@ -142,7 +142,17 @@ fn exec(cmd: Command) -> Out {
 
 /// Runs `cmd` with `stdin` as its standard input.
 fn exec_with(mut cmd: Command, stdin: Stdio) -> Out {
-    let mut child = cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // A binary copied a moment ago can be "busy": a child process another
+    // test's thread just forked still holds it open until it execs.
+    let mut child = loop {
+        match cmd.spawn() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            child => break child.unwrap(),
+        }
+    };
     let mut so = child.stdout.take().unwrap();
     let mut se = child.stderr.take().unwrap();
     let t_out = std::thread::spawn(move || {
@@ -1293,7 +1303,7 @@ fn a_worktree_with_nothing_in_it_is_removed_and_bad_places_are_refused() {
 fn worktree_runs_side_by_side_do_not_meet() {
     let e = Env::new();
     let git = repository(&e);
-    let runs: Vec<_> = (0..6)
+    let runs: Vec<_> = (0..16)
         .map(|_| {
             let cmd = e.command(&["--worktree", "-y", "-p", "add the demo file", "--output-format", "json"]);
             std::thread::spawn(move || exec(cmd))
@@ -1307,7 +1317,7 @@ fn worktree_runs_side_by_side_do_not_meet() {
         assert_eq!(r["worktree"]["commits"], 1, "{r}");
         branches.insert(r["worktree"]["branch"].as_str().unwrap().to_string());
     }
-    assert_eq!(branches.len(), 6, "each has its own branch");
+    assert_eq!(branches.len(), 16, "each has its own branch");
     for branch in &branches {
         assert_eq!(git(&["show", &format!("{branch}:demo.txt")]), "one\nTWO\nthree");
     }

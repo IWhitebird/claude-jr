@@ -103,10 +103,18 @@ fn download(url: &str, to: &Path) -> Result<(), String> {
 
 /// The downloaded file must run and say it is the version we asked for.
 fn check(new: &Path, version: &str) -> Result<(), String> {
-    let out = std::process::Command::new(new)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("the download doesn't run: {e}"))?;
+    // "Busy" means some other thread's child process still has the file open
+    // from the moment it was forked, which passes in an instant.
+    let mut tries = 0;
+    let out = loop {
+        match std::process::Command::new(new).arg("--version").output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 20 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            out => break out.map_err(|e| format!("the download doesn't run: {e}"))?,
+        }
+    };
     let said = String::from_utf8_lossy(&out.stdout);
     if out.status.success() && said.trim() == format!("claude-jr {version}") {
         Ok(())

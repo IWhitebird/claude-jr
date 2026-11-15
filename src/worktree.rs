@@ -70,8 +70,11 @@ impl Worktree {
         let path = data_dir().join("worktrees").join(format!("{name}-{id}"));
         std::fs::create_dir_all(data_dir().join("worktrees")).map_err(|e| e.to_string())?;
         let path_text = path.to_string_lossy().into_owned();
-        git(&repo, &["worktree", "add", "-q", "-b", &branch, &path_text, &base])
-            .map_err(|e| format!("couldn't make the worktree: {e}"))?;
+        {
+            let _one_at_a_time = lock();
+            git(&repo, &["worktree", "add", "-q", "-b", &branch, &path_text, &base])
+                .map_err(|e| format!("couldn't make the worktree: {e}"))?;
+        }
         std::env::set_current_dir(path.join(&subfolder)).map_err(|e| e.to_string())?;
         let worktree = Worktree { repo, path, branch, base };
         let value =
@@ -110,6 +113,7 @@ impl Worktree {
             // Not from inside the folder that is about to go.
             let _ = std::env::set_current_dir(&self.repo);
             let path = self.path.to_string_lossy();
+            let _one_at_a_time = lock();
             let _ = git(&self.repo, &["worktree", "remove", "--force", &path]);
             let _ = git(&self.repo, &["branch", "-q", "-D", &self.branch]);
             return Value::Null;
@@ -126,6 +130,18 @@ impl Worktree {
             "problem": problem,
         })
     }
+}
+
+/// Held while a worktree is added or removed. git reads every worktree's
+/// record when it does either, and trips over one that another git is
+/// half-way through writing; several runs starting at once would hit that.
+/// The lock is let go when the returned file is dropped.
+pub fn lock() -> Option<std::fs::File> {
+    let dir = data_dir().join("worktrees");
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(".lock")).ok()?;
+    file.lock().ok()?;
+    Some(file)
 }
 
 /// What to tell a person about a finished worktree.
