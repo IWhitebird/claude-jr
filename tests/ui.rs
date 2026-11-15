@@ -1463,6 +1463,37 @@ fn the_header_survives_a_resize_after_clear() {
     app.exit();
 }
 
+/// A model of another provider, set in the config: no Anthropic key is
+/// asked for, a turn with tools works, and the footer shows its context size.
+#[test]
+fn another_providers_model_works_without_an_anthropic_key() {
+    let world = World::new("provider-ui", &[]);
+    world.config(&format!(
+        r#"{{"model": "local/test-model", "providers": {{"local": {{"base_url": "http://127.0.0.1:{}/v1", "context": 32000}}}}}}"#,
+        world.port
+    ));
+    let mut app = world.launch(&["-y"], None);
+    app.expect("ask anything");
+    assert!(!app.all().contains("API key"), "no key prompt:\n{}", app.all());
+    app.shown("local/test-model");
+    app.turn("do the demo");
+    app.shown("Edit(demo.txt)");
+    app.shown("Done. Here's what happened:");
+    app.shown("/32k");
+    assert_eq!(std::fs::read_to_string(world.proj().join("demo.txt")).unwrap(), "one\nTWO\nthree\n");
+    assert!(world.log().lines().all(|l| l.contains("\"model\": \"test-model\"")), "every request went to it");
+
+    // Compacting asks the same model for the summary.
+    app.send("/compact\r");
+    app.expect("Compacted");
+    // Switching to a Claude model now needs Anthropic's key, and says so.
+    app.send("/model claude-opus-5-5\r");
+    app.expect("claude-opus-5-5");
+    app.send("hello\r");
+    app.expect("no API key yet: type /login");
+    app.exit();
+}
+
 // ---- signals ------------------------------------------------------------
 
 #[test]

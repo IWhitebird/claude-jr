@@ -80,7 +80,7 @@ impl Core {
             let reply = match result {
                 Ok(r) => r,
                 Err(e) if e.is::<api::Cancelled>() => return Event::Cancelled,
-                Err(e) if format!("{e}").contains("too long") => return Event::Error(TOO_LONG.into()),
+                Err(e) if too_long(&format!("{e}")) => return Event::Error(TOO_LONG.into()),
                 Err(e) => return Event::Error(format!("{e:#}")),
             };
             let cost = api::cost(&model, &reply.usage);
@@ -244,6 +244,15 @@ fn tool_result(id: &Value, out: Output) -> Value {
         Err(s) => (Value::String(s), true),
     };
     json!({ "type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error })
+}
+
+/// Whether an API's error says the conversation doesn't fit the model. Each
+/// provider words it differently.
+fn too_long(error: &str) -> bool {
+    let e = error.to_lowercase();
+    ["too long", "context length", "context_length", "context window", "maximum context", "too many tokens"]
+        .iter()
+        .any(|phrase| e.contains(phrase))
 }
 
 /// If `m` is an assistant message with tool calls, a user message answering

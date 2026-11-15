@@ -41,6 +41,8 @@ pub struct Config {
     pub web: bool,
     /// Whether someone is there to answer questions and approvals.
     pub interactive: bool,
+    /// Providers added in the config file.
+    pub providers: crate::provider::Providers,
 }
 
 pub enum Command {
@@ -260,7 +262,7 @@ impl Agent {
         let _ = shared_tools.set(tools.clone());
 
         let core = Core {
-            client: Client::new(cfg.key, cfg.base_url),
+            client: Client::new(cfg.key, cfg.base_url).with_providers(cfg.providers),
             model: Mutex::new(cfg.model),
             effort: Mutex::new(cfg.effort),
             auto_model: cfg.auto_model,
@@ -290,7 +292,7 @@ impl Agent {
             name: agent.session.name.clone(),
             skills: agent.tools.skills().iter().map(|s| s.name.clone()).collect(),
             mcp: agent.tools.mcp.describe(),
-            has_key: agent.core.client.has_key(),
+            has_key: !agent.core.client.needs_login(&agent.core.model.lock().unwrap()),
         });
         if !agent.messages.is_empty() {
             (agent.core.emit)(Event::Replay(agent.transcript()));
@@ -759,6 +761,7 @@ mod tests {
             mcp: BTreeMap::new(),
             web: false,
             interactive: false,
+            providers: Default::default(),
         }
     }
 

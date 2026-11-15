@@ -4,7 +4,9 @@
 # come back, finishes with a short markdown answer. Every round runs a bash
 # command printing MOCK_OUTPUT_KB of output, so the history grows like a real
 # long session. The first round also writes and edits a file. MOCK_CMD
-# replaces the bash command and MOCK_LOG records every request body.
+# replaces the bash command and MOCK_LOG records every request body (and the
+# request's headers in MOCK_LOG.headers). POST .../chat/completions gets the
+# same service in the Chat Completions format.
 #
 #   python3 bench/mock.py PORT
 
@@ -209,6 +211,114 @@ def invalid(body):
     return None
 
 
+# ---- the same service in the Chat Completions format --------------------
+# A request in that format is turned into the Messages format, answered by
+# the scenarios above, and the answer turned back. What the real services
+# refuse is refused here too.
+
+def from_chat(body):
+    """A Chat Completions request as a Messages request, or (None, why) if a
+    real server would refuse it."""
+    out, system = [], []
+    for i, m in enumerate(body.get("messages") or []):
+        role, content = m.get("role"), m.get("content")
+        if role == "system":
+            if i != 0:
+                return None, "messages: the system message must come first"
+            system.append(content if isinstance(content, str) else "")
+        elif role == "user":
+            blocks = [{"type": "text", "text": content}] if isinstance(content, str) else []
+            for part in content if isinstance(content, list) else []:
+                if part.get("type") == "text":
+                    blocks.append({"type": "text", "text": part.get("text", "")})
+                elif part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if not url.startswith("data:image/") or ";base64," not in url:
+                        return None, f"messages.{i}: image_url must be a data: URL here"
+                    blocks.append({"type": "text", "text": "[image]"})
+                else:
+                    return None, f"messages.{i}: unknown content part {part.get('type')!r}"
+            out.append({"role": "user", "content": blocks})
+        elif role == "tool":
+            if not isinstance(content, str):
+                return None, f"messages.{i}: a tool message's content must be a string"
+            block = {"type": "tool_result", "tool_use_id": m.get("tool_call_id"), "content": content}
+            # Results for one reply's calls arrive as separate messages.
+            if out and out[-1]["role"] == "user" and all(b["type"] == "tool_result" for b in out[-1]["content"]):
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+        elif role == "assistant":
+            blocks = [{"type": "text", "text": content}] if isinstance(content, str) and content.strip() else []
+            for call in m.get("tool_calls") or []:
+                fn = call.get("function", {})
+                if call.get("type") != "function" or not isinstance(fn.get("arguments"), str):
+                    return None, f"messages.{i}: tool_calls need type function and arguments as a JSON string"
+                try:
+                    args = json.loads(fn["arguments"])
+                except ValueError:
+                    return None, f"messages.{i}: tool call arguments are not valid JSON"
+                blocks.append({"type": "tool_use", "id": call.get("id"), "name": fn.get("name"), "input": args})
+            if not blocks:
+                blocks = [{"type": "text", "text": "(nothing)"}]
+            out.append({"role": "assistant", "content": blocks})
+        else:
+            return None, f"messages.{i}: unknown role {role!r}"
+    tools = []
+    for t in body.get("tools") or []:
+        fn = t.get("function", {})
+        if t.get("type") != "function" or not fn.get("name") or not isinstance(fn.get("parameters"), dict):
+            return None, "tools: each needs type function, a name and parameters"
+        tools.append({"name": fn["name"], "description": fn.get("description", ""), "input_schema": fn["parameters"]})
+    for field in ("thinking", "cache_control", "context_management", "output_config", "system", "max_tokens_to_sample"):
+        if field in body:
+            return None, f"unknown field: {field}"
+    return {"messages": out, "system": "\n".join(system), "tools": tools, "model": body.get("model"),
+            "stream": body.get("stream")}, None
+
+
+def to_chat(events):
+    """Messages stream events as Chat Completions chunks."""
+    chunks, calls, stop, usage = [], -1, "stop", {}
+    def chunk(delta, finish=None):
+        return {"id": "c1", "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+    for e in events:
+        t = e["type"]
+        if t == "message_start":
+            usage = dict(e["message"]["usage"])
+            chunks.append(chunk({"role": "assistant", "content": ""}))
+        elif t == "content_block_start" and e["content_block"]["type"] == "tool_use":
+            calls += 1
+            b = e["content_block"]
+            chunks.append(chunk({"tool_calls": [{"index": calls, "id": b["id"], "type": "function",
+                                                 "function": {"name": b["name"], "arguments": ""}}]}))
+        elif t == "content_block_delta":
+            d = e["delta"]
+            if d["type"] == "text_delta":
+                chunks.append(chunk({"content": d["text"]}))
+            elif d["type"] == "thinking_delta":
+                chunks.append(chunk({"reasoning_content": d["thinking"]}))
+            elif d["type"] == "input_json_delta":
+                chunks.append(chunk({"tool_calls": [{"index": calls, "function": {"arguments": d["partial_json"]}}]}))
+        elif t == "message_delta":
+            stop = {"tool_use": "tool_calls", "max_tokens": "length"}.get(e["delta"].get("stop_reason"), "stop")
+            usage["output_tokens"] = e.get("usage", {}).get("output_tokens", 0)
+        elif t == "error":
+            chunks.append({"error": e["error"]})
+    cached = usage.get("cache_read_input_tokens", 0)
+    chunks.append(chunk({}, stop))
+    chunks.append({"id": "c1", "object": "chat.completion.chunk", "choices": [],
+                   "usage": {"prompt_tokens": usage.get("input_tokens", 0) + cached,
+                             "completion_tokens": usage.get("output_tokens", 0),
+                             "prompt_tokens_details": {"cached_tokens": cached}}})
+    return chunks
+
+
+def chat_sse(chunks, done=True):
+    return ("".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + ("data: [DONE]\n\n" if done else "")).encode()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -237,7 +347,15 @@ class Handler(BaseHTTPRequestHandler):
         if LOG:
             with open(LOG, "a") as f:
                 f.write(json.dumps(body) + "\n")
-        why = invalid(body)
+            with open(LOG + ".headers", "a") as f:
+                f.write(json.dumps(dict({k.lower(): v for k, v in self.headers.items()}, path=self.path)) + "\n")
+        chat = self.path.split("?")[0].endswith("/chat/completions")
+        why = None
+        if chat:
+            body, why = from_chat(body)
+        elif self.headers.get("anthropic-version") is None:
+            why = "anthropic-version: header is required"
+        why = why or invalid(body)
         if why:
             out = json.dumps({"type": "error", "error": {"type": "invalid_request_error", "message": why}}).encode()
             if LOG:
@@ -302,6 +420,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("content-length", str(len(out)))
             self.end_headers()
             return self.wfile.write(out)
+        if chat and kind not in ("garbage",) and not (kind and kind.isdigit()):
+            return self.send_chat(events, kind)
         if kind in ("cut", "early", "overloaded", "half-tool"):
             if kind == "early":
                 events = events[:1]
@@ -324,6 +444,43 @@ class Handler(BaseHTTPRequestHandler):
         parts = [sse([e]) for e in events]
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
+        self.send_header("content-length", str(sum(len(p) for p in parts)))
+        self.end_headers()
+        if DELAY_MS <= 0:
+            return self.wfile.write(b"".join(parts))
+        for part in parts:
+            self.wfile.write(part)
+            self.wfile.flush()
+            time.sleep(DELAY_MS / 1000)
+
+    def send_chat(self, events, kind):
+        """The reply in the Chat Completions format, whole or cut as `kind` says."""
+        done = True
+        if kind == "early":
+            events, done = events[:1], False
+        elif kind == "half-tool":
+            at = next((i for i, e in enumerate(events) if e.get("delta", {}).get("type") == "input_json_delta"),
+                      len(events) // 2)
+            events, done = events[:at + 1], False
+        elif kind in ("cut", "overloaded"):
+            events, done = events[:max(2, len(events) // 2)], False
+            if kind == "overloaded":
+                events.append({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
+        chunks = to_chat(events)
+        if not done:
+            # A stream that stops has no closing chunks either.
+            chunks = [c for c in chunks if c.get("choices") and c["choices"][0]["finish_reason"] is None
+                      or "error" in c]
+        parts = [chat_sse([c], False) for c in chunks] + ([b"data: [DONE]\n\n"] if done else [])
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        if not done:
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(b"".join(parts))
+            self.wfile.flush()
+            self.close_connection = True
+            return
         self.send_header("content-length", str(sum(len(p) for p in parts)))
         self.end_headers()
         if DELAY_MS <= 0:

@@ -4,9 +4,11 @@ mod config;
 mod images;
 mod log;
 mod mem;
+mod openai;
 mod permission;
 mod print;
 mod prompt;
+mod provider;
 mod sandbox;
 mod session;
 mod signals;
@@ -31,7 +33,8 @@ const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
       --sessions       list saved conversations for this directory
       --sandbox        only let it write inside this directory (Linux, bubblewrap)
       --worktree       work in a git worktree and branch of its own, leaving this folder alone
-  -m, --model MODEL    model id (default: claude-opus-5-5)
+  -m, --model MODEL    model id (default: claude-opus-5-5). Other providers: PROVIDER/MODEL,
+                       e.g. ollama/qwen3, openai/gpt-5, openrouter/..., groq/..., gemini/...
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
       --output-format json   with -p: print one JSON object at the end (result, files, cost)
@@ -192,9 +195,28 @@ fn run() -> Result<ExitCode, String> {
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
         return Err(sandbox::exec(&file.sandbox));
     }
+    let model = args
+        .model
+        .or_else(|| std::env::var("CLAUDE_JR_MODEL").ok())
+        .or(file.model)
+        .unwrap_or_else(|| "claude-opus-5-5".into());
     let key = config::api_key().unwrap_or_default();
-    if key.is_empty() && !interactive {
-        return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
+    // A model of another provider needs that provider's key, not Anthropic's.
+    let other = provider::resolve(&model, &file.providers).map(|(p, _)| p);
+    match &other {
+        Some(p) => {
+            if let Some(why) = p.missing_key() {
+                return Err(why);
+            }
+        }
+        None if model.contains('/') && !interactive => {
+            let known = provider::names(&file.providers).join(", ");
+            return Err(format!("{model}: no provider by that name (there are: {known})"));
+        }
+        None if key.is_empty() && !interactive => {
+            return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
+        }
+        None => {}
     }
     // In a script, a mistyped name must not quietly start a new conversation.
     if let (false, Some(Pick::Named(name))) = (interactive, &args.resume)
@@ -209,19 +231,20 @@ fn run() -> Result<ExitCode, String> {
     let cfg = agent::Config {
         key,
         base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
-        model: args
-            .model
-            .or_else(|| std::env::var("CLAUDE_JR_MODEL").ok())
-            .or(file.model)
-            .unwrap_or_else(|| "claude-opus-5-5".into()),
+        // The reviewer is asked through the same provider as the model.
+        auto_model: file.auto_model.unwrap_or_else(|| match &other {
+            Some(_) => model.clone(),
+            None => "claude-haiku-5-5".into(),
+        }),
+        model,
         effort: args.effort.or(file.effort),
         mode: if args.yes { Mode::Bypass } else { file.mode.as_deref().and_then(Mode::parse).unwrap_or(Mode::Default) },
         allow: file.allow,
         resume: args.resume,
-        auto_model: file.auto_model.unwrap_or_else(|| "claude-haiku-5-5".into()),
         mcp: file.mcp_servers,
         web: file.web_tools.unwrap_or(true),
         interactive,
+        providers: file.providers,
     };
 
     match args.prompt {

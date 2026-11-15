@@ -1,5 +1,6 @@
 // Anthropic Messages API: one streaming request, parsed from SSE into content blocks.
 
+use crate::provider::{self, Provider, Providers, Shape};
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -220,6 +221,21 @@ impl Usage {
     }
 }
 
+/// The context size assumed for a model of another provider that the config
+/// says nothing about.
+const OTHER_WINDOW: u64 = 128_000;
+/// The longest reply asked of another vendor's Messages API; theirs often
+/// allow less than Anthropic's.
+const OTHER_MAX_TOKENS: u32 = 16_384;
+
+/// The context size of `model` in tokens.
+pub fn window(model: &str, providers: &Providers) -> u64 {
+    match provider::resolve(model, providers) {
+        Some((p, _)) => p.context.unwrap_or(OTHER_WINDOW),
+        None => Caps::of(model).window,
+    }
+}
+
 pub struct Reply {
     pub content: Vec<Value>,
     pub stop_reason: String,
@@ -242,7 +258,7 @@ pub enum Chunk<'a> {
 /// The stream broke before any content arrived (an "overloaded" event, a
 /// dropped connection): safe to send the request again.
 #[derive(Debug)]
-struct Retryable(String);
+pub(crate) struct Retryable(pub(crate) String);
 
 impl std::fmt::Display for Retryable {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -272,6 +288,20 @@ pub struct Client {
     key: std::sync::RwLock<String>,
     silence: Duration,
     offline: Duration,
+    /// Providers added in the config file.
+    providers: Providers,
+    /// Saved messages already put into the Chat Completions format.
+    chat: std::sync::Mutex<crate::openai::Translated>,
+}
+
+/// Where one request goes and how it is spoken to.
+struct Target {
+    url: String,
+    key: Option<String>,
+    /// None: Anthropic's own API.
+    provider: Option<Provider>,
+    /// For Anthropic's API: the beta features the request uses.
+    betas: String,
 }
 
 impl Client {
@@ -292,7 +322,59 @@ impl Client {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .map_or(OFFLINE_PATIENCE, Duration::from_secs),
+            providers: Providers::new(),
+            chat: Default::default(),
         }
+    }
+
+    pub fn with_providers(mut self, providers: Providers) -> Self {
+        self.providers = providers;
+        self
+    }
+
+    /// Whether the user has to log in before `model` can be asked. Only
+    /// Anthropic's key is kept by /login; other providers' come from the
+    /// environment, and a missing one is reported when it is needed.
+    pub fn needs_login(&self, model: &str) -> bool {
+        provider::resolve(model, &self.providers).is_none() && !self.has_key()
+    }
+
+    /// Where `req` goes, and its head: everything but the messages.
+    fn target(&self, req: &Request) -> Result<(Target, Vec<u8>)> {
+        let Some((p, id)) = provider::resolve(req.model, &self.providers) else {
+            let key = self.key.read().unwrap().clone();
+            if key.is_empty() {
+                bail!("no API key yet: type /login to add one");
+            }
+            let mut betas = Caps::of(req.model).betas();
+            if req.mcp_servers.is_some() {
+                betas = if betas.is_empty() { BETA_MCP.to_string() } else { format!("{betas},{BETA_MCP}") };
+            }
+            let target = Target { url: self.url.clone(), key: Some(key), provider: None, betas };
+            return Ok((target, serde_json::to_vec(req)?));
+        };
+        if let Some(why) = p.missing_key() {
+            bail!(why);
+        }
+        let (path, head) = match p.shape {
+            Shape::OpenAi => ("/chat/completions", crate::openai::head(req, id, &p)),
+            // The Messages API as others serve it: the plain request, without
+            // what only Anthropic's own models take.
+            Shape::Anthropic => {
+                let tools: Value = serde_json::from_str(req.tools.get())?;
+                let head = json!({
+                    "model": id,
+                    "max_tokens": p.max_tokens.unwrap_or(OTHER_MAX_TOKENS),
+                    "system": req.system,
+                    "tools": tools,
+                    "stream": true,
+                });
+                ("/v1/messages", head)
+            }
+        };
+        let target =
+            Target { url: format!("{}{path}", p.base_url), key: p.key(), provider: Some(p), betas: String::new() };
+        Ok((target, serde_json::to_vec(&head)?))
     }
 
     pub fn set_key(&self, key: String) {
@@ -311,15 +393,7 @@ impl Client {
         cancel: &AtomicBool,
         mut on: impl FnMut(Chunk),
     ) -> Result<Reply> {
-        let head = serde_json::to_vec(req)?;
-        let mut betas = Caps::of(req.model).betas();
-        if req.mcp_servers.is_some() {
-            betas = if betas.is_empty() { BETA_MCP.to_string() } else { format!("{betas},{BETA_MCP}") };
-        }
-        let key = self.key.read().unwrap().clone();
-        if key.is_empty() {
-            bail!("no API key yet: type /login to add one");
-        }
+        let (target, head) = self.target(req)?;
         let http = self.http.lock().unwrap().clone();
         // Esc must stop a request at once, even while it waits for the reply
         // to begin, which no read timeout can pick up again: a watcher closes
@@ -336,7 +410,7 @@ impl Client {
                     std::thread::park_timeout(Duration::from_millis(50));
                 }
             });
-            let result = self.send(&http, &head, &betas, &key, messages, cancel, &mut on);
+            let result = self.send(&http, &target, &head, req.system, messages, cancel, &mut on);
             done.store(true, Ordering::Relaxed);
             // Woken at once, so a finished request never waits out the watcher's nap.
             watcher.thread().unpark();
@@ -353,9 +427,9 @@ impl Client {
     fn send<M: Message>(
         &self,
         http: &ureq::Agent,
+        target: &Target,
         head: &[u8],
-        betas: &str,
-        key: &str,
+        system: &str,
         messages: &[M],
         cancel: &AtomicBool,
         on: &mut impl FnMut(Chunk),
@@ -365,16 +439,26 @@ impl Client {
         let mut offline: Option<(Instant, u32)> = None;
         loop {
             attempt += 1;
-            let mut call = http
-                .post(&self.url)
-                .header("x-api-key", key)
-                .header("anthropic-version", VERSION)
-                .header("content-type", "application/json");
-            if !betas.is_empty() {
-                call = call.header("anthropic-beta", betas);
+            let openai = target.provider.as_ref().is_some_and(|p| p.shape == Shape::OpenAi);
+            let mut call = http.post(&target.url).header("content-type", "application/json");
+            if !openai {
+                call = call.header("anthropic-version", VERSION);
+                if let Some(key) = &target.key {
+                    call = call.header("x-api-key", key);
+                }
+            }
+            // Other vendors' servers, whichever format they speak, mostly take the key this way.
+            if let (Some(key), Some(_)) = (&target.key, &target.provider) {
+                call = call.header("authorization", format!("Bearer {key}"));
+            }
+            if !target.betas.is_empty() {
+                call = call.header("anthropic-beta", &target.betas);
             }
 
-            let mut body = Body::new(head, messages);
+            let mut body = match openai {
+                true => crate::openai::body(head, system, messages, &self.chat)?,
+                false => Body::new(head, messages),
+            };
             call = call.header("content-length", body.len.to_string());
             let mut res = match call.send(ureq::SendBody::from_reader(&mut body)) {
                 Ok(r) => r,
@@ -387,7 +471,8 @@ impl Client {
                 Err(e @ ureq::Error::Timeout(_)) => return Err(e.into()),
                 // An address that can't be one won't get better by waiting.
                 Err(e @ (ureq::Error::BadUri(_) | ureq::Error::Http(_))) => {
-                    bail!("the API address {:?} isn't valid ({e}); check ANTHROPIC_BASE_URL", self.url)
+                    let fix = if target.provider.is_some() { "the provider's base_url" } else { "ANTHROPIC_BASE_URL" };
+                    bail!("the API address {:?} isn't valid ({e}); check {fix}", target.url)
                 }
                 // The API couldn't be reached at all, so nothing was sent:
                 // keep trying for a while without using up attempts.
@@ -411,10 +496,14 @@ impl Client {
                 let kind = res.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
                 if kind.starts_with("text/html") {
                     let start: String = res.body_mut().read_to_string().unwrap_or_default().chars().take(200).collect();
-                    bail!("{} answered, but not as the API does ({kind}): {}", self.url, start.trim());
+                    bail!("{} answered, but not as the API does ({kind}): {}", target.url, start.trim());
                 }
                 let reader = BufReader::new(res.body_mut().as_reader());
-                match read_sse(reader, cancel, self.silence, on) {
+                let reply = match openai {
+                    true => crate::openai::read(reader, cancel, self.silence, on),
+                    false => read_sse(reader, cancel, self.silence, on),
+                };
+                match reply {
                     Err(e) if e.is::<Retryable>() && attempt < MAX_ATTEMPTS => {
                         wait(backoff(attempt, None), cancel)?;
                         continue;
@@ -464,16 +553,28 @@ impl Message for Text<'_> {
 /// buffer: `{"messages":[` m1 `,` m2 ... `],` + the rest of the request.
 /// Saved messages are read from the session file and stored images encoded
 /// from disk, both as the body is read.
-struct Body<'a> {
+pub(crate) struct Body<'a> {
     parts: Vec<Part<'a>>,
-    len: usize,
+    pub(crate) len: usize,
     part: usize,
     offset: usize,
 }
 
-enum Part<'a> {
+pub(crate) enum Part<'a> {
     Bytes(&'a [u8]),
-    File { file: &'a std::fs::File, at: u64, left: usize },
+    /// Bytes made for this request.
+    Owned(Vec<u8>),
+    File {
+        file: &'a std::fs::File,
+        at: u64,
+        left: usize,
+    },
+    /// A stretch of a file that is kept alive for as long as the body is.
+    Kept {
+        file: std::sync::Arc<std::fs::File>,
+        at: u64,
+        left: usize,
+    },
     Image(crate::images::Encoder),
 }
 
@@ -502,16 +603,35 @@ impl<'a> Body<'a> {
         }
         parts.push(Part::Bytes(b"],"));
         parts.push(Part::Bytes(&head[1..])); // the request object without its opening brace
+        Body::from_parts(parts)
+    }
+
+    pub(crate) fn from_parts(parts: Vec<Part<'a>>) -> Self {
         let len = parts
             .iter()
             .map(|p| match p {
                 Part::Bytes(b) => b.len(),
-                Part::File { left, .. } => *left,
+                Part::Owned(b) => b.len(),
+                Part::File { left, .. } | Part::Kept { left, .. } => *left,
                 Part::Image(e) => e.len,
             })
             .sum();
         Body { parts, len, part: 0, offset: 0 }
     }
+}
+
+/// Reads up to `left` bytes of `file` at `at` and moves both along. The
+/// length was promised up front: a file that got shorter can't be papered over.
+fn read_file(file: &std::fs::File, at: &mut u64, left: &mut usize, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    let want = buf.len().min(*left);
+    let n = file.read_at(&mut buf[..want], *at)?;
+    if n == 0 && want > 0 {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
+    *at += n as u64;
+    *left -= n;
+    Ok(n)
 }
 
 impl std::io::Read for Body<'_> {
@@ -525,19 +645,15 @@ impl std::io::Read for Body<'_> {
                     self.offset += n;
                     n
                 }
-                Part::File { file, at, left } => {
-                    use std::os::unix::fs::FileExt;
-                    let want = buf.len().min(*left);
-                    let n = file.read_at(&mut buf[..want], *at)?;
-                    // The length was promised up front: a file that got
-                    // shorter can't be papered over.
-                    if n == 0 && want > 0 {
-                        return Err(std::io::ErrorKind::UnexpectedEof.into());
-                    }
-                    *at += n as u64;
-                    *left -= n;
+                Part::Owned(b) => {
+                    let rest = &b[self.offset..];
+                    let n = rest.len().min(buf.len());
+                    buf[..n].copy_from_slice(&rest[..n]);
+                    self.offset += n;
                     n
                 }
+                Part::File { file, at, left } => read_file(file, at, left, buf)?,
+                Part::Kept { file, at, left } => read_file(file, at, left, buf)?,
                 Part::Image(e) => e.read(buf)?,
             };
             if n > 0 {
@@ -590,10 +706,62 @@ fn error_message(body: &str) -> String {
 /// Builds the assistant content blocks from SSE events. Blocks are kept exactly
 /// as sent (thinking signatures, compaction blocks, unknown types), because they
 /// must be passed back unchanged.
-fn read_sse(mut r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut impl FnMut(Chunk)) -> Result<Reply> {
-    let mut emitted = false;
+/// The `data:` lines of an event stream, read one at a time.
+pub(crate) struct Lines<R> {
+    r: R,
+    /// A partly read line, kept across read timeouts.
+    raw: Vec<u8>,
+    last_byte: Instant,
+}
+
+impl<R: BufRead> Lines<R> {
+    pub(crate) fn new(r: R) -> Self {
+        Lines { r, raw: Vec::new(), last_byte: Instant::now() }
+    }
+
+    /// The next line's data, or None at the end of the stream. `emitted`:
+    /// whether any of the reply has been shown yet (if not, a broken stream
+    /// can be asked for again).
+    pub(crate) fn next(&mut self, cancel: &AtomicBool, silence: Duration, emitted: bool) -> Result<Option<String>> {
+        let broke = |msg: String| -> anyhow::Error { if emitted { anyhow!(msg) } else { Retryable(msg).into() } };
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Cancelled.into());
+            }
+            let before = self.raw.len();
+            match self.r.read_until(b'\n', &mut self.raw) {
+                Ok(0) if self.raw.is_empty() => return Ok(None),
+                Ok(_) => {}
+                Err(e) if timed_out(&e) => {
+                    if self.raw.len() != before {
+                        self.last_byte = Instant::now();
+                    }
+                    if self.last_byte.elapsed() < silence {
+                        continue;
+                    }
+                    return Err(broke(format!("the stream went silent for {}s", silence.as_secs())));
+                }
+                Err(e) => return Err(broke(format!("the connection broke: {e}"))),
+            }
+            self.last_byte = Instant::now();
+            if self.raw.last() != Some(&b'\n') {
+                // end of stream in the middle of a line
+                self.raw.clear();
+                return Ok(None);
+            }
+            let line = String::from_utf8_lossy(&self.raw).into_owned();
+            self.raw.clear();
+            if let Some(data) = line.trim_end_matches(['\n', '\r']).strip_prefix("data:") {
+                return Ok(Some(data.trim_start().to_string()));
+            }
+        }
+    }
+}
+
+fn read_sse(r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut impl FnMut(Chunk)) -> Result<Reply> {
+    let emitted = std::cell::Cell::new(false);
     let mut on = |c: Chunk| {
-        emitted = true;
+        emitted.set(true);
         on(c)
     };
     let mut content: Vec<Value> = Vec::new();
@@ -601,43 +769,9 @@ fn read_sse(mut r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mu
     let mut stop_reason = String::new();
     let mut usage = Usage::default();
 
-    let mut raw = Vec::new();
-    let mut last_byte = Instant::now();
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(Cancelled.into());
-        }
-        // `raw` keeps a partly read line across read timeouts.
-        let before = raw.len();
-        match r.read_until(b'\n', &mut raw) {
-            Ok(0) if raw.is_empty() => break,
-            Ok(_) => {}
-            Err(e) if timed_out(&e) => {
-                if raw.len() != before {
-                    last_byte = Instant::now();
-                }
-                if last_byte.elapsed() < silence {
-                    continue;
-                }
-                let msg = format!("the stream went silent for {}s", silence.as_secs());
-                return Err(if emitted { anyhow!(msg) } else { Retryable(msg).into() });
-            }
-            Err(e) => {
-                let msg = format!("the connection broke: {e}");
-                return Err(if emitted { anyhow!(msg) } else { Retryable(msg).into() });
-            }
-        }
-        last_byte = Instant::now();
-        if raw.last() != Some(&b'\n') {
-            // end of stream in the middle of a line
-            raw.clear();
-            break;
-        }
-        let line = String::from_utf8_lossy(&raw).into_owned();
-        raw.clear();
-        let line = line.trim_end_matches(['\n', '\r']);
-        let Some(data) = line.strip_prefix("data:") else { continue };
-        let mut ev: Value = serde_json::from_str(data.trim_start())?;
+    let mut lines = Lines::new(r);
+    while let Some(data) = lines.next(cancel, silence, emitted.get())? {
+        let mut ev: Value = serde_json::from_str(&data)?;
 
         match ev["type"].as_str().unwrap_or("") {
             "message_start" => {

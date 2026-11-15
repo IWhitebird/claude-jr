@@ -34,6 +34,9 @@ pub struct Config {
     /// MCP servers, in the same shape as .mcp.json's "mcpServers".
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, ServerConfig>,
+    /// Other places to ask models (see provider.rs).
+    #[serde(default)]
+    pub providers: crate::provider::Providers,
 }
 
 #[derive(Deserialize, Default)]
@@ -69,6 +72,7 @@ impl Config {
             cfg.layout = file.layout.or(cfg.layout);
             cfg.mode = file.mode.or(cfg.mode);
             cfg.mcp_servers.extend(file.mcp_servers);
+            cfg.providers.extend(file.providers);
             cfg.allow.extend(file.allow);
             cfg.sandbox.enabled |= file.sandbox.enabled;
             cfg.sandbox.read.extend(file.sandbox.read);

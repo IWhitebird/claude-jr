@@ -68,8 +68,10 @@ def run(seed):
     open(conf, "w").write("set -g history-limit 50000\nset -g status off\nset -g remain-on-exit on\n")
     sock = f"chaos-{os.getpid()}-{seed}"
     mode = rng.choice(["-y", "-y", ""])  # without -y, approval prompts get the random keys too
+    # Half the runs talk to the fake API in the Chat Completions format.
+    mode += rng.choice(["", " -m ollama/test-model"])
     env = (f"HOME={home} XDG_DATA_HOME={home} XDG_CONFIG_HOME={home} ANTHROPIC_API_KEY=mock "
-           f"ANTHROPIC_BASE_URL=http://127.0.0.1:{port} CLAUDE_JR_OFFLINE_SECS=3")
+           f"ANTHROPIC_BASE_URL=http://127.0.0.1:{port} OLLAMA_HOST=127.0.0.1:{port} CLAUDE_JR_OFFLINE_SECS=3")
     log = []
     problem = None
     try:

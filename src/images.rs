@@ -83,6 +83,17 @@ fn store_dir() -> PathBuf {
     crate::config::data_dir().join("images")
 }
 
+/// The base64 data of an image block: a stored image's is read from its
+/// file; anything else is the data itself.
+pub fn inline(data: &str) -> String {
+    use base64::Engine;
+    let stored = data.strip_prefix("@@claude-jr-image:").and_then(|d| d.strip_suffix("@@")).map(PathBuf::from);
+    match stored.filter(|path| path.parent() == Some(store_dir().as_path())) {
+        Some(path) => base64::engine::general_purpose::STANDARD.encode(std::fs::read(path).unwrap_or_default()),
+        None => data.to_string(),
+    }
+}
+
 /// An image content block for the API, referring to a stored copy.
 pub fn block(path: &Path) -> Result<Value, String> {
     let media_type = media_type(path).ok_or_else(|| format!("{} isn't a supported image", path.display()))?;

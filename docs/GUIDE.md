@@ -187,6 +187,43 @@ git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
 
 Linux only for now.
 
+## Other models (from 0.2.0, not released yet)
+
+A model id with a provider's name in front goes to that provider; a plain id
+is Anthropic's, as before.
+
+```sh
+claudejr -m ollama/qwen3:8b            # a local model, no key
+claudejr -m openai/gpt-5               # needs OPENAI_API_KEY
+claudejr -m openrouter/meta/llama-4    # needs OPENROUTER_API_KEY
+```
+
+| Provider | Key |
+|---|---|
+| `openai`, `openrouter`, `gemini`, `groq`, `deepseek`, `mistral`, `xai` | `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY` |
+| `ollama`, `lmstudio`, `llamacpp` (local servers on their usual ports; `OLLAMA_HOST` is read) | none |
+
+Any other server that speaks Chat Completions or the Messages format can be
+added in the config and used as `-m work/some-model`:
+
+```json
+{ "providers": {
+    "work": { "base_url": "https://llm.example.com/v1", "key_env": "WORK_LLM_KEY", "context": 128000 },
+    "other": { "base_url": "https://api.example.ai", "api": "anthropic", "key_env": "OTHER_KEY" }
+} }
+```
+
+Things to know:
+
+- The model has to be good at calling tools; small local models often aren't.
+- Ollama gives a model a 4,096-token context unless told otherwise, which is
+  less than claude-jr's own instructions and tools need. Raise it (for example
+  `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`).
+- Web search, cost figures, automatic compaction and effort levels are
+  Anthropic's; with other models `/compact` still works when you run it.
+- A conversation can be continued with a different provider's model: the
+  history is kept in one format and translated for whoever is asked.
+
 ## Running many at once (from 0.2.0, not released yet)
 
 Three pieces make a run something another program, or another agent, can

@@ -136,6 +136,7 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
     term::restore_on_panic();
     let model = cfg.model.clone();
     let effort = cfg.effort.clone();
+    let providers = cfg.providers.clone();
     let (tx, rx) = mpsc::channel();
     let to_ui = tx.clone();
     let agent = agent::spawn(cfg, move |e| {
@@ -154,6 +155,7 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
 
     let mut app = App::new(agent, model);
     app.effort = effort;
+    app.providers = providers;
     app.header();
     // As if the last frame were long ago, so the first one draws at once.
     let mut last_draw = Instant::now().checked_sub(FRAME).unwrap_or_else(Instant::now);
@@ -296,6 +298,8 @@ pub fn restore_terminal() {
 struct App {
     agent: agent::Handle,
     model: String,
+    /// Providers from the config, to know each model's context size.
+    providers: crate::provider::Providers,
     input: Input,
     stream: Stream,
     /// Lines waiting to be written into scrollback.
@@ -343,6 +347,7 @@ impl App {
         App {
             agent,
             model,
+            providers: Default::default(),
             input: Input::default(),
             stream: Stream { block_start: true, ..Stream::default() },
             commits: Vec::new(),
@@ -1411,7 +1416,7 @@ impl App {
             left.push(span(hint, DIM));
         }
 
-        let window = crate::api::Caps::of(&self.model).window;
+        let window = crate::api::window(&self.model, &self.providers);
         let mut right = Vec::new();
         if crate::sandbox::active() {
             right.push("sandbox".to_string());
