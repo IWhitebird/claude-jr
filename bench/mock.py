@@ -8,7 +8,7 @@
 # request's headers in MOCK_LOG.headers). POST .../chat/completions gets the
 # same service in the Chat Completions format.
 #
-#   python3 bench/mock.py PORT
+#   python3 bench/mock.py PORT      (0: any free port; the port is printed)
 
 import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -494,4 +494,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+# With port 0 the system picks a free one; either way, say which it is.
+print(server.server_address[1], flush=True)
+server.serve_forever()

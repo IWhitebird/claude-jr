@@ -5,7 +5,7 @@
 // the child never sees the caller's ANTHROPIC_API_KEY.
 
 use std::io::Read;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,22 +70,22 @@ impl Env {
         }
         let proj = proj.canonicalize().unwrap();
         let log = root.join("requests.jsonl");
-        let port = free_port();
+        // The fake API picks its own port and says which: a port picked here
+        // could be given to another test's before this one had bound it.
         let mut cmd = Command::new("python3");
-        cmd.args(["-I", &format!("{}/bench/mock.py", env!("CARGO_MANIFEST_DIR")), &port.to_string()])
+        cmd.args(["-I", &format!("{}/bench/mock.py", env!("CARGO_MANIFEST_DIR")), "0"])
             .env("MOCK_LOG", &log)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
         for (k, v) in mock_env {
             cmd.env(k, v);
         }
-        let mock = Mock(cmd.spawn().expect("python3 is needed for the fake API"));
-        let start = Instant::now();
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(start.elapsed() < Duration::from_secs(20), "the fake API did not start");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let mut child = cmd.spawn().expect("python3 is needed for the fake API");
+        let mut said = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(child.stdout.take().unwrap()), &mut said).unwrap();
+        let port: u16 = said.trim().parse().unwrap_or_else(|_| panic!("the fake API did not start (it said {said:?})"));
+        let mock = Mock(child);
         Env { root, home, config, data, proj, port, log, _mock: mock }
     }
 
@@ -1531,6 +1531,36 @@ fn a_running_task_cannot_be_merged_and_its_log_can_be_followed() {
         assert_eq!(o.code, 2);
         assert!(o.err.contains("is the start of 2 tasks' ids"), "{}", o.err);
     }
+}
+
+/// A task outlives whatever started it: the shell that ran `task start` can
+/// be killed, hang-up signal and all, and the worker carries on to the end.
+#[test]
+fn a_task_carries_on_after_its_starter_is_gone() {
+    let e = Env::with(&[("MOCK_CMD", "sleep 1"), ("MOCK_ROUNDS", "2")]);
+    let _git = repository(&e);
+    // Started from a shell of its own session, which is then hung up on and killed.
+    let mut cmd = Command::new("setsid");
+    cmd.arg("sh").arg("-c").arg(format!("'{BIN}' task start -y 'slow work' > id.txt; kill -HUP 0; sleep 30"));
+    cmd.current_dir(&e.proj)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", &e.home)
+        .env("XDG_CONFIG_HOME", &e.config)
+        .env("XDG_DATA_HOME", &e.data)
+        .env("ANTHROPIC_API_KEY", "mock")
+        .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", e.port));
+    let status = cmd.status().unwrap();
+    assert!(!status.success(), "the starting shell was hung up on");
+    let id = std::fs::read_to_string(e.proj.join("id.txt")).unwrap().trim().to_string();
+    assert!(!id.is_empty());
+
+    assert_eq!(task_json(&e, &["result", &id])["status"], "running", "still going after its starter died");
+    let o = task(&e, &["wait", &id]);
+    ok(&o);
+    let state = task_json(&e, &["result", &id]);
+    assert_eq!(state["status"], "done", "{state:#}");
+    assert_eq!(state["result"]["worktree"]["commits"], 1);
 }
 
 #[test]

@@ -21,6 +21,7 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::BufRead;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::sync::atomic::AtomicBool;
@@ -154,7 +155,8 @@ pub struct Translated {
     /// the program does.
     file: Option<Arc<File>>,
     end: u64,
-    /// (the file a message is saved in, where, how long) to (where its
+    /// (the file a message is saved in, where, how long), or for a message
+    /// in memory (no file, a hash of its text, its length), to (where its
     /// translation is, how long).
     at: HashMap<(u64, u64, u64, usize), (u64, usize)>,
     /// The file couldn't be made; translate each time instead.
@@ -209,19 +211,19 @@ pub fn body<'a, M: Message>(
         add(Part::Owned(json!({ "role": "system", "content": system }).to_string().into_bytes()));
     }
     for message in source {
-        let (file, at, len) = match message.text() {
-            // Not saved yet (the newest ones, and those with images): made each time.
+        // What the message is known by: where it is saved, or, while it is
+        // only in memory (a subagent's, or the newest ones), what it says.
+        let key = match message.text() {
             Text::Memory(json) => {
-                let bytes = translate(json)?;
-                if !bytes.is_empty() {
-                    add(Part::Owned(bytes));
-                }
-                continue;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                json.hash(&mut hasher);
+                (u64::MAX, hasher.finish(), 0, json.len())
             }
-            Text::Saved { file, at, len } => (file, at, len),
+            Text::Saved { file, at, len } => {
+                let meta = file.metadata()?;
+                (meta.dev(), meta.ino(), at, len)
+            }
         };
-        let meta = file.metadata()?;
-        let key = (meta.dev(), meta.ino(), at, len);
         let known = {
             let kept = kept.lock().unwrap();
             kept.at.get(&key).and_then(|&(at, len)| Some((kept.file.clone()?, at, len)))
@@ -229,9 +231,14 @@ pub fn body<'a, M: Message>(
         let (file, at, len) = match known {
             Some(found) => found,
             None => {
-                let mut buf = vec![0; len];
-                file.read_exact_at(&mut buf, at)?;
-                let bytes = translate(std::str::from_utf8(&buf).map_err(std::io::Error::other)?)?;
+                let bytes = match message.text() {
+                    Text::Memory(json) => translate(json)?,
+                    Text::Saved { file, at, len } => {
+                        let mut buf = vec![0; len];
+                        file.read_exact_at(&mut buf, at)?;
+                        translate(std::str::from_utf8(&buf).map_err(std::io::Error::other)?)?
+                    }
+                };
                 match kept.lock().unwrap().keep(key, &bytes) {
                     Some(found) => found,
                     None => {
@@ -545,9 +552,15 @@ mod tests {
         let second = read(&more);
         assert_eq!(second["messages"].as_array().unwrap()[..3], first["messages"].as_array().unwrap()[..]);
         assert_eq!(second["messages"][3]["content"], "newest");
+        // The four saved ones were reused; only the new one was added, and a
+        // message in memory is kept too (a subagent's whole history is).
         // (One lock at a time: two in one expression would wait on each other.)
         let entries = kept.lock().unwrap().at.len();
-        assert_eq!((entries, kept.lock().unwrap().end), (4, size));
+        let grown = kept.lock().unwrap().end;
+        assert_eq!(entries, 5);
+        assert!(grown > size);
+        read(&more);
+        assert_eq!(kept.lock().unwrap().end, grown, "asked a third time, nothing is translated");
 
         // With nowhere to keep them it still works, translating each time.
         let nowhere = Mutex::new(Translated { unusable: true, ..Translated::default() });
@@ -555,6 +568,185 @@ mod tests {
         body(&head, "", &saved, &nowhere).unwrap().read_to_end(&mut out).unwrap();
         assert_eq!(serde_json::from_slice::<Value>(&out).unwrap(), first);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// xorshift: the same on every run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+
+        fn text(&mut self) -> String {
+            const BITS: &[&str] = &["", "plain", "two\nlines", "\"quoted\" \\ back", "é漢👍", "{\"json\":1}", "x"];
+            let long = "y".repeat(self.below(3) * 5000);
+            format!("{}{long}", BITS[self.below(BITS.len())])
+        }
+    }
+
+    /// A conversation as claude-jr keeps it: turns alternate, every call is
+    /// answered in the next message, and a user may add text beside results.
+    fn conversation(rng: &mut Rng) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut calls: Vec<String> = Vec::new();
+        for turn in 0..1 + rng.below(12) {
+            let mut user = Vec::new();
+            for id in calls.drain(..) {
+                let content = match rng.below(3) {
+                    0 => json!(rng.text()),
+                    1 => json!([{ "type": "text", "text": rng.text() }, { "type": "image", "source": {} }]),
+                    _ => json!([]),
+                };
+                user.push(json!({ "type": "tool_result", "tool_use_id": id, "content": content, "is_error": rng.below(4) == 0 }));
+            }
+            for _ in 0..rng.below(3) {
+                user.push(json!({ "type": "text", "text": rng.text() }));
+            }
+            if rng.below(6) == 0 {
+                user.push(json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "QUJD" } }));
+            }
+            out.push(json!({ "role": "user", "content": user }).to_string());
+
+            let mut reply = Vec::new();
+            if rng.below(2) == 0 {
+                reply.push(json!({ "type": "thinking", "thinking": rng.text(), "signature": "s" }));
+            }
+            if rng.below(3) != 0 {
+                reply.push(json!({ "type": "text", "text": rng.text() }));
+            }
+            for n in 0..rng.below(4) {
+                let id = format!("t{turn}_{n}");
+                reply.push(json!({ "type": "tool_use", "id": id, "name": "bash", "input": { "command": rng.text() } }));
+                calls.push(id);
+            }
+            out.push(json!({ "role": "assistant", "content": reply }).to_string());
+        }
+        if !calls.is_empty() {
+            let results: Vec<Value> =
+                calls.iter().map(|id| json!({ "type": "tool_result", "tool_use_id": id, "content": "x" })).collect();
+            out.push(json!({ "role": "user", "content": results }).to_string());
+        }
+        out
+    }
+
+    /// What a Chat Completions server insists on.
+    fn check(request: &Value, source: &[String]) {
+        let messages = request["messages"].as_array().unwrap();
+        let mut waiting: Vec<String> = Vec::new();
+        for (i, m) in messages.iter().enumerate() {
+            match m["role"].as_str().unwrap() {
+                "system" => assert_eq!(i, 0, "the system message comes first"),
+                "tool" => {
+                    let id = m["tool_call_id"].as_str().unwrap().to_string();
+                    assert!(m["content"].is_string(), "a tool message's content is a string");
+                    let at = waiting
+                        .iter()
+                        .position(|w| *w == id)
+                        .unwrap_or_else(|| panic!("result {id} answers no call\n{source:?}"));
+                    waiting.remove(at);
+                }
+                role => {
+                    assert!(
+                        waiting.is_empty(),
+                        "calls {waiting:?} were not answered before the next {role} message\n{source:?}"
+                    );
+                    if role == "assistant" {
+                        assert!(m["content"].is_string());
+                        for call in m["tool_calls"].as_array().into_iter().flatten() {
+                            assert_eq!(call["type"], "function");
+                            let args = call["function"]["arguments"].as_str().expect("arguments are a string");
+                            assert!(serde_json::from_str::<Value>(args).is_ok(), "and that string is JSON");
+                            waiting.push(call["id"].as_str().unwrap().to_string());
+                        }
+                        assert!(
+                            m.get("tool_calls").is_none_or(|c| !c.as_array().unwrap().is_empty()),
+                            "no empty list of calls"
+                        );
+                    } else {
+                        assert_eq!(role, "user");
+                        assert!(
+                            m["content"].is_string() || m["content"].as_array().is_some_and(|parts| !parts.is_empty())
+                        );
+                    }
+                }
+            }
+        }
+        assert!(waiting.is_empty(), "the last calls were never answered");
+    }
+
+    #[test]
+    fn any_conversation_becomes_a_request_a_server_accepts() {
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+        let head = serde_json::to_vec(&json!({ "model": "m", "stream": true })).unwrap();
+        for _ in 0..400 {
+            let source = conversation(&mut rng);
+            let kept = Mutex::new(Translated { unusable: rng.below(2) == 0, ..Translated::default() });
+            let texts: Vec<&str> = source.iter().map(String::as_str).collect();
+            // Sent as it grows, the way a real session sends it.
+            for upto in (1..=source.len()).step_by(1 + rng.below(3)) {
+                let mut out = Vec::new();
+                let mut b = body(&head, "SYS", &texts[..upto], &kept).unwrap();
+                b.read_to_end(&mut out).unwrap();
+                assert_eq!(out.len(), b.len);
+                let request: Value =
+                    serde_json::from_slice(&out).unwrap_or_else(|e| panic!("not JSON ({e})\n{source:?}"));
+                // (Part-way through a turn the newest calls have no results yet.)
+                if upto == source.len() {
+                    check(&request, &source);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_stream_makes_the_reader_panic() {
+        let mut rng = Rng(0xD1B54A32D192ED03);
+        let pieces = [
+            r#"{"choices":[{"delta":{"content":"hi"}}]}"#,
+            r#"{"choices":[{"delta":{"content":null,"tool_calls":[{"index":3,"function":{"arguments":"{"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"id":"","function":{"name":"x","arguments":null}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":"nope"}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":-1}]}}]}"#,
+            r#"{"choices":[{"finish_reason":"stop"}]}"#,
+            r#"{"choices":[{"finish_reason":"tool_calls","delta":{}}]}"#,
+            r#"{"choices":[]}"#,
+            r#"{"choices":"x"}"#,
+            r#"{"usage":{"prompt_tokens":"many","completion_tokens":-4}}"#,
+            r#"{"usage":{"prompt_tokens":5,"prompt_tokens_details":{"cached_tokens":99}}}"#,
+            r#"{"error":{"message":"bad"}}"#,
+            r#"{"error":"flat"}"#,
+            "[DONE]",
+            "{}",
+            "[]",
+            "null",
+            "7",
+            "not json",
+            "",
+        ];
+        for _ in 0..5000 {
+            let mut stream = String::new();
+            for _ in 0..rng.below(9) {
+                match rng.below(8) {
+                    0 => stream.push_str(": a comment\n"),
+                    1 => stream.push_str("event: something\n"),
+                    2 => stream.push_str(&format!("data:{}", pieces[rng.below(pieces.len())])),
+                    _ => stream.push_str(&format!("data: {}\n\n", pieces[rng.below(pieces.len())])),
+                }
+            }
+            if let (Ok(reply), _) = parse(&stream) {
+                assert!(matches!(reply.stop_reason.as_str(), "end_turn" | "tool_use" | "max_tokens" | "refusal"));
+                for block in &reply.content {
+                    assert!(
+                        block["type"] == "text" || (block["id"].is_string() && block["input"].is_object()),
+                        "{block}"
+                    );
+                }
+            }
+        }
     }
 
     fn parse(stream: &str) -> (Result<Reply>, Vec<String>) {

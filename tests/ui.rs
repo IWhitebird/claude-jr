@@ -1494,6 +1494,61 @@ fn another_providers_model_works_without_an_anthropic_key() {
     app.exit();
 }
 
+/// An interactive session in a worktree: the folder it was started from is
+/// left alone, and on the way out it says where the work is. (Nothing is
+/// committed for you when you were there to do it yourself.)
+#[test]
+fn a_session_in_a_worktree_says_where_its_work_is() {
+    let world = World::new("worktree-ui", &[]);
+    let git = |args: &[&str]| {
+        let out = Command::new("git").args(args).current_dir(world.proj()).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(world.proj().join("kept.txt"), "x\n").unwrap();
+    git(&["add", "-A"]);
+    git(&[
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "first",
+    ]);
+
+    let mut app = world.launch(&["-y", "--worktree"], Some("mock"));
+    app.expect("ask anything");
+    app.shown("worktrees/proj-");
+    app.turn("do the demo");
+    app.shown("Edit(demo.txt)");
+    app.send("/exit\r");
+    app.expect("The work is on branch claudejr/");
+    app.expect("changes that aren't committed");
+    app.expect("git merge claudejr/");
+    app.exited(0);
+    assert!(!world.proj().join("demo.txt").exists(), "the folder it was started from is untouched");
+    let branch = git(&["branch", "--list", "claudejr/*"]).trim_start_matches(['+', ' ']).to_string();
+    let path = git(&["worktree", "list", "--porcelain"]);
+    let worktree =
+        path.lines().filter_map(|l| l.strip_prefix("worktree ")).nth(1).expect("the worktree is still there");
+    assert_eq!(std::fs::read_to_string(format!("{worktree}/demo.txt")).unwrap(), "one\nTWO\nthree\n");
+    assert!(branch.starts_with("claudejr/"), "{branch}");
+
+    // A session that changes nothing leaves no worktree or branch behind.
+    let before = git(&["worktree", "list"]).lines().count();
+    let mut app = world.launch(&["-y", "--worktree"], Some("mock"));
+    app.expect("ask anything");
+    app.send("/exit\r");
+    app.expect("Nothing was changed, so the worktree was removed.");
+    app.exited(0);
+    assert_eq!(git(&["worktree", "list"]).lines().count(), before);
+}
+
 // ---- signals ------------------------------------------------------------
 
 #[test]

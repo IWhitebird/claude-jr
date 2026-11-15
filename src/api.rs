@@ -696,16 +696,22 @@ fn wait(d: Duration, cancel: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
+/// What an API's error reply says, without the JSON around it. Each provider
+/// shapes it its own way: {"error":{"message"}} (most), the same inside a
+/// list (Gemini), {"error":"..."} (xAI), {"detail":"..."} or {"message":"..."}.
 fn error_message(body: &str) -> String {
+    let said = |v: &Value| -> Option<String> {
+        let v = v.as_array().and_then(|a| a.first()).unwrap_or(v);
+        [&v["error"]["message"], &v["error"], &v["detail"], &v["message"]]
+            .iter()
+            .find_map(|m| m.as_str().filter(|m| !m.trim().is_empty()).map(String::from))
+    };
     serde_json::from_str::<Value>(body)
         .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(String::from))
-        .unwrap_or_else(|| body.chars().take(500).collect())
+        .and_then(|v| said(&v))
+        .unwrap_or_else(|| body.trim().chars().take(500).collect())
 }
 
-/// Builds the assistant content blocks from SSE events. Blocks are kept exactly
-/// as sent (thinking signatures, compaction blocks, unknown types), because they
-/// must be passed back unchanged.
 /// The `data:` lines of an event stream, read one at a time.
 pub(crate) struct Lines<R> {
     r: R,
@@ -932,6 +938,26 @@ data: {"type":"message_stop"}
         let mut out = Vec::new();
         assert!(std::io::Read::read_to_end(&mut Body::new(head, &msgs), &mut out).is_err());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn each_providers_error_is_read() {
+        for (body, want) in [
+            (r#"{"type":"error","error":{"type":"x","message":"prompt is too long"}}"#, "prompt is too long"),
+            (
+                r#"[{"error":{"code":400,"message":"Please pass a valid API key","status":"INVALID_ARGUMENT"}}]"#,
+                "Please pass a valid API key",
+            ),
+            (r#"{"code":"invalid-argument","error":"Incorrect API key provided."}"#, "Incorrect API key provided."),
+            (r#"{"detail":"Invalid API Key"}"#, "Invalid API Key"),
+            (r#"{"message":"no such model"}"#, "no such model"),
+            ("  <html>bad gateway</html>\n", "<html>bad gateway</html>"),
+            (r#"{"error":{"message":""},"detail":"the real reason"}"#, "the real reason"),
+            ("", ""),
+        ] {
+            assert_eq!(error_message(body), want, "{body}");
+        }
+        assert_eq!(error_message(&"x".repeat(900)).len(), 500, "an odd body is cut short");
     }
 
     #[test]
