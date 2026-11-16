@@ -13,7 +13,7 @@
 //   result.json   the outcome, once there is one
 
 use super::budget;
-use crate::config::data_dir;
+use crate::store::config::data_dir;
 use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::os::unix::process::CommandExt;
@@ -67,7 +67,7 @@ pub fn start(start: &Start) -> Result<String, String> {
     if start.prompt.trim().is_empty() {
         return Err("the task needs a prompt".into());
     }
-    if crate::config::api_key().unwrap_or_default().is_empty() {
+    if crate::store::config::api_key().unwrap_or_default().is_empty() {
         return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
     }
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;

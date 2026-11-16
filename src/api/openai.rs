@@ -122,7 +122,7 @@ pub fn messages(msg: &Value) -> Vec<Value> {
             "text" => Some(json!({ "type": "text", "text": b["text"] })),
             "image" => {
                 let (kind, data) = (b["source"]["media_type"].as_str()?, b["source"]["data"].as_str()?);
-                let url = format!("data:{kind};base64,{}", crate::images::inline(data));
+                let url = format!("data:{kind};base64,{}", crate::store::images::inline(data));
                 Some(json!({ "type": "image_url", "image_url": { "url": url } }))
             }
             _ => None,
@@ -170,7 +170,7 @@ impl Translated {
             // process must not open (and empty) the first one's file.
             static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = crate::config::data_dir();
+            let dir = crate::store::config::data_dir();
             let path = dir.join(format!("chat-{}-{n}.tmp", std::process::id()));
             let made = std::fs::create_dir_all(&dir)
                 .and_then(|()| std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path));

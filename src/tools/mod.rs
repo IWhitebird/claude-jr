@@ -317,7 +317,7 @@ const IMAGE: &str = "\u{0}image:";
 
 fn image_output(path: &Path) -> Output {
     let size = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?.len();
-    if size > crate::images::MAX_BYTES {
+    if size > crate::store::images::MAX_BYTES {
         return Err(format!("{} is {} MB; images can be at most 5 MB", path.display(), size / 1_048_576));
     }
     Ok(format!("{IMAGE}{}", path.display()))
@@ -327,7 +327,7 @@ fn image_output(path: &Path) -> Output {
 /// plus a line saying which file it is.
 pub fn result_content(text: String) -> Value {
     match text.strip_prefix(IMAGE) {
-        Some(path) => match crate::images::block(Path::new(path)) {
+        Some(path) => match crate::store::images::block(Path::new(path)) {
             Ok(image) => json!([image, { "type": "text", "text": format!("Image: {path}") }]),
             Err(e) => Value::String(e),
         },
@@ -627,7 +627,7 @@ mod tests {
         assert_eq!(content[1]["text"], format!("Image: {}", dir.join("ok.png").display()));
 
         let big = dir.join("big.png");
-        std::fs::File::create(&big).unwrap().set_len(crate::images::MAX_BYTES + 1).unwrap();
+        std::fs::File::create(&big).unwrap().set_len(crate::store::images::MAX_BYTES + 1).unwrap();
         let err = run(&t, "read", json!({"path": "big.png"})).unwrap_err();
         assert_eq!(err, format!("{} is 5 MB; images can be at most 5 MB", big.display()));
 

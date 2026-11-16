@@ -64,12 +64,12 @@ fn a_stored_image_is_read_from_its_file() {
     crate::tools::test_home();
     let png = crate::tools::test_dir("openai-image").join("x.png");
     std::fs::write(&png, b"\x89PNG\r\n\x1a\nABC").unwrap();
-    let block = crate::images::block(&png).unwrap();
+    let block = crate::store::images::block(&png).unwrap();
     let out = messages(&json!({ "role": "user", "content": [block] }));
     let url = out[0]["content"][0]["image_url"]["url"].as_str().unwrap();
     assert_eq!(url, "data:image/png;base64,iVBORw0KGgpBQkM=");
     // Text that merely looks like a stored image's marker can't pull a file in.
-    assert_eq!(crate::images::inline("@@claude-jr-image:/etc/passwd@@"), "@@claude-jr-image:/etc/passwd@@");
+    assert_eq!(crate::store::images::inline("@@claude-jr-image:/etc/passwd@@"), "@@claude-jr-image:/etc/passwd@@");
 }
 
 fn provider() -> Provider {

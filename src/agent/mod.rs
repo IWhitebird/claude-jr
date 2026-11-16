@@ -12,7 +12,7 @@ mod turn;
 
 use crate::api::{Client, Usage};
 use crate::permission::Rules;
-use crate::session::{Loaded, Msg, Pick, Session};
+use crate::store::session::{Loaded, Msg, Pick, Session};
 use crate::tools::mcp::{self, ServerConfig};
 use crate::tools::{self, Diff, Tools, skill};
 use serde_json::value::RawValue;
@@ -362,8 +362,8 @@ impl Agent {
         self.tools.checkpoints.begin_turn(turn);
         // Image files mentioned in the message (dragged in, or pasted with
         // ctrl+v) go in as images, before the text.
-        for path in crate::images::paths_in(&text) {
-            match crate::images::block(&path) {
+        for path in crate::store::images::paths_in(&text) {
+            match crate::store::images::block(&path) {
                 Ok(image) => {
                     let kb = std::fs::metadata(&path).map_or(0, |m| m.len() / 1024);
                     (self.core.emit)(Event::Notice(format!("Attached {} ({kb} KB)", path.display())));
@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     fn skills_run_as_a_message_with_their_instructions() {
         crate::tools::test_home();
-        let skill = crate::config::config_dir().join("skills/unit-agent-skill");
+        let skill = crate::store::config::config_dir().join("skills/unit-agent-skill");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "---\nname: unit-agent-skill\ndescription: d\n---\nStep one.\n")
             .unwrap();

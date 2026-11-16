@@ -149,7 +149,7 @@ fn server_args(options: &[String]) -> (Vec<String>, String) {
         args.extend(options.iter().cloned());
         return (args, String::new());
     }
-    if crate::sandbox::available() {
+    if crate::sys::sandbox::available() {
         args.extend(["-y".to_string(), "--sandbox".to_string()]);
         args.extend(options.iter().cloned());
         return (args, "Workers can edit and run commands, sandboxed to their own worktree.".into());

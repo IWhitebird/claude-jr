@@ -1,7 +1,7 @@
 // The command line's flags: what each means, and the usage text.
 
 use crate::cli::print;
-use crate::session::Pick;
+use crate::store::session::Pick;
 
 pub const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 

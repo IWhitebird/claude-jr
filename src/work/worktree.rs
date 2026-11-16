@@ -8,7 +8,7 @@
 // carries the work and can be merged or thrown away. A worktree in which
 // nothing changed is removed again, branch and all.
 
-use crate::config::data_dir;
+use crate::store::config::data_dir;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

@@ -31,7 +31,7 @@ pub fn discover() -> Vec<Skill> {
         cwd.join(".claude/skills"),
         cwd.join(".claude-jr/skills"),
         home.join(".claude/skills"),
-        crate::config::config_dir().join("skills"),
+        crate::store::config::config_dir().join("skills"),
     ];
     let mut skills: Vec<Skill> = Vec::new();
     for root in roots {
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn skills_are_found_in_the_config_folder_and_the_first_name_wins() {
         super::super::test_home();
-        let root = crate::config::config_dir().join("skills");
+        let root = crate::store::config::config_dir().join("skills");
         skill_in(&root, "unit-first", "---\nname: unit-dup\ndescription: from config\n---\nA");
         skill_in(&root, "unit-second", "---\nname: unit-dup\ndescription: shadowed\n---\nB");
         skill_in(&root, "unit-not-a-skill", "---\nname: unit-bad\n");

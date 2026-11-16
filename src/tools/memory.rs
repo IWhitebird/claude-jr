@@ -33,7 +33,7 @@ pub static MEMORY: LazyLock<Box<RawValue>> = LazyLock::new(|| {
 pub fn path() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
     let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
-    crate::config::data_dir().join("memory").join(name).join("MEMORY.md")
+    crate::store::config::data_dir().join("memory").join(name).join("MEMORY.md")
 }
 
 /// The notes, for the system prompt.
@@ -110,7 +110,7 @@ mod tests {
     fn the_notes_file_lives_under_the_data_folder() {
         super::super::test_home();
         let file = path();
-        assert!(file.starts_with(crate::config::data_dir().join("memory")));
+        assert!(file.starts_with(crate::store::config::data_dir().join("memory")));
         assert!(file.ends_with("MEMORY.md"));
         let folder = file.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
         assert!(folder.chars().all(|c| c.is_alphanumeric() || c == '-'), "{folder}");

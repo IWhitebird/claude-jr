@@ -52,12 +52,12 @@ pub(crate) enum Part<'a> {
         at: u64,
         left: usize,
     },
-    Image(crate::images::Encoder),
+    Image(crate::store::images::Encoder),
 }
 
 impl<'a> Body<'a> {
     pub(super) fn new<M: Message>(head: &'a [u8], messages: &'a [M]) -> Self {
-        use crate::images::{Encoder, Piece};
+        use crate::store::images::{Encoder, Piece};
         let mut parts = Vec::with_capacity(messages.len() * 2 + 2);
         parts.push(Part::Bytes(b"{\"messages\":["));
         for (i, m) in messages.iter().enumerate() {
@@ -71,7 +71,7 @@ impl<'a> Body<'a> {
                     continue;
                 }
             };
-            for piece in crate::images::pieces(json) {
+            for piece in crate::store::images::pieces(json) {
                 parts.push(match piece {
                     Piece::Text(t) => Part::Bytes(t),
                     Piece::Image(path) => Part::Image(Encoder::open(&path)),

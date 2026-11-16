@@ -13,7 +13,7 @@
 //
 // The network stays on, because the agent needs the API.
 
-use crate::config::{SandboxConfig, config_dir, data_dir};
+use crate::store::config::{SandboxConfig, config_dir, data_dir};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;

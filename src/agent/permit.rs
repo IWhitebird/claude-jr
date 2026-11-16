@@ -6,7 +6,7 @@ use super::Event;
 use super::turn::{Core, Ctx};
 use crate::api::{self, Request};
 use crate::permission::{self, Rules};
-use crate::session::Msg;
+use crate::store::session::Msg;
 use crate::tools::{self, Access};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};

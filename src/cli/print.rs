@@ -65,7 +65,7 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
             let _ = signal_hook::flag::register(signal, agent.cancel.clone());
         }
     } else {
-        crate::signals::watch(agent.tools.clone(), false);
+        crate::sys::signals::watch(agent.tools.clone(), false);
     }
     let sent = agent.commands.send(Command::Send(prompt.clone())).is_ok();
     let mut report = Report::default();

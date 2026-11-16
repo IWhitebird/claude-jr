@@ -171,7 +171,7 @@ pub fn menu(items: &[(&str, &str)], at: usize, rows: usize, cols: usize, out: &m
 }
 
 pub fn key_prompt(cols: usize, out: &mut Vec<String>) {
-    let path = crate::config::config_dir().join("credentials");
+    let path = crate::store::config::config_dir().join("credentials");
     let where_ = clean(&format!("It's saved to {}, readable only by you.", path.display()));
     boxed(
         &[

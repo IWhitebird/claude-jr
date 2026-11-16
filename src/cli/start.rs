@@ -6,9 +6,11 @@ use super::args::Args;
 use super::print;
 use crate::agent::{self, Mode};
 use crate::api::provider;
-use crate::session::{Pick, Session};
+use crate::store::config;
+use crate::store::session::{Pick, Session};
+use crate::sys::sandbox;
+use crate::ui;
 use crate::work::worktree::{self, Worktree};
-use crate::{config, sandbox, ui};
 use std::io::IsTerminal;
 use std::process::ExitCode;
 

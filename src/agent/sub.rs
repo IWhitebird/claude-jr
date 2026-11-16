@@ -14,7 +14,7 @@
 
 use super::Event;
 use super::turn::{Core, Ctx};
-use crate::session::Msg;
+use crate::store::session::Msg;
 use crate::tools::Output;
 use crate::work::worktree::Worktree;
 use serde_json::{Value, json};

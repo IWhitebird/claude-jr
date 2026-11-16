@@ -80,7 +80,7 @@ const MARKER: &str = "\"data\":\"@@claude-jr-image:";
 const END: &str = "@@\"";
 
 fn store_dir() -> PathBuf {
-    crate::config::data_dir().join("images")
+    crate::store::config::data_dir().join("images")
 }
 
 /// The base64 data of an image block: a stored image's is read from its
@@ -254,7 +254,7 @@ fn from_clipboard() -> Result<PathBuf, String> {
         };
         // A PNG starts with these 8 bytes; anything else isn't an image.
         if out.status.success() && out.stdout.starts_with(b"\x89PNG\r\n\x1a\n") {
-            let dir = crate::config::data_dir().join("images");
+            let dir = crate::store::config::data_dir().join("images");
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
             let path = dir.join(format!("paste-{ms}.png"));

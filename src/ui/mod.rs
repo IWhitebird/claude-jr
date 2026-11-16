@@ -144,7 +144,7 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
     });
 
     let mut term = Term::new(bottom)?;
-    crate::signals::watch(agent.tools.clone(), true);
+    crate::sys::signals::watch(agent.tools.clone(), true);
     let _ = thread::Builder::new().name("keys".into()).spawn(move || {
         while let Ok(e) = ct::read() {
             if tx.send(Msg::Term(e)).is_err() {
@@ -184,7 +184,7 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
                 Some(Err(RecvTimeoutError::Disconnected)) => break,
                 None => {
                     // Going quiet: give back what the last burst of work needed.
-                    crate::mem::trim();
+                    crate::sys::mem::trim();
                     match rx.recv() {
                         Ok(m) => Some(m),
                         Err(_) => break,
@@ -385,7 +385,7 @@ impl App {
             _ => cwd,
         };
         let version = env!("CARGO_PKG_VERSION");
-        let sandbox = if crate::sandbox::active() {
+        let sandbox = if crate::sys::sandbox::active() {
             format!("{ORANGE}sandboxed:{RESET} {DIM}writes only inside {cwd}{RESET}")
         } else {
             String::new()
@@ -784,7 +784,7 @@ impl App {
                 match k.code {
                     KeyCode::Char(c @ '1'..='9') => {
                         if let Some((id, _)) = sessions.get(c as usize - '1' as usize) {
-                            let pick = crate::session::Pick::Named(id.clone());
+                            let pick = crate::store::session::Pick::Named(id.clone());
                             self.prompts.pop_front();
                             let _ = self.agent.commands.send(Command::Resume(pick));
                         }
@@ -884,9 +884,9 @@ impl App {
             },
             // The terminal's own paste arrives as a paste event; ctrl+v reads
             // the clipboard itself, so it can take an image as well as text.
-            KeyCode::Char('v') if ctrl => match crate::images::clipboard() {
-                Ok(crate::images::Clip::Image(path)) => self.input.insert(&format!("{} ", path.display())),
-                Ok(crate::images::Clip::Text(text)) => self.paste(&text),
+            KeyCode::Char('v') if ctrl => match crate::store::images::clipboard() {
+                Ok(crate::store::images::Clip::Image(path)) => self.input.insert(&format!("{} ", path.display())),
+                Ok(crate::store::images::Clip::Text(text)) => self.paste(&text),
                 Err(e) => self.note(&format!("{e}."), DIM),
             },
             KeyCode::Backspace if ctrl || alt => self.input.delete_word(),
@@ -974,7 +974,7 @@ impl App {
             "off" => serde_json::Value::Bool(false),
             v => serde_json::Value::String(v.to_string()),
         };
-        if let Err(e) = crate::config::set_user_setting(setting.key, value) {
+        if let Err(e) = crate::store::config::set_user_setting(setting.key, value) {
             return self.note(&format!("Couldn't save the setting: {e}"), RED);
         }
         if setting.key == "effort" {
@@ -1019,7 +1019,7 @@ impl App {
             return;
         }
         self.prompts.pop_front();
-        match crate::config::save_api_key(&key) {
+        match crate::store::config::save_api_key(&key) {
             Ok(path) => self.note(&format!("Saved your API key to {}.", path.display()), DIM),
             Err(e) => self.note(&format!("Couldn't save the key ({e}); it's used for this session only."), RED),
         }
@@ -1127,7 +1127,7 @@ impl App {
             "resume" if self.work.is_some() => self.note("Wait for the current turn to finish.", RED),
             "resume" => {
                 let now = std::time::SystemTime::now();
-                let sessions: Vec<(String, String)> = crate::session::Session::list()
+                let sessions: Vec<(String, String)> = crate::store::session::Session::list()
                     .into_iter()
                     .rev()
                     .filter(|s| s.messages > 0)
@@ -1150,7 +1150,7 @@ impl App {
                 let _ = self.agent.commands.send(Command::Rewind(None));
             }
             "logout" => {
-                let _ = crate::config::delete_api_key();
+                let _ = crate::store::config::delete_api_key();
                 let _ = self.agent.commands.send(Command::SetKey(String::new()));
                 self.has_key = false;
                 let env = if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
@@ -1418,7 +1418,7 @@ impl App {
 
         let window = crate::api::window(&self.model, &self.providers);
         let mut right = Vec::new();
-        if crate::sandbox::active() {
+        if crate::sys::sandbox::active() {
             right.push("sandbox".to_string());
         }
         if let Some(n) = &self.name {
@@ -1465,7 +1465,7 @@ const SETTINGS: [Setting; 6] = [
 
 /// A setting's value in the user's config file, or its default.
 fn current_setting(s: &Setting) -> &'static str {
-    let root = crate::config::user_settings();
+    let root = crate::store::config::user_settings();
     let value = s.key.split('.').fold(&root, |node, part| &node[part]);
     let text = match value {
         serde_json::Value::Bool(true) => "on",

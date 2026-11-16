@@ -154,7 +154,7 @@ pub fn read(t: &Tools, input: &Value) -> Output {
         return Err(format!("{} is a directory. Use bash ls.", path.display()));
     }
     plain_file(&path)?;
-    if crate::images::media_type(&path).is_some() {
+    if crate::store::images::media_type(&path).is_some() {
         return super::image_output(&path);
     }
     let offset = input["offset"].as_u64().unwrap_or(1).max(1) as usize;

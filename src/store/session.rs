@@ -44,7 +44,7 @@ impl Msg {
         let mut msg = Msg { user, body: Body::Memory(String::new()) };
         // A message with stored images is spliced together when it's sent,
         // which needs its text at hand.
-        if crate::images::pieces(line).len() > 1 {
+        if crate::store::images::pieces(line).len() > 1 {
             msg.body = Body::Memory(line.to_string());
         } else {
             msg.body = Body::Saved { file: file.clone(), at, len: line.len() };
@@ -231,7 +231,7 @@ impl Session {
             let Some(end) = self.line(system, json.as_bytes()) else { break };
             self.saved += 1;
             if let Some(file) = &self.file
-                && crate::images::pieces(&json).len() == 1
+                && crate::store::images::pieces(&json).len() == 1
             {
                 let len = json.len();
                 m.body = Body::Saved { file: file.clone(), at: end - 1 - len as u64, len };
@@ -377,7 +377,7 @@ fn stem(p: &Path) -> String {
 fn dir() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
     let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
-    crate::config::data_dir().join("sessions").join(name)
+    crate::store::config::data_dir().join("sessions").join(name)
 }
 
 #[cfg(test)]
@@ -472,10 +472,10 @@ mod tests {
         let id = stem(&s.path);
         let png = crate::tools::test_dir("session-image").join("x.png");
         fs::write(&png, b"\x89PNG\r\n\x1a\nnot much of a picture").unwrap();
-        let image = crate::images::block(&png).unwrap();
+        let image = crate::store::images::block(&png).unwrap();
         let mut messages =
             vec![Msg::new("user", json!([image])), Msg::new("assistant", json!([{ "type": "text", "text": "ok" }]))];
-        assert!(crate::images::pieces(&messages[0].json()).len() > 1, "the test's marker is a real one");
+        assert!(crate::store::images::pieces(&messages[0].json()).len() > 1, "the test's marker is a real one");
         s.save("SYSTEM", &mut messages);
         assert!(matches!(messages[0].body, Body::Memory(_)), "its image is spliced in when it's sent");
         assert!(matches!(messages[1].body, Body::Saved { .. }));

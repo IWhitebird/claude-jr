@@ -3,7 +3,7 @@
 // used up.
 
 use super::task::{read_json, write_json};
-use crate::config::data_dir;
+use crate::store::config::data_dir;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{Read, Seek, Write};

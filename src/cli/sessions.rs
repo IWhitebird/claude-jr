@@ -1,6 +1,6 @@
 // `claudejr --sessions`: the saved conversations for this folder.
 
-use crate::session::Session;
+use crate::store::session::Session;
 
 pub fn print() {
     let sessions = Session::list();

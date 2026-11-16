@@ -6,7 +6,7 @@ use super::permit::SharedMode;
 use super::{Emit, Event};
 use crate::api::{self, Chunk, Client, Request};
 use crate::permission::Rules;
-use crate::session::Msg;
+use crate::store::session::Msg;
 use crate::tools::{self, Output, Tools};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};

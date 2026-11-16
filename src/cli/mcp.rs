@@ -77,7 +77,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 
 /// Serves until standard input closes.
 pub fn run(options: Options) -> Result<(), String> {
-    if crate::config::api_key().unwrap_or_default().is_empty()
+    if crate::store::config::api_key().unwrap_or_default().is_empty()
         && !options.start.pass.iter().any(|a| a == "-m" || a == "--model")
     {
         // Said on stderr, which MCP clients show in their logs; the server
@@ -89,7 +89,7 @@ pub fn run(options: Options) -> Result<(), String> {
     let out = Arc::new(Mutex::new(std::io::stdout()));
     let server = Arc::new(Server { start: Mutex::new(options.start) });
     let mut calls = Vec::new();
-    crate::mem::trim();
+    crate::sys::mem::trim();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -105,7 +105,7 @@ pub fn run(options: Options) -> Result<(), String> {
         }));
         calls.retain(|c| !c.is_finished());
         // Between calls the server only waits: what it loaded to start goes back.
-        crate::mem::trim();
+        crate::sys::mem::trim();
     }
     Ok(())
 }

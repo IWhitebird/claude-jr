@@ -78,7 +78,7 @@ pub fn system() -> String {
 /// directory from the outermost down to `cwd`, so the nearest file comes last.
 fn candidates(cwd: &Path) -> impl Iterator<Item = PathBuf> {
     let mut dirs: Vec<PathBuf> = cwd.ancestors().map(Path::to_path_buf).collect();
-    dirs.push(crate::config::config_dir());
+    dirs.push(crate::store::config::config_dir());
     dirs.into_iter().rev().flat_map(|d| INSTRUCTION_FILES.map(|f| d.join(f)))
 }
 
@@ -219,8 +219,8 @@ mod tests {
     fn the_config_folder_has_instructions_too() {
         crate::tools::test_home();
         let dir = crate::tools::test_dir("prompt-config-instr");
-        std::fs::create_dir_all(crate::config::config_dir()).unwrap();
-        let user = crate::config::config_dir().join("AGENTS.md");
+        std::fs::create_dir_all(crate::store::config::config_dir()).unwrap();
+        let user = crate::store::config::config_dir().join("AGENTS.md");
         std::fs::write(&user, "my habits").unwrap();
         assert!(candidates(&dir).any(|p| p == user));
         assert!(instructions(&dir).iter().any(|(p, t)| *p == user && t == "my habits"));

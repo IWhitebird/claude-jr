@@ -6,19 +6,16 @@
 //   tools/   what the model can do: files, the shell, MCP servers, notes
 //   api/     talking to models, whichever provider serves them
 //   work/    running many: background tasks, worktrees, budgets, the run log
-//   (the rest: sessions, images and config on disk; the sandbox; the prompt)
+//   store/   what is kept on disk: conversations, images, settings
+//   sys/     what depends on the operating system: sandbox, memory, signals
 
 mod agent;
 mod api;
 mod cli;
-mod config;
-mod images;
-mod mem;
 mod permission;
 mod prompt;
-mod sandbox;
-mod session;
-mod signals;
+mod store;
+mod sys;
 mod tools;
 mod ui;
 mod work;
