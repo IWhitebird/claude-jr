@@ -42,7 +42,7 @@ pub struct Config {
     /// Whether someone is there to answer questions and approvals.
     pub interactive: bool,
     /// Providers added in the config file.
-    pub providers: crate::provider::Providers,
+    pub providers: crate::api::provider::Providers,
 }
 
 pub enum Command {

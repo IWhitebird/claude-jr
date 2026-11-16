@@ -5,11 +5,9 @@ mod images;
 mod install;
 mod log;
 mod mem;
-mod openai;
 mod permission;
 mod print;
 mod prompt;
-mod provider;
 mod sandbox;
 mod serve;
 mod session;
@@ -250,7 +248,7 @@ fn run() -> Result<ExitCode, String> {
         .unwrap_or_else(|| "claude-opus-5-5".into());
     let key = config::api_key().unwrap_or_default();
     // A model of another provider needs that provider's key, not Anthropic's.
-    let other = provider::resolve(&model, &file.providers).map(|(p, _)| p);
+    let other = api::provider::resolve(&model, &file.providers).map(|(p, _)| p);
     match &other {
         Some(p) => {
             if let Some(why) = p.missing_key() {
@@ -258,7 +256,7 @@ fn run() -> Result<ExitCode, String> {
             }
         }
         None if model.contains('/') && !interactive => {
-            let known = provider::names(&file.providers).join(", ");
+            let known = api::provider::names(&file.providers).join(", ");
             return Err(format!("{model}: no provider by that name (there are: {known})"));
         }
         None if key.is_empty() && !interactive => {

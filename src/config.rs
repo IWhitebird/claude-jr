@@ -36,7 +36,7 @@ pub struct Config {
     pub mcp_servers: BTreeMap<String, ServerConfig>,
     /// Other places to ask models (see provider.rs).
     #[serde(default)]
-    pub providers: crate::provider::Providers,
+    pub providers: crate::api::provider::Providers,
 }
 
 #[derive(Deserialize, Default)]

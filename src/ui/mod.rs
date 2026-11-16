@@ -299,7 +299,7 @@ struct App {
     agent: agent::Handle,
     model: String,
     /// Providers from the config, to know each model's context size.
-    providers: crate::provider::Providers,
+    providers: crate::api::provider::Providers,
     input: Input,
     stream: Stream,
     /// Lines waiting to be written into scrollback.
