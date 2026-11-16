@@ -16,6 +16,8 @@ time; each rebases cleanly because the file sets don't overlap.
 | 006 | Fix Ctrl-W on multi-byte whitespace; add CI, LICENSE, AGENTS.md | P2 | S | — | DONE (advisor/006-ctrlw-ci-license, a4d0143) |
 | 007 | Resizing must not leave stale copies in the scroll history | P1 | S | — | DONE (advisor/007-resize-duplicates, 34b8737) |
 
+| 008 | A readable layout, Bedrock and Vertex, cheap workers, the full SWE-bench | P1 | L | — | TODO (waiting for decisions; written 2026-11-17 at f46b642) |
+
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (reason)
 
 ## File ownership (why they can run in parallel)
