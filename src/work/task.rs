@@ -62,12 +62,27 @@ pub struct Start {
     pub budget: Option<f64>,
 }
 
+/// The model a worker started with these flags uses, and whether that model
+/// is asked through Anthropic's own API (which needs Anthropic's key). It is
+/// the last -m among the flags; else the one set for workers; else the usual
+/// choice beside the main model (see `api::worker`).
+pub fn worker_model(pass: &[String]) -> Result<(String, bool), String> {
+    let file = crate::store::config::Config::load()?;
+    let named = pass.windows(2).rev().find(|w| matches!(w[0].as_str(), "-m" | "--model")).map(|w| w[1].clone());
+    let model =
+        named.or_else(|| file.worker_setting()).unwrap_or_else(|| crate::api::worker(&file.main_model()).to_string());
+    let direct =
+        crate::api::provider::resolve(&model, &file.providers).is_none() && crate::api::cloud::of(&model).is_none();
+    Ok((model, direct))
+}
+
 /// Starts a worker in the background and returns the task's id.
 pub fn start(start: &Start) -> Result<String, String> {
     if start.prompt.trim().is_empty() {
         return Err("the task needs a prompt".into());
     }
-    if crate::store::config::api_key().unwrap_or_default().is_empty() {
+    let (model, direct) = worker_model(&start.pass)?;
+    if direct && crate::store::config::api_key().unwrap_or_default().is_empty() {
         return Err("no API key: run claudejr and type /login, or set ANTHROPIC_API_KEY".into());
     }
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -91,7 +106,8 @@ pub fn start(start: &Start) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let output = File::create(dir.join("output.txt")).map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);
-    cmd.args(&start.pass);
+    // Named last, so the worker uses the model that is recorded for it.
+    cmd.args(&start.pass).args(["-m", &model]);
     if start.worktree && in_git {
         cmd.arg("--worktree");
     }
@@ -110,6 +126,7 @@ pub fn start(start: &Start) -> Result<String, String> {
         "cwd": cwd,
         "started_ms": now_ms(),
         "pid": child.id(),
+        "model": model,
         "group": start.group,
     });
     write_json(&dir.join("task.json"), &task).map_err(|e| e.to_string())?;

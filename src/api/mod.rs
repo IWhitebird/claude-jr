@@ -30,7 +30,7 @@ mod vertex;
 pub use anthropic::Request;
 pub(crate) use body::{Body, Part};
 pub use body::{Message, Text};
-pub use models::{CATALOGUE, Caps, cost, describe, window};
+pub use models::{CATALOGUE, Caps, cost, describe, window, worker};
 pub(crate) use stream::Lines;
 
 use anthropic::{VERSION, read_sse};

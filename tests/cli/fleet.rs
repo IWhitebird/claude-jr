@@ -64,7 +64,7 @@ fn a_fleet_reads_its_list_from_a_file_merges_and_keeps_to_a_budget() {
     // A budget for the whole fleet: once it is spent, they all stop, and the run says it failed.
     let long = Env::with(&[("MOCK_ROUNDS", "40")]);
     let _git = repository(&long);
-    let o = long.run(&["fleet", "-y", "--budget", "0.01", "--json", "a", "b", "c"]);
+    let o = long.run(&["fleet", "-y", "-m", "claude-opus-5-5", "--budget", "0.01", "--json", "a", "b", "c"]);
     assert_eq!(o.code, 1, "{}", o.out);
     let states: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap();
     let spent: f64 = states.as_array().unwrap().iter().map(|s| s["result"]["cost_usd"].as_f64().unwrap()).sum();

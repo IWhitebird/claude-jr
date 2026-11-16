@@ -145,19 +145,27 @@ fn command() -> String {
 /// Returns them with a note for the user about what the workers can do.
 fn server_args(options: &[String]) -> (Vec<String>, String) {
     let mut args = vec!["mcp".to_string()];
+    // Which model does the work is the first thing its cost depends on.
+    let model = match crate::work::task::worker_model(options) {
+        Ok((model, _)) => format!(
+            "Workers use {model} unless a task names another (to change it: install again with -m MODEL, or set \
+             \"worker_model\" in claude-jr's config)."
+        ),
+        Err(_) => String::new(),
+    };
     if options.iter().any(|o| matches!(o.as_str(), "-y" | "--yes" | "--sandbox")) {
         args.extend(options.iter().cloned());
-        return (args, String::new());
+        return (args, model);
     }
     if crate::sys::sandbox::available() {
         args.extend(["-y".to_string(), "--sandbox".to_string()]);
         args.extend(options.iter().cloned());
-        return (args, "Workers can edit and run commands, sandboxed to their own worktree.".into());
+        return (args, format!("Workers can edit and run commands, sandboxed to their own worktree.\n{model}"));
     }
     args.extend(options.iter().cloned());
     let note = "Workers can read but not edit or run commands: there is no sandbox on this system to confine them. \
                 To let them, install again with -y.";
-    (args, note.into())
+    (args, format!("{note}\n{model}"))
 }
 
 /// Reads a JSON file that should hold an object ({} if it isn't there).
@@ -341,7 +349,8 @@ pub fn run(args: &[String], install: bool) -> Result<String, String> {
 
     if did.is_empty() {
         return Ok(if install {
-            "Already set up; nothing changed.".into()
+            // Still worth saying what the workers are: the config may have changed since.
+            format!("Already set up; nothing changed.\n{note}").trim_end().to_string()
         } else {
             "Nothing of claude-jr's was there.".into()
         });
@@ -389,14 +398,16 @@ mod tests {
 
         // Explicit permissions are used as given; the note is for the default only.
         let (given, note) = server_args(&args(&["-y", "-m", "x"]));
-        assert_eq!((given, note.as_str()), (args(&["mcp", "-y", "-m", "x"]), ""));
+        assert_eq!(given, args(&["mcp", "-y", "-m", "x"]));
+        assert!(note.starts_with("Workers use x unless a task names another"), "only which model: {note}");
         let (default, note) = server_args(&args(&["--budget", "2"]));
         assert_eq!(
             default.contains(&"-y".to_string()),
             default.contains(&"--sandbox".to_string()),
             "never -y without the sandbox by default"
         );
-        assert!(!note.is_empty());
+        assert!(note.starts_with("Workers can"), "{note}");
+        assert!(note.contains("\nWorkers use "), "and which model does the work: {note}");
 
         let (front, body) = SKILL.strip_prefix("---\n").unwrap().split_once("\n---\n").unwrap();
         assert!(front.lines().any(|l| l == "name: claude-jr") && front.lines().any(|l| l.starts_with("description: ")));

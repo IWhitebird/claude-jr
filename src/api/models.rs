@@ -68,6 +68,13 @@ impl Caps {
     }
 }
 
+/// The model handed-off work goes to when none is named: Haiku beside one of
+/// Anthropic's own models, where it does a well-described job for a fortieth
+/// of Opus's price; beside any other model, that model itself.
+pub fn worker(main: &str) -> &str {
+    if main.starts_with("claude-") { "claude-haiku-5-5" } else { main }
+}
+
 /// Models /model offers, with what each is good for. Any other model id
 /// works too with /model <id>.
 pub const CATALOGUE: [(&str, &str); 7] = [

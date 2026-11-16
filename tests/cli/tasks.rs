@@ -228,9 +228,12 @@ fn a_task_carries_on_after_its_starter_is_gone() {
 fn a_group_of_tasks_shares_one_budget() {
     let e = Env::with(&[("MOCK_ROUNDS", "30")]);
     let _git = repository(&e);
-    let first = task(&e, &["start", "-y", "--group", "night", "--budget", "0.01", "one"]).out.trim().to_string();
+    // (Opus, so that a cent is soon spent.)
+    let opus = ["-m", "claude-opus-5-5"];
+    let first = task(&e, &["start", "-y", opus[0], opus[1], "--group", "night", "--budget", "0.01", "one"]);
+    let first = first.out.trim().to_string();
     // The group exists now, so the second needs no budget of its own.
-    let second = task(&e, &["start", "-y", "--group", "night", "two"]).out.trim().to_string();
+    let second = task(&e, &["start", "-y", opus[0], opus[1], "--group", "night", "two"]).out.trim().to_string();
     let o = task(&e, &["wait", &first, &second]);
     assert_eq!(o.code, 1, "they were stopped, not finished: {}", o.out);
     let states = json_lines(&o.out);

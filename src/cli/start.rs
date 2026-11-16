@@ -45,11 +45,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
     if (args.sandbox || file.sandbox.enabled) && !sandbox::active() {
         return Err(sandbox::exec(&file.sandbox));
     }
-    let model = args
-        .model
-        .or_else(|| std::env::var("CLAUDE_JR_MODEL").ok())
-        .or(file.model)
-        .unwrap_or_else(|| "claude-opus-5-5".into());
+    let model = args.model.unwrap_or_else(|| file.main_model());
     let key = config::api_key().unwrap_or_default();
     // A model of another provider needs that provider's key, not Anthropic's.
     let other = provider::resolve(&model, &file.providers).map(|(p, _)| p);
@@ -84,6 +80,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
         return Err("not a terminal; use -p PROMPT for non-interactive use".into());
     }
 
+    let worker_model = file.worker_setting();
     let cfg = agent::Config {
         key,
         base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
@@ -93,6 +90,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
             false => "claude-haiku-5-5".into(),
         }),
         model,
+        worker_model,
         effort: args.effort.or(file.effort),
         mode: if args.yes { Mode::Bypass } else { file.mode.as_deref().and_then(Mode::parse).unwrap_or(Mode::Default) },
         allow: file.allow,

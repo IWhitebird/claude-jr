@@ -20,4 +20,5 @@ mod subagents;
 mod tasks;
 mod trust;
 mod update;
+mod workers;
 mod worktrees;

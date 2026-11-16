@@ -77,14 +77,14 @@ fn another_agent_starts_collects_and_merges_work_over_mcp() {
 
     // Two pieces of work handed over; both ids come back at once.
     let started = Instant::now();
-    let first = mcp.json("start_task", serde_json::json!({ "prompt": "add the demo file" }))["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let first = mcp.json("start_task", serde_json::json!({ "prompt": "add the demo file" }));
+    assert_eq!(first["model"], "claude-haiku-5-5", "the reply says what will do the work: {first}");
+    let first = first["id"].as_str().unwrap().to_string();
     let second = mcp.json(
         "start_task",
-        serde_json::json!({ "prompt": "the same again\nwith more words", "model": "claude-haiku-5-5" }),
+        serde_json::json!({ "prompt": "the same again\nwith more words", "model": "claude-sonnet-5-5" }),
     );
+    assert_eq!(second["model"], "claude-sonnet-5-5");
     let second = second["id"].as_str().unwrap().to_string();
     assert!(started.elapsed() < Duration::from_secs(5) && first != second);
 
@@ -108,13 +108,16 @@ fn another_agent_starts_collects_and_merges_work_over_mcp() {
     // The model named in the call was used for that task only.
     let models: Vec<String> = e.requests().iter().map(|r| r["model"].as_str().unwrap().to_string()).collect();
     assert!(
-        models.contains(&"claude-haiku-5-5".to_string()) && models.contains(&"claude-opus-5-5".to_string()),
+        models.contains(&"claude-haiku-5-5".to_string())
+            && models.contains(&"claude-sonnet-5-5".to_string())
+            && !models.contains(&"claude-opus-5-5".to_string()),
         "{models:?}"
     );
 
     let result = mcp.json("task_result", serde_json::json!({ "id": first }));
     assert!(result["answer"].as_str().unwrap().starts_with("Done. Here's what happened:"), "{result}");
     assert_eq!(result["files"][0]["path"], "demo.txt");
+    assert_eq!(result["model"], "claude-haiku-5-5", "a result says what did the work");
     let (log, _) = mcp.tool("task_log", serde_json::json!({ "id": first, "last": 2 }));
     assert!(log.starts_with("5 steps in all; the last 2:") && log.contains("edit ") && log.contains("-> ok"), "{log}");
     let (diff, failed) = mcp.tool("task_diff", serde_json::json!({ "id": first }));
@@ -180,7 +183,7 @@ fn an_mcp_server_answers_while_a_wait_is_under_way_and_keeps_to_its_owners_limit
     // The owner's budget covers every worker the server starts.
     let long = Env::with(&[("MOCK_ROUNDS", "40")]);
     let _git = repository(&long);
-    let mut mcp = McpClient::start(&long, &["-y", "--budget", "0.01"]);
+    let mut mcp = McpClient::start(&long, &["-y", "-m", "claude-opus-5-5", "--budget", "0.01"]);
     let ids: Vec<String> = (0..2)
         .map(|n| {
             mcp.json("start_task", serde_json::json!({ "prompt": format!("job {n}") }))["id"]

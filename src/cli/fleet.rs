@@ -20,6 +20,8 @@ and branch, and prints what each one did.
   --budget USD         stop them all once they have spent this much together
   --merge              merge each finished branch into this one, in order
   --json               print the results as JSON
+  -m MODEL             the model for every task (default: the worker model,
+                       claude-haiku-5-5 unless \"worker_model\" is set in the config)
   -y, --sandbox, -m MODEL, -e EFFORT, --max-cost USD, --no-worktree   as for task start";
 
 /// What `claudejr fleet` was asked for.

@@ -22,6 +22,8 @@ const TOO_LONG: &str = "the conversation no longer fits in the model's context. 
 pub struct Core {
     pub client: Client,
     pub model: Mutex<String>,
+    /// The model subagents use, if one is set.
+    pub worker_model: Option<String>,
     /// None: the model's own default.
     pub effort: Mutex<Option<String>>,
     pub auto_model: String,
@@ -60,13 +62,22 @@ struct Call {
 }
 
 impl Core {
+    /// The model subagents run on: the one set for workers, or the usual
+    /// choice beside the main model.
+    pub fn sub_model(&self) -> String {
+        match &self.worker_model {
+            Some(model) => model.clone(),
+            None => api::worker(&self.model.lock().unwrap()).to_string(),
+        }
+    }
+
     /// Runs requests and tools until the model stops. Returns the final event.
     /// Runs until the model has nothing more to do. `step` is called with
     /// the conversation after each round of tool calls, so it can be saved:
     /// a turn can run for a long time, and a crash shouldn't lose it.
     pub fn turn(&self, ctx: &Ctx, messages: &mut Vec<Msg>, step: &mut dyn FnMut(&mut [Msg])) -> Event {
         loop {
-            let model = self.model.lock().unwrap().clone();
+            let model = if ctx.main { self.model.lock().unwrap().clone() } else { self.sub_model() };
             let effort = self.effort.lock().unwrap().clone();
             let mut req = Request::new(&model, effort.as_deref(), ctx.system, ctx.defs);
             req.mcp_servers = self.connector.as_deref();

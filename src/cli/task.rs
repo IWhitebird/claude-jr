@@ -20,6 +20,7 @@ pub const USAGE: &str = "usage: claudejr task <command>
 
   start [options] PROMPT   start a task in the background; prints its id
         -y, --sandbox, -m MODEL, -e EFFORT, --max-cost USD   as for claudejr -p
+        (without -m it uses the worker model: claude-haiku-5-5 unless \"worker_model\" is set)
         --no-worktree        work in this folder, not in a worktree of its own
         --group NAME         put the task in a group that shares a budget
         --budget USD         the group's budget (with --group)
@@ -116,13 +117,14 @@ pub(super) fn table(tasks: &[Value]) -> String {
     if tasks.is_empty() {
         return "No tasks here. Start one with: claudejr task start \"...\"".into();
     }
-    let mut out = format!("{:<12} {:<10} {:>7}  {:<24} {}", "ID", "STATUS", "COST", "BRANCH", "TASK");
+    let mut out = format!("{:<12} {:<10} {:>7}  {:<17} {:<24} {}", "ID", "STATUS", "COST", "MODEL", "BRANCH", "TASK");
     for t in tasks {
         let cost = t["result"]["cost_usd"].as_f64().map_or(String::new(), |c| format!("${c:.2}"));
         let branch = t["result"]["worktree"]["branch"].as_str().unwrap_or("");
         let prompt = first_line(t["prompt"].as_str().unwrap_or(""), 50);
         let (id, status) = (t["id"].as_str().unwrap_or(""), t["status"].as_str().unwrap_or(""));
-        out += &format!("\n{id:<12} {status:<10} {cost:>7}  {branch:<24} {prompt}");
+        let model = t["model"].as_str().unwrap_or("");
+        out += &format!("\n{id:<12} {status:<10} {cost:>7}  {model:<17} {branch:<24} {prompt}");
     }
     out
 }

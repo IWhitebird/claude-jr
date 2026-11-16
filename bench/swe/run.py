@@ -108,6 +108,7 @@ def run_agent(task, out, args, env):
     cmd = ["docker", "run", "--rm", "--name", name, "--network", "host",
            "--cpus", str(args.cpus), "--memory", args.memory, "--memory-swap", args.memory, "--pids-limit", "1024",
            "-e", "ANTHROPIC_API_KEY", "-e", "ANTHROPIC_BASE_URL", "-e", "CLAUDE_JR_MODEL",
+           "-e", "CLAUDE_JR_WORKER_MODEL",
            "-e", "CLAUDE_JR_REPORT=/out/report.json", "-e", "XDG_DATA_HOME=/tmp/cj", "-e", "XDG_CONFIG_HOME=/tmp/cj",
            "-v", f"{BINARY}:/usr/local/bin/claudejr:ro", "-v", f"{os.path.abspath(out)}:/out",
            task["image"], "bash", "-c", script]
@@ -190,7 +191,8 @@ def main():
         i, n = map(int, args.shard.split("/"))
         ids = ids[i::n]
 
-    env = dict(os.environ, CLAUDE_JR_MODEL=args.model)
+    # Subagents on the same model: the score is that model's, not a mix.
+    env = dict(os.environ, CLAUDE_JR_MODEL=args.model, CLAUDE_JR_WORKER_MODEL=args.model)
     mock = None
     if args.dry_run:
         with socket.socket() as s:

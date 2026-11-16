@@ -28,6 +28,8 @@ pub const USAGE: &str =
 
 Serves claude-jr's background tasks to another agent over MCP (stdio).
 The options decide what every worker it starts may do and spend.
+Without -m, workers use the worker model: claude-haiku-5-5 unless
+\"worker_model\" is set in the config.
 Set it up for an agent with: claudejr install claude-code";
 
 /// The newest protocol version this server knows.
@@ -78,7 +80,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 /// Serves until standard input closes.
 pub fn run(options: Options) -> Result<(), String> {
     if crate::store::config::api_key().unwrap_or_default().is_empty()
-        && !options.start.pass.iter().any(|a| a == "-m" || a == "--model")
+        && task::worker_model(&options.start.pass).is_ok_and(|(_, direct)| direct)
     {
         // Said on stderr, which MCP clients show in their logs; the server
         // still starts, and a call says the same.
@@ -178,7 +180,8 @@ impl Server {
                     }
                 };
                 let id = task::start(&start)?;
-                Ok(json!({ "id": id, "status": "running" }).to_string())
+                let model = task::find(&id).map(|dir| task::state(&dir)["model"].clone()).unwrap_or_default();
+                Ok(json!({ "id": id, "status": "running", "model": model }).to_string())
             }
             "list_tasks" => Ok(json!(task::list(false).iter().map(brief).collect::<Vec<_>>()).to_string()),
             "wait_tasks" => {
@@ -220,6 +223,7 @@ fn brief(state: &Value) -> Value {
         "task": state["prompt"].as_str().unwrap_or("").lines().next().unwrap_or("").chars().take(80).collect::<String>(),
     });
     for (key, value) in [
+        ("model", &state["model"]),
         ("branch", &result["worktree"]["branch"]),
         ("files_changed", &json!(result["files"].as_array().map(Vec::len))),
         ("cost_usd", &result["cost_usd"]),
@@ -262,7 +266,7 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "prompt": { "type": "string", "description": "The whole task, self-contained" },
-                    "model": { "type": "string", "description": "Optional: a model for this task, e.g. a cheaper one for simple work" }
+                    "model": { "type": "string", "description": "Optional: a model for this task. Without it the worker model is used, a small cheap one by default (the reply says which); name a stronger one for hard work" }
                 },
                 "required": ["prompt"]
             }),

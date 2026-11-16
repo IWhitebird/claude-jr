@@ -2,6 +2,7 @@
 //
 // {
 //   "model": "claude-sonnet-5-5",
+//   "worker_model": "claude-haiku-5-5",
 //   "effort": "high",
 //   "allow": ["bash:cargo *", "bash:git status", "edit"],
 //   "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": ["/home/me/.m2"] },
@@ -20,6 +21,9 @@ pub struct Config {
     pub effort: Option<String>,
     /// The model auto mode uses to review commands (default: claude-haiku-5-5).
     pub auto_model: Option<String>,
+    /// The model subagents and background tasks use when none is named for
+    /// them (default: claude-haiku-5-5 beside a Claude model, else the model itself).
+    pub worker_model: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default)]
@@ -53,7 +57,22 @@ pub struct SandboxConfig {
     pub write: Vec<String>,
 }
 
+/// An environment variable that is set to something.
+fn env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
 impl Config {
+    /// The model to use when the command line names none.
+    pub fn main_model(&self) -> String {
+        env("CLAUDE_JR_MODEL").or_else(|| self.model.clone()).unwrap_or_else(|| "claude-opus-5-5".into())
+    }
+
+    /// The model set for workers, if one is: CLAUDE_JR_WORKER_MODEL, then the config.
+    pub fn worker_setting(&self) -> Option<String> {
+        env("CLAUDE_JR_WORKER_MODEL").or_else(|| self.worker_model.clone())
+    }
+
     pub fn load() -> Result<Config, String> {
         Config::load_in(&std::env::current_dir().unwrap_or_default())
     }
@@ -68,6 +87,7 @@ impl Config {
             cfg.model = file.model.or(cfg.model);
             cfg.effort = file.effort.or(cfg.effort);
             cfg.auto_model = file.auto_model.or(cfg.auto_model);
+            cfg.worker_model = file.worker_model.or(cfg.worker_model);
             cfg.web_tools = file.web_tools.or(cfg.web_tools);
             cfg.layout = file.layout.or(cfg.layout);
             cfg.mode = file.mode.or(cfg.mode);

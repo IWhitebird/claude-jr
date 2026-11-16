@@ -324,6 +324,22 @@ the repository, its work is committed when it finishes, and its report ends
 with the branch for the main agent to merge. A subagent can start subagents of
 its own, one level down and no further, and at most 16 run at once.
 
+**The worker model.** Work that is handed off (a task, a fleet's tasks, a
+task another agent starts over MCP, a subagent) is done by the worker model,
+not the one you talk to. Beside a Claude model that is `claude-haiku-5-5`,
+which does a well-described job at a fortieth of Opus's price; beside any
+other provider's model, or Claude through Bedrock or Vertex, it is that model
+itself.
+
+| To change it | |
+|---|---|
+| for one task | `claudejr task start -m claude-sonnet-5-5 "..."`, `claudejr fleet -m ...`, or `model` in an MCP `start_task` call |
+| for every worker | `"worker_model": "claude-sonnet-5-5"` in the config, or `CLAUDE_JR_WORKER_MODEL` |
+| for an agent's workers | `claudejr install claude-code -m claude-sonnet-5-5` |
+
+`task list`, a fleet's table and every task's result name the model that did
+the work.
+
 ## Working for another agent
 
 Another coding agent can hand work to claude-jr workers and stay the one you
@@ -347,7 +363,7 @@ when you install, with the server's options.
 | nothing, elsewhere | read only; the install says so |
 | `-y` | edit and run commands |
 | `-y --sandbox` | the same, confined to their worktree (Linux) |
-| `-m MODEL` | use that model (a call can still name another) |
+| `-m MODEL` | use that model, not the worker model (a call can still name another) |
 | `--budget USD` | spend that much between them, then stop |
 
 Any other MCP client can use it too: the command is `claudejr mcp` plus those
@@ -384,6 +400,7 @@ every command, background job and MCP server it started.
   "model": "claude-sonnet-5-5",
   "effort": "high",
   "auto_model": "claude-haiku-5-5",
+  "worker_model": "claude-haiku-5-5",
   "allow": ["bash:cargo *", "bash:git status", "edit"],
   "sandbox": { "enabled": true, "read": ["/opt/sdk"], "write": [] },
   "layout": "bottom",

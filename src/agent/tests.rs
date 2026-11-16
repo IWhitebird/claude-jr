@@ -139,6 +139,7 @@ pub(crate) fn config(url: Option<String>, mode: Mode) -> Config {
         key: "test".into(),
         base_url: url,
         model: "claude-opus-5-5".into(),
+        worker_model: None,
         effort: None,
         auto_model: "claude-haiku-5-5".into(),
         mode,
@@ -424,10 +425,36 @@ fn switching_model_rebuilds_tools_only_when_web_support_changes() {
     // Between two models with them: nothing to rebuild.
     rig.run(vec![Command::Model("claude-sonnet-5-5".into())]);
     assert!(has_web(&rig));
-    assert!(rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch"));
+    // Subagents run on Haiku beside a Claude model, so they never had them.
+    let sub_web = |rig: &Rig| rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch");
+    assert_eq!(rig.agent.core.sub_model(), "claude-haiku-5-5");
+    assert!(!sub_web(&rig));
     rig.run(vec![Command::Model("claude-haiku-5-5".into())]);
-    assert!(!has_web(&rig));
-    assert!(!rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch"));
+    assert!(!has_web(&rig) && !sub_web(&rig));
+}
+
+#[test]
+fn subagents_use_the_worker_model_and_the_tools_it_has() {
+    // One that is set is used whatever the main model is, with its own tools.
+    let mut cfg = config(None, Mode::Default);
+    (cfg.web, cfg.worker_model) = (true, Some("claude-sonnet-5-5".into()));
+    let mut rig = Rig::with("agent-worker-set", cfg);
+    let sub_web = |rig: &Rig| rig.agent.core.sub_defs.lock().unwrap().get().contains("web_fetch");
+    assert_eq!(rig.agent.core.sub_model(), "claude-sonnet-5-5");
+    assert!(sub_web(&rig), "sonnet has the web tools");
+    rig.run(vec![Command::Model("claude-haiku-5-5".into())]);
+    assert!(sub_web(&rig) && !rig.agent.defs.get().contains("web_search"), "each side by its own model");
+    assert_eq!(rig.agent.core.sub_model(), "claude-sonnet-5-5");
+
+    // With none set: Haiku beside a Claude model, the model itself beside any other.
+    let mut cfg = config(None, Mode::Default);
+    cfg.web = true;
+    let mut rig = Rig::with("agent-worker-default", cfg);
+    assert_eq!(rig.agent.core.sub_model(), "claude-haiku-5-5");
+    for other in ["ollama/qwen3", "bedrock/claude-opus-5-5", "vertex/claude-opus-5-5", "work/claude-like"] {
+        rig.run(vec![Command::Model(other.into())]);
+        assert_eq!(rig.agent.core.sub_model(), other);
+    }
 }
 
 #[test]

@@ -33,6 +33,8 @@ pub struct Config {
     pub key: String,
     pub base_url: Option<String>,
     pub model: String,
+    /// The model for subagents, if one is set (else see `api::worker`).
+    pub worker_model: Option<String>,
     pub effort: Option<String>,
     /// The model auto mode uses to review actions.
     pub auto_model: String,
@@ -253,6 +255,9 @@ impl Agent {
             emit(Event::Notice(e));
         }
         let web = cfg.web && crate::api::Caps::of(&cfg.model).web;
+        // Subagents may run on another model, with or without the web tools.
+        let sub = cfg.worker_model.clone().unwrap_or_else(|| crate::api::worker(&cfg.model).to_string());
+        let sub_web = cfg.web && crate::api::Caps::of(&sub).web;
         let root = std::env::current_dir().unwrap_or_else(|_| ".".into());
         let tools = Arc::new(Tools::new(root, skill::discover(), servers));
         let notify = emit.clone();
@@ -263,6 +268,7 @@ impl Agent {
         let core = Core {
             client: Client::new(cfg.key, cfg.base_url).with_providers(cfg.providers),
             model: Mutex::new(cfg.model),
+            worker_model: cfg.worker_model,
             effort: Mutex::new(cfg.effort),
             auto_model: cfg.auto_model,
             mode,
@@ -271,8 +277,8 @@ impl Agent {
             emit,
             interactive: cfg.interactive,
             connector: tools.mcp.connector(),
-            sub_defs: Mutex::new(tools.definitions(false, web, false, true)),
-            leaf_defs: Mutex::new(tools.definitions(false, web, false, false)),
+            sub_defs: Mutex::new(tools.definitions(false, sub_web, false, true)),
+            leaf_defs: Mutex::new(tools.definitions(false, sub_web, false, false)),
             sub_system: OnceLock::new(),
             request: Mutex::default(),
         };
@@ -400,14 +406,19 @@ impl Agent {
     /// tools, the tool list is rebuilt to match (the API rejects tools a model
     /// doesn't have); the prompt cache starts over either way, since it's per model.
     fn set_model(&mut self, model: String) {
-        let had = crate::api::Caps::of(&self.core.model.lock().unwrap()).web;
-        let has = crate::api::Caps::of(&model).web;
+        let web = |core: &Core| {
+            // One lock at a time: sub_model takes the model's lock too.
+            let main = crate::api::Caps::of(&core.model.lock().unwrap()).web;
+            (main, crate::api::Caps::of(&core.sub_model()).web)
+        };
+        let had = web(&self.core);
         *self.core.model.lock().unwrap() = model;
+        let has = web(&self.core);
         if had != has {
-            let web = has && self.web;
-            self.defs = self.tools.definitions(true, web, self.core.interactive, true);
-            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, web, false, true);
-            *self.core.leaf_defs.lock().unwrap() = self.tools.definitions(false, web, false, false);
+            let (main, sub) = (has.0 && self.web, has.1 && self.web);
+            self.defs = self.tools.definitions(true, main, self.core.interactive, true);
+            *self.core.sub_defs.lock().unwrap() = self.tools.definitions(false, sub, false, true);
+            *self.core.leaf_defs.lock().unwrap() = self.tools.definitions(false, sub, false, false);
         }
     }
 

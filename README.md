@@ -52,10 +52,10 @@ the newest release.
 - **Light.** 0.7 MB of memory when idle, and under 4 MB however long the session gets, because the conversation lives on disk instead of in memory. A whole session, commands included, fits in a 16 MB container on a twentieth of a CPU core.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
 - **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
-- **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
+- **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, so handing work off costs less than doing it. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
 - **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU. Claude through Amazon Bedrock or Google Vertex AI with `-m bedrock/...` and `-m vertex/...` (in the next release; not yet tested against the real services).
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 392 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
+- **Tested.** 397 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 
