@@ -363,7 +363,7 @@ out exactly, so `cargo *` can't approve `cargo test; rm -rf ~`.
 
 ## How it works
 
-The full picture, with diagrams, is in [ARCHITECTURE.md](../ARCHITECTURE.md).
+The full picture, with diagrams, is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
  key reader ─┐

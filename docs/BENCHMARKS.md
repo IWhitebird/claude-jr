@@ -26,10 +26,10 @@ startup, with a 306 MB binary.
 
 The release binary is built by [`build.sh`](../build.sh): optimised for size, with Rust's standard
 library rebuilt the same way. On Linux, whenever claude-jr goes quiet it hands the pages of its own
-program file back to the kernel ([`src/mem.rs`](../src/mem.rs)), which is why it idles in less
+program file back to the kernel ([`src/sys/mem.rs`](../src/sys/mem.rs)), which is why it idles in less
 memory than its own size; they come back from the page cache as they're needed. The conversation
 is kept in the session file rather than in memory: each request reads the saved messages straight
-from it ([`src/session.rs`](../src/session.rs)), so a long session needs no more memory than a short one.
+from it ([`src/store/session.rs`](../src/store/session.rs)), so a long session needs no more memory than a short one.
 
 More of claude-jr's own numbers (`bench/`):
 

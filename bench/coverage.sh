@@ -3,7 +3,7 @@
 # binary, and it is instrumented too, so they count.
 #
 #   bench/coverage.sh            # the table
-#   bench/coverage.sh src/api.rs # the lines of one file that no test reaches
+#   bench/coverage.sh src/api/mod.rs # the lines of one file that no test reaches
 #
 # Needs: rustup component add llvm-tools
 set -euo pipefail

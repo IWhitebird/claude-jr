@@ -4,10 +4,15 @@ A minimal Rust terminal coding agent. Targets: idle <= 8 MB RAM, peak <= 16 MB,
 binary <= 4 MB. No async runtime; threads plus mpsc channels.
 
 ## Layout
+- `src/cli`: the command line, one file per thing you can type
+- `src/ui`: the interactive terminal
 - `src/agent`: the agent loop
 - `src/tools`: tool implementations
-- `src/ui`: terminal UI and input handling
-- `src/api.rs`: API client
+- `src/api`: talking to models (the client, each wire format, providers)
+- `src/work`: background tasks, worktrees, budgets, the run log
+- `src/store`: sessions, images and config on disk
+- `src/sys`: sandbox, memory trim, signals (what differs per OS)
+- `tests/cli`, `tests/ui`: the real binary against the fake API and in a pseudo-terminal
 - `bench/`: resource benchmarks (memory, CPU, idle, pty UI tests) and a fake API
 - `bench/evals/`: coding evals (run.py; --dry-run uses the fake API in bench/mock.py)
 
@@ -25,3 +30,5 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 - Conversation history is append-only (it keeps the prompt cache valid).
 - Commits have no co-author trailers.
 - Stage files by path.
+- Files stay under about 500 lines of code; each opens with a comment saying
+  what it is. The full map is in docs/ARCHITECTURE.md.
