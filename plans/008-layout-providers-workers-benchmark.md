@@ -173,36 +173,39 @@ conflict. Nothing else starts until phase 1 has landed.
 ## Phase 2: Bedrock and Vertex
 
 Both sell the same Claude models as Anthropic's API, with the same message
-format, behind their own address, login and (for Bedrock) stream framing. So
-each is a thin layer in `api/`, and the conversation, tools and everything
-above the client stay untouched.
+format and the same event stream, behind their own address and login. So each
+is a thin layer in `api/`, and the conversation, tools and everything above
+the client stay untouched.
 
-Step 2.0 comes first for both: read the current official documentation for
-the exact paths, version strings, model id forms and which request fields
-each accepts. What follows is my understanding and has to be confirmed there
-before any code is written.
+Step 2.0 is done: the tables below are what Anthropic's documentation said on
+2026-11-17 ("Claude in Amazon Bedrock", "Claude Models on Google Cloud
+(Google managed)", "Beta headers"). The first draft of this plan had Bedrock
+wrong: it described the older `bedrock-runtime` address, which wraps the
+stream in AWS's binary frames. The current one (`bedrock-mantle`) is the
+plain Messages API, so no frame reader is needed.
 
 ### Bedrock
 
 | | |
 |---|---|
-| Used as | `claudejr -m bedrock/MODEL_ID` |
+| Used as | `claudejr -m bedrock/claude-opus-5-5` (sent as `anthropic.claude-opus-5-5`; an id that already has the prefix is sent as it is) |
+| Address | `https://bedrock-mantle.REGION.api.aws/anthropic/v1/messages` |
 | Region | `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
-| Login, simplest | a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, sent as a bearer token |
-| Login, standard | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and optionally `AWS_SESSION_TOKEN`, signing each request (AWS Signature V4) |
-| Request | Anthropic's format with a Bedrock version field, and the model in the address instead of the body |
-| Reply | AWS's binary event framing, each frame holding one of Anthropic's stream events, base64-encoded |
+| Login, simplest | a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, sent in `x-api-key`; it wins when both are set |
+| Login, standard | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and optionally `AWS_SESSION_TOKEN`, signing each request (AWS Signature V4, service `bedrock-mantle`) |
+| Request | Anthropic's, unchanged, with the `anthropic-version` and `anthropic-beta` headers |
+| Reply | Anthropic's ordinary event stream |
+| Left out | the refusal fallback, web search and fetch, remote MCP servers: Bedrock has none of them |
+| Not served | Fable 5.2 (Bedrock has it only at the older address, which this version does not speak) |
 
 Work:
 
-- **Signing.** About 150 lines using the SHA-256 and HMAC already in the
+- **Signing.** About 100 lines using the SHA-256 and HMAC already in the
   binary (`ring`, which the TLS library brings in; it becomes a direct
   dependency, not a new one). The signature covers the body's hash, and the
   body is streamed from disk, so the hash is computed in a first pass over
   the same parts. That is one extra read of the history per request; its CPU
-  cost is measured against the budget.
-- **Frame reader.** About 120 lines: length-prefixed frames, headers skipped,
-  the payload decoded and fed to the existing Anthropic reply parser.
+  cost is measured against the budget. A Bedrock API key needs none of this.
 - **Not in this version:** reading `~/.aws` profiles, SSO, or instance roles.
   The error for missing credentials says how to export them into the
   environment.
@@ -211,12 +214,15 @@ Work:
 
 | | |
 |---|---|
-| Used as | `claudejr -m vertex/MODEL` |
+| Used as | `claudejr -m vertex/claude-opus-5-5` (older models with their date: `vertex/claude-haiku-4-5@20251001`) |
+| Address | `https://HOST/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models/MODEL:streamRawPredict` |
+| Host | `aiplatform.googleapis.com` for `global`; `aiplatform.us.rep.googleapis.com` for `us` and `eu`; `REGION-aiplatform.googleapis.com` for a single region |
 | Project | `ANTHROPIC_VERTEX_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT` |
 | Region | `CLOUD_ML_REGION`, else `global` |
-| Login | `VERTEX_ACCESS_TOKEN` if set; otherwise the output of `gcloud auth print-access-token`, kept until shortly before it expires |
-| Request | Anthropic's format with a Vertex version field, and the model in the address |
+| Login | `VERTEX_ACCESS_TOKEN` if set; otherwise the output of `gcloud auth print-access-token`, kept for 45 minutes; sent as a bearer token |
+| Request | Anthropic's, with `anthropic_version` in the body, no `model` in the body, and the `anthropic-beta` header |
 | Reply | Anthropic's ordinary event stream |
+| Left out | the refusal fallback, web fetch, remote MCP servers (Vertex has none of them) and web search (Vertex has only the older version of it) |
 
 Work: about 100 lines, mostly building the address and getting the token.
 Service-account key files (which need a signed token) are left for later.
@@ -247,7 +253,7 @@ Service-account key files (which need a signed token) are left for later.
 
 ### Expected cost
 
-Binary about +50 KB for Bedrock and +15 KB for Vertex. Idle memory and idle
+Binary about +20 KB for Bedrock (no frame reader after all) and +15 KB for Vertex. Idle memory and idle
 CPU unchanged: none of this code runs or is loaded while waiting.
 
 ## Phase 3: workers that are cheap by default
@@ -295,7 +301,7 @@ No effect on size, memory or CPU.
 | 1 | Phase 1, steps 1.1 to 1.8, one commit each | the suite green and pushed after every step; the binary within a few hundred bytes of 2,013,920 |
 | 2 | Step 2.0: read the current Bedrock and Vertex documentation | the two tables in phase 2 corrected where they are wrong |
 | 3 | Vertex (the smaller one, and it exercises the new `api/` layout first) | tests, budgets measured |
-| 4 | Bedrock: frame reader, then bearer-token login, then signing | tests including AWS's signing vectors, budgets measured, CPU reported |
+| 4 | Bedrock: API-key login, then signing | tests including AWS's signing vectors, budgets measured, CPU reported |
 | 5 | Phase 3: the worker model | tests, guide |
 | 6 | Phase 4: SWE-bench overnight, then the worker benchmark | the full-set figure and the comparison table published |
 | 7 | Stop and report; release 0.3.0 when asked | |
