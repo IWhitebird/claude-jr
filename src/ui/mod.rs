@@ -1190,7 +1190,7 @@ impl App {
                 let report = stats::report(self.started.elapsed(), &children);
                 self.note(&report, "");
             }
-            "update" => match crate::update::run() {
+            "update" => match crate::cli::update::run() {
                 Ok(msg) => self.note(&msg, ""),
                 Err(e) => self.note(&format!("Update failed: {e}"), RED),
             },

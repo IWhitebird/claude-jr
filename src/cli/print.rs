@@ -5,7 +5,7 @@
 // With --output-format json, stdout gets one JSON object at the end instead:
 // the same totals plus `result` (the final answer), `error` and the files
 // that changed. With --output-format stream-json, stdout gets the run log as
-// it happens (see log.rs), ending with that same object. --log FILE writes
+// it happens (see work/log.rs), ending with that same object. --log FILE writes
 // the run log to a file, whatever stdout shows.
 // With --max-cost, the run stops once it has spent that many dollars.
 

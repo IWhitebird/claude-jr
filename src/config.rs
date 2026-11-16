@@ -34,7 +34,7 @@ pub struct Config {
     /// MCP servers, in the same shape as .mcp.json's "mcpServers".
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, ServerConfig>,
-    /// Other places to ask models (see provider.rs).
+    /// Other places to ask models (see api/provider.rs).
     #[serde(default)]
     pub providers: crate::api::provider::Providers,
 }

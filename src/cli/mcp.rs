@@ -1,7 +1,7 @@
 // `claudejr mcp`: claude-jr as an MCP server, so that another agent (Claude
 // Code, Cursor, Codex, anything that speaks MCP) can hand work to claude-jr
 // workers and collect it. The other agent stays the one the user talks to;
-// each worker is a background task (see task.rs) of about half a megabyte,
+// each worker is a background task (see work/task.rs) of about half a megabyte,
 // in its own git worktree and branch.
 //
 // It speaks JSON-RPC 2.0 over standard input and output, a message a line.

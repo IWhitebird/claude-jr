@@ -4,7 +4,7 @@
 // through approval.
 //
 // One that is given a worktree works in its own copy of the repository, on
-// its own branch (see worktree.rs), so subagents changing files at the same
+// its own branch (see work/worktree.rs), so subagents changing files at the same
 // time can't collide. Its work is committed when it finishes and its reply
 // ends with the branch for the agent that started it to merge.
 //

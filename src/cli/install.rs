@@ -1,5 +1,5 @@
 // `claudejr install AGENT`: sets claude-jr up as a helper for another coding
-// agent, so that agent can hand work to claude-jr workers (see serve.rs).
+// agent, so that agent can hand work to claude-jr workers (see mcp.rs).
 // It registers the MCP server with the agent and, where the agent has such a
 // thing, adds a short skill or rule saying when to use it.
 //
@@ -116,7 +116,7 @@ fn parse(args: &[String]) -> Result<Request, String> {
     }
     let agent = agent.ok_or(USAGE)?;
     // The options are checked the way the server will read them.
-    crate::serve::parse(&options)?;
+    crate::cli::mcp::parse(&options)?;
     Ok(Request { agent, user: user || agent == Agent::Codex, options })
 }
 
