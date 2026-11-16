@@ -11,7 +11,7 @@
 # Progress: bench/results/tonight.log. bench/swe/stop.sh pauses it; running
 # this again continues where it stopped.
 #   MODEL (claude-opus-5-5)  TASKS (500)  CAP dollars for everything (160)
-#   JOBS at once (3)  MEMORY per container (3g)
+#   JOBS at once (3)  MEMORY per container (3g)  ENV_FILE (.env)
 cd "$(dirname "$0")/../.." || exit 1
 model=${MODEL:-claude-opus-5-5}
 tasks=${TASKS:-500}
@@ -21,8 +21,10 @@ memory=${MEMORY:-3g}
 py=$HOME/.cache/claude-jr-evals/swe-venv/bin/python
 res=bench/results
 log=$res/tonight.log
+# A key in .env, if there is one; else the one claude-jr itself has from
+# /login. ENV_FILE=/dev/null skips .env (for when the key in it is an old one).
 set -a
-[ -f .env ] && . ./.env
+[ -f "${ENV_FILE-.env}" ] && . "./${ENV_FILE-.env}"
 set +a
 mkdir -p "$res"
 rm -f $res/swe-finished
