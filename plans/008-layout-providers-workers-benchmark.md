@@ -1,6 +1,7 @@
 # 008: A readable layout, Bedrock and Vertex, cheap workers, the full SWE-bench
 
-Written 2026-11-17 against commit `f46b642` (0.2.0). Nothing here is started.
+Written 2026-11-17 against commit `f46b642` (0.2.0). Decisions settled with
+the user the same day (see the end). Nothing here is started.
 
 ## What this is for
 
@@ -15,6 +16,10 @@ four things on top of it, in this order:
 Launch material (a recording, the posts, the link-preview image) follows once
 3 and 4 have produced the numbers; it is listed at the end and not planned in
 detail here. Native Windows is on hold.
+
+Every commit is pushed as it lands, provided the full suite passes first.
+A release is cut only when the user asks for one; the natural point is after
+phase 4, as 0.3.0.
 
 ## Budgets: what must not get worse
 
@@ -230,9 +235,15 @@ Service-account key files (which need a signed token) are left for later.
 
 - The new tests pass and the budgets hold, with CPU for a 200-call session
   through Bedrock measured and reported beside Anthropic's.
-- **Tested against the real services, or labelled as not.** This needs an AWS
-  account and a Google Cloud project with Claude enabled. Without them both
-  ship marked "untested against the real service" in the guide.
+- Both are marked in the guide, the README and `--help` as **not yet tested
+  against the real service**: there is no AWS account or Google Cloud project
+  to test with for now. What stands in for that:
+  - the fake API checks every request the way the real services document it,
+    including that a Bedrock signature is right for its body;
+  - the signing code is checked against AWS's published test vectors;
+  - `bench/provider.sh bedrock/...` and `vertex/...` are ready, so the real
+    test is one command for whoever has an account.
+- The label comes off only after a real run of `bench/provider.sh` passes.
 
 ### Expected cost
 
@@ -277,12 +288,27 @@ No effect on size, memory or CPU.
 - Cursor and Codex checked against the real programs.
 - Native Windows, when users ask.
 
-## Decisions needed before starting
+## Order of work
 
-| # | Question | My suggestion |
+| # | Step | Ends with |
 |---|---|---|
-| 1 | Phase 1 first, before any feature work? | Yes: Bedrock and Vertex then land in `api/` cleanly |
-| 2 | Is Haiku the right default for workers? | Yes; Sonnet is the alternative if quality matters more than cost |
-| 3 | Can you provide an AWS account and a Google Cloud project with Claude enabled, for testing? | If not, both ship labelled untested |
-| 4 | Spend about $20 on SWE-bench and $5 to $15 on the worker benchmark? | Yes to both; they are the launch's evidence |
-| 5 | Release phase 1 on its own (0.2.1) or with the rest (0.3.0)? | With the rest: phase 1 changes nothing a user can see |
+| 1 | Phase 1, steps 1.1 to 1.8, one commit each | the suite green and pushed after every step; the binary within a few hundred bytes of 2,013,920 |
+| 2 | Step 2.0: read the current Bedrock and Vertex documentation | the two tables in phase 2 corrected where they are wrong |
+| 3 | Vertex (the smaller one, and it exercises the new `api/` layout first) | tests, budgets measured |
+| 4 | Bedrock: frame reader, then bearer-token login, then signing | tests including AWS's signing vectors, budgets measured, CPU reported |
+| 5 | Phase 3: the worker model | tests, guide |
+| 6 | Phase 4: SWE-bench overnight, then the worker benchmark | the full-set figure and the comparison table published |
+| 7 | Stop and report; release 0.3.0 when asked | |
+
+After each numbered step: the budgets table re-measured and reported, with
+anything that moved.
+
+## Decided (2026-11-17)
+
+| Question | Decision |
+|---|---|
+| Reorganise before any feature work? | Yes |
+| The default model for workers | `claude-haiku-5-5` |
+| Accounts to test Bedrock and Vertex against the real services | None for now; both ship labelled untested, to be tested later |
+| Spend about $20 on SWE-bench and $5 to $15 on the worker benchmark | Yes |
+| Releases | Work is pushed continuously; a release when asked |
