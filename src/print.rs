@@ -10,8 +10,8 @@
 // With --max-cost, the run stops once it has spent that many dollars.
 
 use crate::agent::{self, Command, Event};
-use crate::log::Log;
-use crate::worktree::Worktree;
+use crate::work::log::Log;
+use crate::work::worktree::Worktree;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -57,7 +57,7 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
     let agent = agent::spawn(cfg, move |e| {
         let _ = tx.send(e);
     });
-    if std::env::var_os(crate::task::ENV).is_some() {
+    if std::env::var_os(crate::work::task::ENV).is_some() {
         // A task that is cancelled winds down like any other run, so what it
         // did is still committed and its result still written.
         for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT, signal_hook::consts::SIGHUP] {
@@ -128,12 +128,12 @@ fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
     fields["files"] = log.files();
     if let Some(worktree) = &options.worktree {
         let left = worktree.finish(Some(prompt));
-        eprintln!("{}", crate::worktree::summary(&left));
+        eprintln!("{}", crate::work::worktree::summary(&left));
         fields["worktree"] = left;
     }
     log.finish(&fields);
-    if let Some(dir) = std::env::var_os(crate::task::ENV) {
-        let _ = crate::task::write_json(&std::path::Path::new(&dir).join("result.json"), &fields);
+    if let Some(dir) = std::env::var_os(crate::work::task::ENV) {
+        let _ = crate::work::task::write_json(&std::path::Path::new(&dir).join("result.json"), &fields);
     }
     if options.format == Format::Json {
         println!("{fields}");
@@ -225,8 +225,8 @@ fn print_events(
                 report.cache_write_tokens += usage.cache_creation_input_tokens;
                 report.cost_usd += cost.unwrap_or(0.0);
                 // A group's budget is spent by all its workers together.
-                let group = std::env::var_os(crate::task::BUDGET_ENV)
-                    .and_then(|file| crate::task::spend(std::path::Path::new(&file), cost.unwrap_or(0.0)))
+                let group = std::env::var_os(crate::work::budget::ENV)
+                    .and_then(|file| crate::work::budget::spend(std::path::Path::new(&file), cost.unwrap_or(0.0)))
                     .filter(|(spent, budget)| spent >= budget && report.error.is_none());
                 if let Some((spent, budget)) = group {
                     let msg = format!("stopped: the group's budget of ${budget:.2} is used up (${spent:.2} spent)");

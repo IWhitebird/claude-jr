@@ -98,7 +98,7 @@ pub fn is_trusted() -> bool {
 
 /// A worktree made by --worktree is as trusted as the folder it is a copy of.
 fn origin(dir: &Path) -> PathBuf {
-    match crate::worktree::Worktree::current() {
+    match crate::work::worktree::Worktree::current() {
         Some(w) => dir.strip_prefix(&w.path).map_or_else(|_| dir.to_path_buf(), |rest| w.repo.join(rest)),
         None => dir.to_path_buf(),
     }

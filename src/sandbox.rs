@@ -130,7 +130,7 @@ pub fn exec(cfg: &SandboxConfig) -> String {
     // that vanishes at the end, so none can be created either.
     protect_git(&mut cmd, &cwd.join(".git"));
     // A worktree's commits are stored in the repository it belongs to.
-    if let Some(worktree) = crate::worktree::Worktree::current() {
+    if let Some(worktree) = crate::work::worktree::Worktree::current() {
         let git = worktree.git_dir();
         cmd.arg("--bind").arg(&git).arg(&git);
         protect_git(&mut cmd, &git);

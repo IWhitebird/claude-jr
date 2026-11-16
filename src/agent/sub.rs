@@ -16,7 +16,7 @@ use super::Event;
 use super::turn::{Core, Ctx};
 use crate::session::Msg;
 use crate::tools::Output;
-use crate::worktree::Worktree;
+use crate::work::worktree::Worktree;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -69,7 +69,7 @@ impl Core {
         // folder that can't have one is said straight away.
         let worktree = match input["worktree"].as_bool() {
             Some(true) => {
-                let made = Worktree::make(ctx.tools.root(), &crate::worktree::new_id());
+                let made = Worktree::make(ctx.tools.root(), &crate::work::worktree::new_id());
                 Some(made.map_err(|e| format!("{e}. Start the subagent without worktree, or commit first."))?)
             }
             _ => None,

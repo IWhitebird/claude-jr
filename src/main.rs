@@ -1,9 +1,9 @@
 mod agent;
 mod api;
+mod cli;
 mod config;
 mod images;
 mod install;
-mod log;
 mod mem;
 mod permission;
 mod print;
@@ -12,17 +12,16 @@ mod sandbox;
 mod serve;
 mod session;
 mod signals;
-mod task;
 mod tools;
 mod ui;
 mod update;
-mod worktree;
+mod work;
 
 use agent::Mode;
 use session::{Pick, Session};
 use std::io::IsTerminal;
 use std::process::ExitCode;
-use worktree::Worktree;
+use work::worktree::{self, Worktree};
 
 const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
@@ -178,7 +177,7 @@ fn run() -> Result<ExitCode, String> {
         Cli::Task(args) | Cli::Fleet(args) if args.iter().any(|a| a == "--help" || a == "-h") => {
             println!(
                 "{}",
-                if std::env::args().nth(1).as_deref() == Some("fleet") { task::FLEET_USAGE } else { task::USAGE }
+                if std::env::args().nth(1).as_deref() == Some("fleet") { cli::fleet::USAGE } else { cli::task::USAGE }
             );
             return Ok(ExitCode::SUCCESS);
         }
@@ -199,12 +198,12 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         Cli::Fleet(args) => {
-            let (text, ok) = task::fleet(&args)?;
+            let (text, ok) = cli::fleet::run(&args)?;
             println!("{text}");
             return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });
         }
         Cli::Task(args) => {
-            let (text, ok) = task::cli(&args)?;
+            let (text, ok) = cli::task::run(&args)?;
             if !text.is_empty() {
                 println!("{text}");
             }

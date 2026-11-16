@@ -17,7 +17,7 @@
 //
 // Tasks are started from the folder the server runs in.
 
-use crate::task::{self, Start};
+use crate::work::task::{self, Start};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
@@ -66,7 +66,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
                 let v = value()?;
                 let usd = v.trim_start_matches('$').parse::<f64>().ok().filter(|usd| *usd > 0.0);
                 start.budget = Some(usd.ok_or_else(|| format!("--budget needs an amount in dollars, got {v}"))?);
-                start.group = Some(format!("mcp-{}", crate::worktree::new_id()));
+                start.group = Some(format!("mcp-{}", crate::work::worktree::new_id()));
             }
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown option for mcp: {other}\n\n{USAGE}")),
