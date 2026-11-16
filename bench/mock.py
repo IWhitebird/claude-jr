@@ -10,7 +10,7 @@
 #
 #   python3 bench/mock.py PORT      (0: any free port; the port is printed)
 
-import json, os, re, sys, time
+import calendar, hashlib, hmac, json, os, re, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
@@ -211,6 +211,98 @@ def invalid(body):
     return None
 
 
+# ---- the same service behind a cloud's door ----------------------------
+# Amazon Bedrock (POST /anthropic/v1/messages) and Google's Vertex AI (POST
+# /v1/projects/P/locations/R/publishers/anthropic/models/M:streamRawPredict)
+# take the Messages request with a few differences, checked here the way
+# each documents them. A signed Bedrock request has its signature worked out
+# again from the bytes that arrived (the secret is MOCK_AWS_SECRET).
+
+AWS_SECRET = os.environ.get("MOCK_AWS_SECRET", "mock-secret")
+VERTEX_PATH = re.compile(r"^/v1/projects/[^/]+/locations/[^/]+/publishers/anthropic/models/[^/:]+:(stream)?[rR]awPredict$")
+
+
+def cloud_lacks(body):
+    """What neither cloud offers, if the request asks for it."""
+    for field in ("fallbacks", "mcp_servers"):
+        if field in body:
+            return f"{field}: Extra inputs are not permitted"
+    for t in body.get("tools") or []:
+        kind = str(t.get("type", ""))
+        if kind.startswith(("web_fetch", "web_search_2026", "code_execution")):
+            return f"tools: {kind} is not available on this platform"
+    return None
+
+
+def vertex_refuses(headers, path, body):
+    """(status, why) if Vertex would refuse this, else None."""
+    token = headers.get("authorization", "")
+    if not token.startswith("Bearer ") or not token[7:].strip() or token[7:] == os.environ.get("MOCK_BAD_TOKEN"):
+        return 401, "Request had invalid authentication credentials. Expected OAuth 2 access token."
+    if not VERTEX_PATH.match(path):
+        return 404, f"The requested URL {path} was not found on this server."
+    if "model" in body:
+        return 400, "model: Extra inputs are not permitted (the address names the model)"
+    if body.get("anthropic_version") not in ("vertex-2023-10-16", "2026-10-21"):
+        return 400, "anthropic_version: Field required"
+    if path.endswith(":streamRawPredict") != (body.get("stream") is True):
+        return 400, "stream: must be true for streamRawPredict and only there"
+    why = cloud_lacks(body)
+    return (400, why) if why else None
+
+
+def aws_signature(secret, method, host, path, headers, signed, amz_date, scope, raw):
+    def mac(key, text):
+        return hmac.new(key, text.encode(), hashlib.sha256).digest()
+    canonical = "\n".join([method, path, "", "".join(f"{h}:{headers[h].strip()}\n" for h in signed),
+                           ";".join(signed), hashlib.sha256(raw).hexdigest()])
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    date, region, service, _ = scope.split("/")
+    key = mac(("AWS4" + secret).encode(), date)
+    for part in (region, service, "aws4_request"):
+        key = mac(key, part)
+    return hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+
+
+def bedrock_refuses(headers, path, raw, body):
+    """(status, why) if Bedrock would refuse this, else None."""
+    auth = headers.get("authorization", "")
+    if auth.startswith("AWS4-HMAC-SHA256 "):
+        try:
+            parts = dict(p.strip().split("=", 1) for p in auth[len("AWS4-HMAC-SHA256 "):].split(","))
+            key_id, scope = parts["Credential"].split("/", 1)
+            signed = parts["SignedHeaders"].split(";")
+            amz_date = headers["x-amz-date"]
+            sent_at = calendar.timegm(time.strptime(amz_date, "%Y%m%dT%H%M%SZ"))
+        except (KeyError, ValueError):
+            return 403, "Authorization header is malformed"
+        if scope.split("/")[2:] != ["bedrock-mantle", "aws4_request"] or scope.split("/")[0] != amz_date[:8]:
+            return 403, f"Credential should be scoped to a valid region and to the service bedrock-mantle: {scope}"
+        if "host" not in signed or "x-amz-date" not in signed or signed != sorted(signed):
+            return 403, "'host' and 'x-amz-date' must be signed headers, in order"
+        if "x-amz-security-token" in headers and "x-amz-security-token" not in signed:
+            return 403, "x-amz-security-token must be a signed header"
+        if abs(time.time() - sent_at) > 300:
+            return 403, "Signature expired"
+        low = {k.lower(): v for k, v in headers.items()}
+        want = aws_signature(AWS_SECRET, "POST", low["host"], path, low, signed, amz_date, scope, raw)
+        if not hmac.compare_digest(want, parts["Signature"]):
+            return 403, "The request signature we calculated does not match the signature you provided."
+    elif not headers.get("x-api-key", "").strip():
+        return 403, "Missing Authentication Token"
+    if path != "/anthropic/v1/messages":
+        return 404, f"no such path: {path}"
+    model = str(body.get("model", ""))
+    if "anthropic." not in model:
+        return 400, f"model: {model!r} is not a Bedrock model id (they start with anthropic.)"
+    if model.endswith(("fable-5-2", "mythos-5-2")):
+        return 404, f"model: {model} is not served at this endpoint"
+    if "anthropic_version" in body:
+        return 400, "anthropic_version: Extra inputs are not permitted"
+    why = cloud_lacks(body)
+    return (400, why) if why else None
+
+
 # ---- the same service in the Chat Completions format --------------------
 # A request in that format is turned into the Messages format, answered by
 # the scenarios above, and the answer turned back. What the real services
@@ -349,19 +441,28 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(json.dumps(body) + "\n")
             with open(LOG + ".headers", "a") as f:
                 f.write(json.dumps(dict({k.lower(): v for k, v in self.headers.items()}, path=self.path)) + "\n")
-        chat = self.path.split("?")[0].endswith("/chat/completions")
-        why = None
+        path = self.path.split("?")[0]
+        chat = path.endswith("/chat/completions")
+        why, status = None, 400
         if chat:
             body, why = from_chat(body)
+        elif path.endswith("awPredict"):
+            status, why = vertex_refuses(self.headers, path, body) or (400, None)
         elif self.headers.get("anthropic-version") is None:
             why = "anthropic-version: header is required"
+        elif path.startswith("/anthropic/"):
+            status, why = bedrock_refuses(self.headers, path, raw, body) or (400, None)
         why = why or invalid(body)
         if why:
-            out = json.dumps({"type": "error", "error": {"type": "invalid_request_error", "message": why}}).encode()
+            # Each in its own shape: Anthropic's, Google's, AWS's.
+            shaped = ({"error": {"code": status, "message": why, "status": "INVALID"}} if path.endswith("awPredict")
+                      else {"message": why} if status == 403
+                      else {"type": "error", "error": {"type": "invalid_request_error", "message": why}})
+            out = json.dumps(shaped).encode()
             if LOG:
                 with open(LOG + ".invalid", "a") as f:
                     f.write(why + "\n")
-            self.send_response(400)
+            self.send_response(status)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(out)))
             self.end_headers()

@@ -385,8 +385,9 @@ impl App {
                 let items: Vec<String> = crate::api::CATALOGUE
                     .iter()
                     .map(|(m, what)| {
-                        let here = if *m == self.model { "  (current)" } else { "" };
-                        format!("{m}{here} · {} · {what}", crate::api::describe(m))
+                        let m = crate::api::cloud::same_door(&self.model, m);
+                        let here = if m == self.model { "  (current)" } else { "" };
+                        format!("{m}{here} · {} · {what}", crate::api::describe(&m))
                     })
                     .collect();
                 let hint = "price per million tokens in/out · press a number · /model <id> for others · esc to cancel";

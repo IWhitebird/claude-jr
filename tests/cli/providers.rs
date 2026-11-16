@@ -3,10 +3,6 @@
 
 use super::common::*;
 
-fn headers(e: &Env) -> Vec<serde_json::Value> {
-    json_lines(&std::fs::read_to_string(e.root.join("requests.jsonl.headers")).unwrap_or_default())
-}
-
 #[test]
 fn a_whole_run_with_tools_through_chat_completions() {
     let e = Env::new();

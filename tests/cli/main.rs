@@ -7,6 +7,7 @@
 mod common;
 
 mod args;
+mod clouds;
 mod features;
 mod fleet;
 mod install;

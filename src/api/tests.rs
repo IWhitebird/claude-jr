@@ -416,7 +416,7 @@ fn reading_resumes_after_read_timeouts() {
 use std::sync::{Arc, Mutex};
 
 /// What the scripted server saw: the head of each request, lower-cased.
-type Heads = Arc<Mutex<Vec<String>>>;
+pub(super) type Heads = Arc<Mutex<Vec<String>>>;
 
 /// Reads one whole request, body included. A test server that answers
 /// and closes with part of the request unread resets the connection.
@@ -446,7 +446,7 @@ fn read_request(s: &mut std::net::TcpStream) {
 
 /// A server that answers request n with `responses[n]` (status, extra
 /// header lines, body) and records each request's head.
-fn scripted(responses: Vec<(u16, &'static str, String)>) -> (String, Heads) {
+pub(super) fn scripted(responses: Vec<(u16, &'static str, String)>) -> (String, Heads) {
     use std::io::{Read, Write};
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
@@ -486,7 +486,7 @@ fn scripted(responses: Vec<(u16, &'static str, String)>) -> (String, Heads) {
     (base, heads)
 }
 
-fn hello_sse() -> String {
+pub(super) fn hello_sse() -> String {
     let events = [
         r#"{"type":"message_start","message":{"usage":{"input_tokens":1}}}"#,
         r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
@@ -498,10 +498,10 @@ fn hello_sse() -> String {
     events.iter().map(|e| format!("data: {e}\n\n")).collect()
 }
 
-const SSE: &str = "content-type: text/event-stream\r\n";
-const JSON: &str = "content-type: application/json\r\n";
+pub(super) const SSE: &str = "content-type: text/event-stream\r\n";
+pub(super) const JSON: &str = "content-type: application/json\r\n";
 
-fn ask(client: &Client, model: &str) -> Result<Reply> {
+pub(super) fn ask(client: &Client, model: &str) -> Result<Reply> {
     let tools = RawValue::from_string("[]".into()).unwrap();
     let req = Request::new(model, None, "sys", &tools);
     client.stream(&req, &[r#"{"role":"user","content":"hi"}"#], &AtomicBool::new(false), |_| {})

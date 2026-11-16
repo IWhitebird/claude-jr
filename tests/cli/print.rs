@@ -182,16 +182,20 @@ fn every_kind_of_api_failure_is_survived() {
     let runs: Vec<_> = kinds
         .iter()
         .flat_map(|&(kind, recovers)| (1..=3).map(move |at| (kind, recovers, at)))
-        // Through Anthropic's format and through Chat Completions.
-        .flat_map(|run| [(run, false), (run, true)])
-        .map(|((kind, recovers, at), chat)| {
+        // Through each door: Anthropic's own, Chat Completions, Bedrock (signed), Vertex.
+        .flat_map(|run| (0..4).map(move |door| (run, door)))
+        .map(|((kind, recovers, at), door)| {
             std::thread::spawn(move || {
                 let fail = format!("{at}:{kind}");
                 let e = Env::with(&[("MOCK_FAIL", &fail), ("MOCK_ROUNDS", "2")]);
-                let model = if chat { "ollama/test-model" } else { "claude-opus-5-5" };
+                let model =
+                    ["claude-opus-5-5", "ollama/test-model", "bedrock/claude-opus-5-5", "vertex/claude-opus-5-5"][door];
                 let run = |args: &[&str]| {
                     let mut cmd = e.command(args);
                     cmd.args(["-m", model]).env("OLLAMA_HOST", format!("127.0.0.1:{}", e.port));
+                    if door >= 2 {
+                        through_cloud(&e, &mut cmd);
+                    }
                     exec(cmd)
                 };
                 let fail = format!("{fail} ({model})");
@@ -225,7 +229,7 @@ fn every_kind_of_api_failure_is_survived() {
         .filter_map(|r| r.join().err())
         .map(|e| e.downcast_ref::<String>().cloned().unwrap_or_else(|| "a run panicked".into()))
         .collect();
-    assert!(failed.is_empty(), "{} of {} failed:\n\n{}", failed.len(), kinds.len() * 6, failed.join("\n\n"));
+    assert!(failed.is_empty(), "{} of {} failed:\n\n{}", failed.len(), kinds.len() * 12, failed.join("\n\n"));
 }
 
 /// A failure that doesn't go away is given up on in reasonable time, with

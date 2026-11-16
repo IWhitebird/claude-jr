@@ -68,7 +68,7 @@ impl App {
                     KeyCode::Char(c @ '1'..='9') => {
                         if let Some((model, _)) = crate::api::CATALOGUE.get(c as usize - '1' as usize) {
                             self.prompts.pop_front();
-                            self.set_model(model);
+                            self.set_model(&crate::api::cloud::same_door(&self.model, model));
                         }
                     }
                     KeyCode::Esc => {

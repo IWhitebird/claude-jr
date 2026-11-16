@@ -49,6 +49,7 @@ dependencies = [
  "anyhow",
  "base64",
  "crossterm",
+ "ring",
  "serde",
  "serde_json",
  "signal-hook",

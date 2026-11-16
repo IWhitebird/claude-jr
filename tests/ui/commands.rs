@@ -117,3 +117,36 @@ fn the_slash_menu_filters_picks_completes_and_runs() {
     app.send(CTRL_D);
     app.exited(0);
 }
+
+/// Claude through a cloud, in the app: no Anthropic key is asked for, the
+/// token comes from gcloud, and a pick from /model stays on that cloud.
+#[test]
+fn a_cloud_model_works_in_the_app_and_the_picker_stays_on_that_cloud() {
+    let mut world = World::new("cloud", &[("MOCK_ROUNDS", "0")]);
+    world.write("../bin/gcloud", "#!/bin/sh\necho ya29.from-gcloud\n");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(world.root.join("bin/gcloud"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    world.env = vec![
+        ("ANTHROPIC_VERTEX_BASE_URL".into(), format!("http://127.0.0.1:{}/v1", world.port)),
+        ("ANTHROPIC_VERTEX_PROJECT_ID".into(), "test-project".into()),
+    ];
+    let mut app = world.launch(&["-y", "-m", "vertex/claude-opus-5-5"], None);
+    app.expect_all(&["vertex/claude-opus-5-5 · ~/proj", "ask anything"]);
+    app.turn("hello");
+    app.send("/model\r");
+    app.expect_all(&[
+        "Choose a model",
+        "1. vertex/claude-opus-5-5  (current) · $4/$20 · 1M context",
+        "3. vertex/claude-haiku-5-5 · $0.1/$0.5",
+    ]);
+    app.send("3");
+    app.expect("Model set to vertex/claude-haiku-5-5.");
+    app.turn("and again");
+    let heads = std::fs::read_to_string(world.root.join("mock.log.headers")).unwrap();
+    let paths: Vec<&str> = heads.lines().filter_map(|l| l.split("models/").nth(1)?.split(':').next()).collect();
+    assert_eq!(paths, ["claude-opus-5-5", "claude-haiku-5-5"], "{heads}");
+    assert_eq!(heads.matches("Bearer ya29.from-gcloud").count(), 2);
+    // (The one refusal on record is the harness asking whether the fake API is up.)
+    let refused = std::fs::read_to_string(world.root.join("mock.log.invalid")).unwrap_or_default();
+    assert_eq!(refused.lines().count(), 1, "nothing of the app's was refused: {refused}");
+}

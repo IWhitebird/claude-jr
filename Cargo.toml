@@ -18,6 +18,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23"
+# Already in the binary through the TLS library; used to sign requests to Bedrock.
+ring = "0.17"
 crossterm = { version = "0.29.0", default-features = false, features = ["events", "bracketed-paste"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }

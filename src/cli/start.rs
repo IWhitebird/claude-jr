@@ -5,7 +5,7 @@
 use super::args::Args;
 use super::print;
 use crate::agent::{self, Mode};
-use crate::api::provider;
+use crate::api::{cloud, provider};
 use crate::store::config;
 use crate::store::session::{Pick, Session};
 use crate::sys::sandbox;
@@ -53,9 +53,15 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
     let key = config::api_key().unwrap_or_default();
     // A model of another provider needs that provider's key, not Anthropic's.
     let other = provider::resolve(&model, &file.providers).map(|(p, _)| p);
+    let cloud = other.is_none() && cloud::of(&model).is_some();
     match &other {
         Some(p) => {
             if let Some(why) = p.missing_key() {
+                return Err(why);
+            }
+        }
+        None if cloud => {
+            if let Some(why) = cloud::missing(&model, &cloud::environment) {
                 return Err(why);
             }
         }
@@ -82,9 +88,9 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
         key,
         base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
         // The reviewer is asked through the same provider as the model.
-        auto_model: file.auto_model.unwrap_or_else(|| match &other {
-            Some(_) => model.clone(),
-            None => "claude-haiku-5-5".into(),
+        auto_model: file.auto_model.unwrap_or_else(|| match other.is_some() || cloud {
+            true => model.clone(),
+            false => "claude-haiku-5-5".into(),
         }),
         model,
         effort: args.effort.or(file.effort),

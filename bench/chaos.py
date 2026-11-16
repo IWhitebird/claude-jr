@@ -68,10 +68,13 @@ def run(seed):
     open(conf, "w").write("set -g history-limit 50000\nset -g status off\nset -g remain-on-exit on\n")
     sock = f"chaos-{os.getpid()}-{seed}"
     mode = rng.choice(["-y", "-y", ""])  # without -y, approval prompts get the random keys too
-    # Half the runs talk to the fake API in the Chat Completions format.
-    mode += rng.choice(["", " -m ollama/test-model"])
+    # Each run goes through one door: Anthropic's own, Chat Completions, Bedrock (signed) or Vertex.
+    mode += rng.choice(["", " -m ollama/test-model", " -m bedrock/claude-opus-5-5", " -m vertex/claude-opus-5-5"])
+    api = f"http://127.0.0.1:{port}"
     env = (f"HOME={home} XDG_DATA_HOME={home} XDG_CONFIG_HOME={home} ANTHROPIC_API_KEY=mock "
-           f"ANTHROPIC_BASE_URL=http://127.0.0.1:{port} OLLAMA_HOST=127.0.0.1:{port} CLAUDE_JR_OFFLINE_SECS=3")
+           f"ANTHROPIC_BASE_URL={api} OLLAMA_HOST=127.0.0.1:{port} CLAUDE_JR_OFFLINE_SECS=3 "
+           f"ANTHROPIC_BEDROCK_BASE_URL={api}/anthropic AWS_ACCESS_KEY_ID=AKIDEXAMPLE AWS_SECRET_ACCESS_KEY=mock-secret "
+           f"ANTHROPIC_VERTEX_BASE_URL={api}/v1 ANTHROPIC_VERTEX_PROJECT_ID=p VERTEX_ACCESS_TOKEN=t")
     log = []
     problem = None
     try:

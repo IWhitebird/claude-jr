@@ -130,7 +130,8 @@ pub fn resolve<'a>(model: &'a str, custom: &Providers) -> Option<(Provider, &'a 
 /// The names that can go in front of a model id, for help and error messages.
 pub fn names(custom: &Providers) -> Vec<String> {
     let mut names: Vec<String> = custom.keys().cloned().collect();
-    names.extend(BUILT_IN.iter().map(|p| p.0.to_string()).filter(|n| !custom.contains_key(n)));
+    let built_in = BUILT_IN.iter().map(|p| p.0).chain(["bedrock", "vertex"]);
+    names.extend(built_in.map(String::from).filter(|n| !custom.contains_key(n)));
     names
 }
 

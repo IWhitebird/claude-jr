@@ -222,6 +222,33 @@ pub fn ollama(e: &Env, args: &[&str]) -> Out {
     exec(cmd)
 }
 
+/// Points `cmd` at the fake API as if it were Bedrock and Vertex, with a
+/// login for each and none for Anthropic. Bedrock's requests are signed with
+/// the secret the fake API expects.
+pub fn through_cloud(e: &Env, cmd: &mut Command) {
+    let base = format!("http://127.0.0.1:{}", e.port);
+    cmd.env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ANTHROPIC_BASE_URL")
+        .env("ANTHROPIC_BEDROCK_BASE_URL", format!("{base}/anthropic"))
+        .env("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+        .env("AWS_SECRET_ACCESS_KEY", "mock-secret")
+        .env("AWS_SESSION_TOKEN", "a-session-token")
+        .env("ANTHROPIC_VERTEX_BASE_URL", format!("{base}/v1"))
+        .env("ANTHROPIC_VERTEX_PROJECT_ID", "test-project")
+        .env("VERTEX_ACCESS_TOKEN", "ya29.test");
+}
+
+/// `args` run through a cloud's door (see `through_cloud`).
+pub fn cloud(e: &Env, args: &[&str]) -> Out {
+    let mut cmd = e.command(args);
+    through_cloud(e, &mut cmd);
+    exec(cmd)
+}
+
+pub fn headers(e: &Env) -> Vec<serde_json::Value> {
+    json_lines(&std::fs::read_to_string(e.root.join("requests.jsonl.headers")).unwrap_or_default())
+}
+
 pub fn nothing_refused(e: &Env) {
     let refused = std::fs::read_to_string(e.root.join("requests.jsonl.invalid")).unwrap_or_default();
     assert!(refused.is_empty(), "a request the API would refuse was sent: {refused}");

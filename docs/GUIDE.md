@@ -190,7 +190,7 @@ Linux only for now.
 ## Other models
 
 A model id with a provider's name in front goes to that provider; a plain id
-is Anthropic's, as before.
+is Anthropic's, as before. (Claude through a cloud account is the next section.)
 
 ```sh
 claudejr -m ollama/qwen3:8b            # a local model, no key
@@ -223,6 +223,43 @@ Things to know:
   Anthropic's; with other models `/compact` still works when you run it.
 - A conversation can be continued with a different provider's model: the
   history is kept in one format and translated for whoever is asked.
+
+## Claude through Amazon Bedrock or Google Vertex AI
+
+The same Claude models, billed by your cloud account. **Not yet tested
+against the real services**: there was no AWS or Google Cloud account to test
+with, so this is built from the documentation and checked against a stand-in
+that refuses what each cloud documents it refuses (and checks every AWS
+signature). `bench/provider.sh bedrock/claude-haiku-5-5` is the real test; if
+you run it, please say how it went.
+
+```sh
+claudejr -m bedrock/claude-opus-5-5
+claudejr -m vertex/claude-opus-5-5
+```
+
+| | Bedrock | Vertex |
+|---|---|---|
+| Login | `AWS_BEARER_TOKEN_BEDROCK` (a Bedrock API key), or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN` if you have one) | `VERTEX_ACCESS_TOKEN`, or else whatever `gcloud auth print-access-token` prints |
+| Where | `AWS_REGION` (then `AWS_DEFAULT_REGION`, then `us-east-1`) | `ANTHROPIC_VERTEX_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), and `CLOUD_ML_REGION` (`global` if unset) |
+| Model ids | Claude's own names; `anthropic.` is put in front for you | Claude's own names; older models with their date, as in `claude-haiku-4-5@20251001` |
+| A gateway in front | `ANTHROPIC_BEDROCK_BASE_URL` | `ANTHROPIC_VERTEX_BASE_URL` |
+
+Things to know:
+
+- Thinking, effort levels, prompt caching, automatic compaction, costs and
+  context sizes work as they do with Anthropic directly.
+- Neither cloud has web search and fetch as claude-jr uses them, the refusal
+  fallback, or remote MCP servers, so those are left out. Local MCP servers work.
+- Bedrock is spoken to at its Messages address (`bedrock-mantle`). Models it
+  serves only at the older address (Fable 5.2 today) are not available, and
+  neither are `~/.aws` profiles, SSO or instance roles: export the keys.
+- With access keys every request is signed, which means reading the
+  conversation through once more to hash it: about 2 ms for a 4 MB history. A
+  Bedrock API key avoids that.
+- Costs shown are Anthropic's list prices; a single-region endpoint costs a
+  tenth more than that.
+- On Vertex, a service-account key file is not read: use `gcloud`, or pass a token.
 
 ## Running many at once
 

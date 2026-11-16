@@ -40,6 +40,8 @@ More of claude-jr's own numbers (`bench/`):
 | 1,000 agents working at once, each in its own folder (`bench/density.py`) | 488 MB between them, 0.5 MB each |
 | 40 background tasks started in one repository | 0.1 s to start them all; 20 MB between them |
 | the same long session through another provider (Chat Completions) | the same 4.0 MB peak; 0.50 s of CPU against 0.42 s |
+| the same long session through Vertex, or Bedrock with an API key | the same peak and the same CPU |
+| the same through Bedrock with access keys (every request signed) | the same peak; 0.83 s of CPU, since signing hashes the body |
 | the MCP server, waiting for calls | 1.2 MB |
 | the UI while a reply streams at ~200 tokens/s | 0.6% of one core |
 | a whole session (20 commands) in a container, agent plus the commands it runs | finishes in 6 MB of RAM (Docker's minimum) at 0.1 CPU, and at 0.01 CPU with 16 MB |

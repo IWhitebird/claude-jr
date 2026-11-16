@@ -100,6 +100,8 @@ pub struct World {
     pub enhanced_keys: bool,
     /// The terminal says it has 24-bit color.
     pub truecolor: bool,
+    /// More of the environment the app starts with.
+    pub env: Vec<(String, String)>,
 }
 
 impl World {
@@ -135,7 +137,7 @@ impl World {
             while Instant::now() < end && mock.try_wait().unwrap().is_none() {
                 if answers_as(port, &log, &root.display().to_string()) {
                     let _ = std::fs::remove_file(&log);
-                    return World { root, port, mock, enhanced_keys: false, truecolor: false };
+                    return World { root, port, mock, enhanced_keys: false, truecolor: false, env: Vec::new() };
                 }
                 sleep(Duration::from_millis(10));
             }
@@ -238,6 +240,7 @@ impl World {
         if let Some(key) = key {
             cmd.env("ANTHROPIC_API_KEY", key);
         }
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
         if self.truecolor {
             cmd.env("COLORTERM", "truecolor");
         }

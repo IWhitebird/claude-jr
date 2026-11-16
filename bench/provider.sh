@@ -8,6 +8,8 @@
 #   OLLAMA_HOST=127.0.0.1:11435 bench/provider.sh ollama/qwen2.5:3b
 #   GROQ_API_KEY=... bench/provider.sh groq/llama-3.3-70b-versatile
 #   BIN=target/release/claudejr bench/provider.sh openai/gpt-5
+#   AWS_BEARER_TOKEN_BEDROCK=... AWS_REGION=us-east-1 bench/provider.sh bedrock/claude-haiku-5-5
+#   ANTHROPIC_VERTEX_PROJECT_ID=my-project bench/provider.sh vertex/claude-haiku-5-5
 #
 # Small local models often get the task itself wrong (the wrong text in the
 # file); what is checked here is that the calls go out, come back and the
@@ -20,7 +22,10 @@ work=$(mktemp -d)
 mkdir -p "$work/home" "$work/proj"
 cd "$work/proj"
 printf 'alpha\nbeta\ngamma\n' > notes.txt
+# Vertex's token comes from gcloud, which wouldn't find its login in the empty home used below.
+case "$model" in vertex/*) : "${VERTEX_ACCESS_TOKEN:=$(gcloud auth print-access-token 2>/dev/null)}"; export VERTEX_ACCESS_TOKEN ;; esac
 keys=$(env | grep -E '^[A-Z_]+_API_KEY=|^OLLAMA_HOST=' | grep -v '^ANTHROPIC_' | sed 's/=.*//')
+keys="$keys $(env | grep -E '^AWS_(REGION|DEFAULT_REGION|BEARER_TOKEN_BEDROCK|ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)=|^ANTHROPIC_(VERTEX|BEDROCK)_[A-Z_]+=|^(GOOGLE_CLOUD_PROJECT|CLOUD_ML_REGION|VERTEX_ACCESS_TOKEN)=' | sed 's/=.*//')"
 run() {
     local pass=()
     for k in $keys; do pass+=("$k=${!k}"); done

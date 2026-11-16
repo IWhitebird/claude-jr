@@ -2,6 +2,7 @@
 // Messages API, what it costs, and how much context it has.
 
 use super::Usage;
+use super::cloud;
 use super::provider::{self, Providers};
 
 pub(super) const BETA_FALLBACK: &str = "server-side-fallback-2026-07-01";
@@ -26,6 +27,9 @@ pub struct Caps {
 
 impl Caps {
     pub fn of(model: &str) -> Caps {
+        // Through a cloud the model is the same one, without what the cloud doesn't offer.
+        let direct = cloud::of(model).is_none();
+        let model = cloud::claude(model);
         let (fallback, updates, compact) = match model {
             "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-2" | "claude-fable-5-1" => (true, true, true),
             "claude-opus-5" => (true, false, true),
@@ -55,7 +59,7 @@ impl Caps {
                 | "claude-fable-5-1"
                 | "claude-fable-5"
         ) || matches!(family(model), Some("opus" | "sonnet"));
-        Caps { fallback, updates, compact, window, web }
+        Caps { fallback: fallback && direct, updates, compact, window, web: web && direct }
     }
 
     pub(super) fn betas(self) -> String {
@@ -82,7 +86,7 @@ pub fn describe(model: &str) -> String {
         w if w >= 1_000_000 => format!("{}M", w / 1_000_000),
         w => format!("{}k", w / 1000),
     };
-    match price(model) {
+    match price(cloud::claude(model)) {
         Some((i, o, _)) => format!("${i}/${o} · {window} context"),
         None => format!("{window} context"),
     }
@@ -133,7 +137,7 @@ pub(super) fn price(model: &str) -> Option<(f64, f64, f64)> {
 }
 
 pub fn cost(model: &str, u: &Usage) -> Option<f64> {
-    let (i, o, r) = price(model)?;
+    let (i, o, r) = price(cloud::claude(model))?;
     let tokens = u.input_tokens as f64 * i
         + u.cache_creation_input_tokens as f64 * i * 1.25
         + u.cache_read_input_tokens as f64 * r

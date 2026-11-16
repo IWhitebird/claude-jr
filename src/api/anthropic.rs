@@ -18,9 +18,14 @@ pub(super) const VERSION: &str = "2026-10-21";
 
 /// Everything in a request except the messages, which are spliced in from
 /// their stored JSON text when the body is sent.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Request<'a> {
+    /// Empty where the address names the model (Vertex).
+    #[serde(skip_serializing_if = "str::is_empty")]
     pub model: &'a str,
+    /// Where the version goes in the body and not in a header (Vertex).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anthropic_version: Option<&'static str>,
     pub max_tokens: u32,
     pub system: &'a str,
     pub tools: &'a RawValue,
@@ -44,6 +49,7 @@ impl<'a> Request<'a> {
         let caps = Caps::of(model);
         Request {
             model,
+            anthropic_version: None,
             max_tokens: 64_000,
             system,
             tools,

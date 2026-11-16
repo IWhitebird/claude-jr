@@ -167,6 +167,9 @@ src/
     anthropic.rs     the Messages format
     openai.rs        the Chat Completions format, translated both ways
     provider.rs      which provider a model id names
+    cloud.rs         Claude through Amazon Bedrock or Google Vertex AI
+    bedrock.rs       Bedrock's address, login and request signing
+    vertex.rs        Vertex's address and access token
     models.rs        prices, context sizes, what each Claude model supports
   work/              running many
     task.rs          background tasks: start, state, wait, cancel, merge, drop

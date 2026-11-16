@@ -17,6 +17,8 @@ pub const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
       --worktree       work in a git worktree and branch of its own, leaving this folder alone
   -m, --model MODEL    model id (default: claude-opus-5-5). Other providers: PROVIDER/MODEL,
                        e.g. ollama/qwen3, openai/gpt-5, openrouter/..., groq/..., gemini/...
+                       Claude through a cloud account: bedrock/MODEL, vertex/MODEL
+                       (not yet tested against the real services)
   -e, --effort LEVEL   low, medium, high, xhigh or max
   -y, --yes            start in skip-permissions mode (also --dangerously-skip-permissions)
       --output-format json   with -p: print one JSON object at the end (result, files, cost)

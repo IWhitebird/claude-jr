@@ -8,16 +8,24 @@
 //   anthropic.rs  the Messages format
 //   openai.rs     the Chat Completions format, translated both ways
 //   provider.rs   which provider a model id names
+//   cloud.rs      Claude through Amazon Bedrock or Google Vertex AI
+//   bedrock.rs    Bedrock's address, login and request signing
+//   vertex.rs     Vertex's address and access token
 //   models.rs     prices, context sizes, what each Claude model supports
 
 mod anthropic;
+mod bedrock;
 mod body;
+pub mod cloud;
+#[cfg(test)]
+mod cloud_tests;
 mod models;
 pub mod openai;
 pub mod provider;
 mod stream;
 #[cfg(test)]
 mod tests;
+mod vertex;
 
 pub use anthropic::Request;
 pub(crate) use body::{Body, Part};
@@ -27,6 +35,7 @@ pub(crate) use stream::Lines;
 
 use anthropic::{VERSION, read_sse};
 use anyhow::{Result, bail};
+use cloud::Cloud;
 use models::BETA_MCP;
 use provider::{Provider, Providers, Shape};
 use serde::Deserialize;
@@ -128,6 +137,10 @@ pub struct Client {
     providers: Providers,
     /// Saved messages already put into the Chat Completions format.
     chat: std::sync::Mutex<crate::api::openai::Translated>,
+    /// Where the clouds' settings are read from: the environment.
+    env: cloud::Settings,
+    /// Vertex's access token, when gcloud gave it.
+    token: vertex::Kept,
 }
 
 /// Where one request goes and how it is spoken to.
@@ -136,8 +149,12 @@ struct Target {
     key: Option<String>,
     /// None: Anthropic's own API.
     provider: Option<Provider>,
-    /// For Anthropic's API: the beta features the request uses.
+    /// For Claude models: the beta features the request uses.
     betas: String,
+    /// Claude asked through a cloud.
+    cloud: Option<Cloud>,
+    /// Access keys the request is signed with (Bedrock without an API key).
+    aws: Option<bedrock::Keys>,
 }
 
 impl Client {
@@ -160,7 +177,15 @@ impl Client {
                 .map_or(OFFLINE_PATIENCE, Duration::from_secs),
             providers: Providers::new(),
             chat: Default::default(),
+            env: Box::new(cloud::environment),
+            token: Default::default(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_env(mut self, env: impl Fn(&str) -> Option<String> + Send + Sync + 'static) -> Self {
+        self.env = Box::new(env);
+        self
     }
 
     pub fn with_providers(mut self, providers: Providers) -> Self {
@@ -172,12 +197,41 @@ impl Client {
     /// Anthropic's key is kept by /login; other providers' come from the
     /// environment, and a missing one is reported when it is needed.
     pub fn needs_login(&self, model: &str) -> bool {
-        provider::resolve(model, &self.providers).is_none() && !self.has_key()
+        provider::resolve(model, &self.providers).is_none() && cloud::of(model).is_none() && !self.has_key()
+    }
+
+    /// Claude through a cloud: the same request, to the cloud's address with
+    /// its login, without the features it doesn't have.
+    fn cloud_target(&self, cloud: Cloud, id: &str, req: &Request) -> Result<(Target, Vec<u8>)> {
+        let env = &*self.env;
+        let mut head: Request = Request { fallbacks: None, mcp_servers: None, ..req.clone() };
+        let wire;
+        let (url, key, aws) = match cloud {
+            Cloud::Vertex => {
+                head.model = "";
+                head.anthropic_version = Some(VERSION);
+                (vertex::address(env, id)?, Some(vertex::token(env, &self.token)?), None)
+            }
+            Cloud::Bedrock => {
+                wire = bedrock::model(id);
+                head.model = &wire;
+                match bedrock::login(env)? {
+                    bedrock::Login::Key(key) => (bedrock::address(env), Some(key), None),
+                    bedrock::Login::Keys(keys) => (bedrock::address(env), None, Some(keys)),
+                }
+            }
+        };
+        let betas = Caps::of(req.model).betas();
+        let target = Target { url, key, provider: None, betas, cloud: Some(cloud), aws };
+        Ok((target, serde_json::to_vec(&head)?))
     }
 
     /// Where `req` goes, and its head: everything but the messages.
     fn target(&self, req: &Request) -> Result<(Target, Vec<u8>)> {
         let Some((p, id)) = provider::resolve(req.model, &self.providers) else {
+            if let Some((cloud, id)) = cloud::of(req.model) {
+                return self.cloud_target(cloud, id, req);
+            }
             let key = self.key.read().unwrap().clone();
             if key.is_empty() {
                 bail!("no API key yet: type /login to add one");
@@ -186,7 +240,8 @@ impl Client {
             if req.mcp_servers.is_some() {
                 betas = if betas.is_empty() { BETA_MCP.to_string() } else { format!("{betas},{BETA_MCP}") };
             }
-            let target = Target { url: self.url.clone(), key: Some(key), provider: None, betas };
+            let target =
+                Target { url: self.url.clone(), key: Some(key), provider: None, betas, cloud: None, aws: None };
             return Ok((target, serde_json::to_vec(req)?));
         };
         if let Some(why) = p.missing_key() {
@@ -208,8 +263,14 @@ impl Client {
                 ("/v1/messages", head)
             }
         };
-        let target =
-            Target { url: format!("{}{path}", p.base_url), key: p.key(), provider: Some(p), betas: String::new() };
+        let target = Target {
+            url: format!("{}{path}", p.base_url),
+            key: p.key(),
+            provider: Some(p),
+            betas: String::new(),
+            cloud: None,
+            aws: None,
+        };
         Ok((target, serde_json::to_vec(&head)?))
     }
 
@@ -271,21 +332,36 @@ impl Client {
         on: &mut impl FnMut(Chunk),
     ) -> Result<Reply> {
         let mut attempt = 0;
+        // A signed request's signature covers the body, so that is read through once first.
+        let digest = match &target.aws {
+            Some(_) => Some(bedrock::hash(Body::new(head, messages))?),
+            None => None,
+        };
+        let vertex = target.cloud == Some(Cloud::Vertex);
         // Since when the API hasn't been reachable, and how often that was tried.
         let mut offline: Option<(Instant, u32)> = None;
         loop {
             attempt += 1;
             let openai = target.provider.as_ref().is_some_and(|p| p.shape == Shape::OpenAi);
             let mut call = http.post(&target.url).header("content-type", "application/json");
-            if !openai {
+            // Vertex takes the version in the body and its token as a bearer.
+            if !openai && !vertex {
                 call = call.header("anthropic-version", VERSION);
                 if let Some(key) = &target.key {
                     call = call.header("x-api-key", key);
                 }
             }
             // Other vendors' servers, whichever format they speak, mostly take the key this way.
-            if let (Some(key), Some(_)) = (&target.key, &target.provider) {
+            if let Some(key) = &target.key
+                && (target.provider.is_some() || vertex)
+            {
                 call = call.header("authorization", format!("Bearer {key}"));
+            }
+            // Signed anew for every attempt: the time is part of it.
+            if let (Some(keys), Some(digest)) = (&target.aws, &digest) {
+                for (name, value) in keys.sign(&target.url, digest, std::time::SystemTime::now()) {
+                    call = call.header(name, value);
+                }
             }
             if !target.betas.is_empty() {
                 call = call.header("anthropic-beta", &target.betas);
@@ -307,7 +383,11 @@ impl Client {
                 Err(e @ ureq::Error::Timeout(_)) => return Err(e.into()),
                 // An address that can't be one won't get better by waiting.
                 Err(e @ (ureq::Error::BadUri(_) | ureq::Error::Http(_))) => {
-                    let fix = if target.provider.is_some() { "the provider's base_url" } else { "ANTHROPIC_BASE_URL" };
+                    let fix = match (&target.provider, target.cloud) {
+                        (Some(_), _) => "the provider's base_url",
+                        (None, Some(_)) => "the model id and the cloud's region",
+                        (None, None) => "ANTHROPIC_BASE_URL",
+                    };
                     bail!("the API address {:?} isn't valid ({e}); check {fix}", target.url)
                 }
                 // The API couldn't be reached at all, so nothing was sent:
@@ -351,6 +431,10 @@ impl Client {
             let retry_after =
                 res.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
             let text = res.body_mut().read_to_string().unwrap_or_default();
+            if vertex && status == 401 {
+                // The token ran out early: the next request asks gcloud for a new one.
+                *self.token.lock().unwrap() = None;
+            }
             let retryable = matches!(status, 408 | 409 | 429) || status >= 500;
             if retryable && attempt < MAX_ATTEMPTS {
                 wait(backoff(attempt, retry_after), cancel)?;
