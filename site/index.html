@@ -219,6 +219,18 @@
   kbd { font: 13px var(--mono); border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; background: var(--key); }
   dd code, td code, p code, li code { font: 14px var(--mono); }
 
+  figure.disk { margin: 26px 0 0; }
+  .disk svg { display: block; width: 100%; height: auto; font: 13px var(--sans); }
+  .disk text { fill: var(--ink-3); }
+  .disk .cap { fill: var(--ink-2); font-size: 13.5px; }
+  .disk .file > rect:first-child, .disk .mem > rect:first-child, .disk .api rect { fill: none; stroke: var(--ink-3); stroke-width: 1; }
+  .disk .row { fill: var(--other); }
+  .disk .row.new, .disk .flow { fill: var(--clay); }
+  .disk .at { fill: var(--ink-3); }
+  .disk .line { fill: none; stroke: var(--ink-3); stroke-width: 1; opacity: .6; }
+  .disk .flow { fill: none; stroke: var(--clay); stroke-width: 2; }
+  .disk .head { fill: var(--clay); }
+  @media (max-width: 560px) { .disk svg { font-size: 17px; } .disk .cap { font-size: 17px; } }
   ol.how { list-style: none; counter-reset: how; margin: 26px 0 0; padding: 0; border-top: 1px solid var(--rule); }
   ol.how li { counter-increment: how; display: grid; grid-template-columns: 2.6em 1fr; padding: 18px 0; border-bottom: 1px solid var(--rule); }
   ol.how li::before { content: counter(how); font: 400 1.7rem/1.1 var(--serif); color: var(--clay-text); }
@@ -424,6 +436,31 @@
     <div class="col">
       <h2>How it stays small</h2>
       <p>Nothing clever, mostly things left out.</p>
+      <figure class="disk">
+        <svg viewBox="0 0 680 210" role="img" aria-label="Diagram: messages are kept in a file on disk; memory holds only where each one is; a request is streamed from the file to the API">
+          <g class="file">
+            <rect x="1" y="26" width="250" height="172" rx="4"/>
+            <rect class="row" x="13" y="40" width="226" height="18" rx="2"/>
+            <rect class="row" x="13" y="64" width="226" height="18" rx="2"/>
+            <rect class="row" x="13" y="88" width="226" height="18" rx="2"/>
+            <rect class="row" x="13" y="112" width="226" height="18" rx="2"/>
+            <rect class="row new" x="13" y="136" width="226" height="18" rx="2"/>
+            <text x="126" y="182" text-anchor="middle">… every message, appended</text>
+          </g>
+          <text class="cap" x="1" y="16">The session file, on disk</text>
+          <g class="mem">
+            <rect x="330" y="26" width="120" height="76" rx="4"/>
+            <rect class="at" x="342" y="38" width="96" height="6"/><rect class="at" x="342" y="50" width="96" height="6"/>
+            <rect class="at" x="342" y="62" width="96" height="6"/><rect class="at" x="342" y="74" width="96" height="6"/>
+            <rect class="at" x="342" y="86" width="96" height="6"/>
+          </g>
+          <text class="cap" x="330" y="16">In memory: where each one is</text>
+          <path class="line" d="M330 41 H292 V49 H251 M330 53 H298 V73 H251 M330 65 H304 V97 H251 M330 77 H310 V121 H251 M330 89 H316 V145 H251"/>
+          <g class="api"><rect x="560" y="140" width="118" height="44" rx="4"/><text x="619" y="167" text-anchor="middle">the model</text></g>
+          <path class="flow" d="M251 162 H551"/><path class="head" d="M551 157 l9 5 l-9 5 z"/>
+          <text class="cap" x="292" y="186">Requests stream straight from it</text>
+        </svg>
+      </figure>
       <ol class="how">
         <li><div><b>The conversation lives on disk.</b><span>Every message is appended to the session file as it happens. Memory keeps only where each one is, and a request is streamed to the API straight from that file. A session with 8 MB of history uses the same 4 MB as a short one.</span></div></li>
         <li><div><b>No runtime underneath.</b><span>One static binary, with nothing to start before it. There is no JavaScript engine to load and no garbage collector holding on to memory.</span></div></li>
