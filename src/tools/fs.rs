@@ -368,7 +368,7 @@ mod tests {
         assert!(err.ends_with("looks like a binary file"), "{err}");
 
         let err = run(&t, "read", json!({"path": "missing.txt"})).unwrap_err();
-        assert!(err.contains("missing.txt: ") && err.contains("No such file"), "{err}");
+        assert!(err.contains("missing.txt: ") && (err.contains("No such file") || err.contains("os error 2")), "{err}");
         assert_eq!(run(&t, "read", json!({})).unwrap_err(), "missing path");
 
         // Windows line endings are trimmed; a long line is cut with an ellipsis.
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(run(&t, "write", json!({"content": "x"})).unwrap_err(), "missing path");
         // Creates parent folders and counts lines.
         let out = run(&t, "write", json!({"path": "deep/er/x.txt", "content": "a\nb\n"})).unwrap();
-        assert_eq!(out, format!("Wrote 2 lines to {}", dir.join("deep/er/x.txt").display()));
+        assert_eq!(out, format!("Wrote 2 lines to {}", dir.join("deep").join("er").join("x.txt").display()));
         assert_eq!(fs::read_to_string(dir.join("deep/er/x.txt")).unwrap(), "a\nb\n");
         // Overwriting needs a read first.
         let again = json!({"path": "deep/er/x.txt", "content": "c"});

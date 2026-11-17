@@ -152,7 +152,7 @@ pub fn jobs(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     match action {
         "output" => Ok(job.report()),
         "kill" => {
-            kill_tree(job.pid);
+            job.kill();
             job.wait_done(Duration::from_secs(2), None, cancel);
             Ok(job.report())
         }
@@ -222,6 +222,15 @@ struct Job {
     shown: Mutex<usize>,
     /// "exit 0", "exit 1", "killed"; None while running.
     status: Mutex<Option<String>>,
+    /// We stopped it (where a killed process leaves no mark of its own).
+    killed: AtomicBool,
+}
+
+impl Job {
+    fn kill(&self) {
+        self.killed.store(true, Ordering::Relaxed);
+        kill_tree(self.pid);
+    }
 }
 
 impl Jobs {
@@ -246,6 +255,7 @@ impl Jobs {
             out: Mutex::new(Tail::new(JOB_TAIL)),
             shown: Mutex::new(0),
             status: Mutex::new(None),
+            killed: AtomicBool::new(false),
         });
         list.push(job.clone());
         drop(list);
@@ -264,6 +274,7 @@ impl Jobs {
         let _ = thread::Builder::new().name("job-wait".into()).spawn(move || {
             let status = match child.wait() {
                 Ok(s) => match s.code() {
+                    Some(_) if reaper_job.killed.load(Ordering::Relaxed) => "killed".to_string(),
                     Some(c) => format!("exit {c}"),
                     None => "killed".to_string(),
                 },
@@ -304,7 +315,7 @@ impl Jobs {
     /// Stops a job. Returns false if there's no such job.
     pub fn kill(&self, id: usize) -> bool {
         let Some(job) = self.get(id) else { return false };
-        kill_tree(job.pid);
+        job.kill();
         true
     }
 
@@ -717,7 +728,8 @@ mod tests {
         let (t, dir) = test_tools("bash-user-shell");
         let cancel = AtomicBool::new(false);
         // (Compared as real paths: the temp folder is behind a symlink on macOS.)
-        let pwd = PathBuf::from(t.user_shell("pwd", &cancel).unwrap().trim_end());
+        let pwd = if cfg!(windows) { "pwd -W" } else { "pwd" };
+        let pwd = PathBuf::from(t.user_shell(pwd, &cancel).unwrap().trim_end());
         assert_eq!(pwd.canonicalize().unwrap(), dir.canonicalize().unwrap());
         assert!(t.user_shell("exit 5", &cancel).unwrap_err().contains("Exit code 5"));
         assert_eq!(t.user_shell("true", &cancel).unwrap(), "(no output)");

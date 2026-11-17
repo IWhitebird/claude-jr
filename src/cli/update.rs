@@ -153,6 +153,7 @@ mod tests {
     #[test]
     fn this_platform_has_a_release_name() {
         let name = asset().expect("linux and macos have builds");
-        assert!(name.starts_with("claudejr-") && name.ends_with(std::env::consts::ARCH), "{name}");
+        let end = format!("{}{}", std::env::consts::ARCH, std::env::consts::EXE_SUFFIX);
+        assert!(name.starts_with("claudejr-") && name.ends_with(&end), "{name}");
     }
 }

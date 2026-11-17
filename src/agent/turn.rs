@@ -487,7 +487,7 @@ mod tests {
             [("r1", false), ("r2", false), ("r3", true)]
         );
         assert!(r[0].2.contains("alpha"));
-        assert!(r[2].2.contains("No such file"), "{}", r[2].2);
+        assert!(r[2].2.contains("missing.txt: "), "{}", r[2].2);
         assert_eq!(text_of(&events), "Read them.");
     }
 

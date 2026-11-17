@@ -116,6 +116,7 @@ fn clock(d: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)] // /proc or ps
     #[test]
     fn reads_own_process() {
         let me = super::read("self").unwrap();
@@ -124,6 +125,7 @@ mod tests {
     }
 
     /// The way it is read where there is no /proc; `ps` is on Linux too.
+    #[cfg(unix)] // /proc or ps
     #[test]
     fn ps_can_be_asked_instead_of_proc() {
         let me = super::read_ps("self").expect("ps knows this process");
@@ -137,6 +139,7 @@ mod tests {
         assert_eq!((secs("soon"), secs("1:2:3:4")), (None, None));
     }
 
+    #[cfg(unix)] // /proc or ps
     #[test]
     fn children_are_listed_with_a_total() {
         let me = std::process::id();

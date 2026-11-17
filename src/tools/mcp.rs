@@ -207,7 +207,14 @@ pub fn summarize_args(input: &Value) -> String {
 impl Local {
     fn start(name: String, cfg: &ServerConfig) -> Result<Local, String> {
         let command = expand(cfg.command.as_deref().unwrap_or_default());
-        let mut cmd = Command::new(&command);
+        // On Windows a bare name is often a script (npx is npx.cmd), which
+        // only the command interpreter knows how to find and run.
+        let by_name =
+            cfg!(windows) && !command.contains(['/', '\\']) && std::path::Path::new(&command).extension().is_none();
+        let mut cmd = if by_name { Command::new("cmd") } else { Command::new(&command) };
+        if by_name {
+            cmd.args(["/C", &command]);
+        }
         cmd.args(cfg.args.iter().map(|a| expand(a)))
             .envs(cfg.env.iter().map(|(k, v)| (k, expand(v))))
             .stdin(Stdio::piped())
@@ -433,7 +440,7 @@ done"#;
         let mut configs = BTreeMap::new();
         configs.insert(
             "demo".to_string(),
-            ServerConfig { command: Some("bash".into()), args: vec!["-c".into(), SERVER.into()], ..Default::default() },
+            ServerConfig { command: Some(bash()), args: vec!["-c".into(), SERVER.into()], ..Default::default() },
         );
         configs.insert("bad".to_string(), ServerConfig::default());
         let (servers, errors) = Servers::start(configs);
@@ -484,6 +491,11 @@ while IFS= read -r line; do
   esac
 done"#;
 
+    /// The bash on this machine (on Windows a bare "bash" may be WSL's).
+    fn bash() -> String {
+        crate::sys::shell::shell().program()
+    }
+
     fn local(command: &str, args: &[&str]) -> ServerConfig {
         ServerConfig {
             command: Some(command.into()),
@@ -502,7 +514,7 @@ done"#;
 
     #[test]
     fn tools_are_listed_across_pages_and_cleaned_up() {
-        let (servers, errors) = start_one("s2", local("bash", &["-c", SERVER2]));
+        let (servers, errors) = start_one("s2", local(&bash(), &["-c", SERVER2]));
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(servers.describe(), ["s2 (local, 7 tools)"], "the nameless tool is skipped");
         let defs: Vec<Value> = servers.definitions().iter().map(|d| serde_json::from_str(d.get()).unwrap()).collect();
@@ -521,7 +533,7 @@ done"#;
 
     #[test]
     fn results_errors_and_server_requests() {
-        let (servers, _) = start_one("s2", local("bash", &["-c", SERVER2]));
+        let (servers, _) = start_one("s2", local(&bash(), &["-c", SERVER2]));
         let big = call(&servers, "big").unwrap();
         assert!(big.ends_with("\n... [truncated]"));
         assert_eq!(big.len(), MAX_OUTPUT + "\n... [truncated]".len());
@@ -537,7 +549,7 @@ done"#;
 
     #[test]
     fn a_call_can_be_cancelled_or_time_out_or_lose_the_server() {
-        let (servers, _) = start_one("s2", local("bash", &["-c", SERVER2]));
+        let (servers, _) = start_one("s2", local(&bash(), &["-c", SERVER2]));
         let conn = servers.local[0].conn.clone();
         let slow = json!({"name": "slow", "arguments": {}});
 
@@ -569,7 +581,7 @@ done"#;
         assert_eq!(errors.len(), 1);
         assert!(errors[0].starts_with("MCP server gone: can't run /no/such/mcp-server-binary: "), "{errors:?}");
 
-        let (_, errors) = start_one("quits", local("bash", &["-c", "read x; exit 0"]));
+        let (_, errors) = start_one("quits", local(&bash(), &["-c", "read x; exit 0"]));
         assert_eq!(errors.len(), 1);
         assert!(errors[0].starts_with("MCP server quits: "), "{errors:?}");
         assert!(errors[0].contains("the server exited") || errors[0].contains("stopped reading"), "{errors:?}");

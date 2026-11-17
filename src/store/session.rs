@@ -186,11 +186,12 @@ impl Session {
         };
         let Read { system, name, messages } = read(&path)?;
         let mut session = Session { path, file: None, saved: messages.len(), name };
-        session.file = session.open(&system);
         // Two windows writing one conversation would leave a file that is
         // neither's. Whoever has it open keeps it; a latecomer gets a new
         // file, which the first save fills with everything so far.
-        let copy = session.file.as_ref().is_some_and(|f| matches!(f.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        let opened = session.open(&system);
+        let copy = opened.as_ref().is_some_and(|(_, ours)| !ours);
+        session.file = opened.map(|(file, _)| file);
         if copy {
             session = Session { name: session.name, ..Session::new() };
         }
@@ -276,9 +277,15 @@ impl Session {
     /// the line ends whoever else has been appending.
     fn line(&mut self, system: &str, json: &[u8]) -> Option<u64> {
         if self.file.is_none() {
-            self.file = self.open(system);
+            self.file = self.open(system).map(|(file, _)| file);
         }
         let mut file = &**self.file.as_ref()?;
+        if cfg!(windows) {
+            // Windows writes the pieces of a vectored write one at a time, so
+            // the line is put together first.
+            file.write_all(&[json, b"\n"].concat()).ok()?;
+            return file.stream_position().ok();
+        }
         let wrote = file.write_vectored(&[std::io::IoSlice::new(json), std::io::IoSlice::new(b"\n")]).ok()?;
         // Only a full disk or the like writes less; finish the line then.
         if wrote < json.len() {
@@ -292,12 +299,14 @@ impl Session {
 
     fn append(&mut self, system: &str, bytes: &[u8]) -> bool {
         if self.file.is_none() {
-            self.file = self.open(system);
+            self.file = self.open(system).map(|(file, _)| file);
         }
         self.file.as_ref().is_some_and(|f| (&**f).write_all(bytes).is_ok())
     }
 
-    fn open(&self, system: &str) -> Option<Arc<File>> {
+    /// The session's file, ready to be added to, and whether it is ours:
+    /// false if another process has it open.
+    fn open(&self, system: &str) -> Option<(Arc<File>, bool)> {
         let fresh = !self.path.exists();
         fs::create_dir_all(self.path.parent()?).ok()?;
         let mut f = OpenOptions::new().create(true).read(true).append(true).open(&self.path).ok()?;
@@ -310,9 +319,9 @@ impl Session {
             // next must start its own line, or it would be lost with it.
             f.write_all(b"\n").ok()?;
         }
-        // Held for as long as the session is open; `load` checks it.
-        let _ = f.try_lock();
-        Some(Arc::new(f))
+        // Held for as long as the session is open.
+        let ours = crate::sys::os::claim(&f);
+        Some((Arc::new(f), ours))
     }
 }
 

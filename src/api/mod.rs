@@ -296,13 +296,23 @@ impl Client {
         // to begin, which no read timeout can pick up again: a watcher closes
         // the connection, and a fresh agent is put in place for the next one.
         let done = AtomicBool::new(false);
+        let waiting = crate::sys::os::Interrupt::of_this_thread();
         let result = std::thread::scope(|s| {
             let watcher = s.spawn(|| {
+                let mut closed = false;
                 while !done.load(Ordering::Relaxed) {
                     if cancel.load(Ordering::Relaxed) {
-                        *self.http.lock().unwrap() = agent(self.read);
-                        http.clone().shutdown();
-                        return;
+                        if !closed {
+                            *self.http.lock().unwrap() = agent(self.read);
+                            http.clone().shutdown();
+                            closed = true;
+                        }
+                        // Where closing doesn't wake a blocked read (Windows),
+                        // the read itself is cancelled, until the request ends.
+                        if cfg!(unix) {
+                            return;
+                        }
+                        waiting.now();
                     }
                     std::thread::park_timeout(Duration::from_millis(50));
                 }

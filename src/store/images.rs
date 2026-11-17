@@ -54,7 +54,8 @@ fn words(text: &str) -> Vec<String> {
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
         match (c, quote) {
-            ('\\', None) => {
+            // (On Windows a backslash is part of the path, not an escape.)
+            ('\\', None) if cfg!(not(windows)) => {
                 if let Some(next) = chars.next() {
                     cur.push(next);
                 }
@@ -276,12 +277,9 @@ mod tests {
         let plain = dir.join("logo.PNG");
         std::fs::write(&spaced, b"x").unwrap();
         std::fs::write(&plain, b"x").unwrap();
-        let text = format!(
-            "match this '{}' and {}, also {} and missing.png",
-            spaced.display(),
-            plain.display(),
-            spaced.display().to_string().replace(' ', "\\ ")
-        );
+        // The third form, a space escaped with a backslash, is what Unix terminals paste.
+        let escaped = if cfg!(windows) { String::new() } else { spaced.display().to_string().replace(' ', "\\ ") };
+        let text = format!("match this '{}' and {}, also {escaped} and missing.png", spaced.display(), plain.display());
         assert_eq!(paths_in(&text), [spaced.clone(), plain.clone()]);
     }
 
@@ -309,8 +307,11 @@ mod tests {
 
     #[test]
     fn words_split_like_a_shell_would() {
-        assert_eq!(words(r#"a  b\ c 'd e' "f g" h'i j"#), ["a", "b c", "d e", "f g", "h'i", "j"]);
-        assert_eq!(words("trailing\\"), ["trailing"]);
+        assert_eq!(words(r#"a  b 'd e' "f g" h'i j"#), ["a", "b", "d e", "f g", "h'i", "j"]);
+        if cfg!(not(windows)) {
+            assert_eq!(words(r"a b\ c"), ["a", "b c"]);
+            assert_eq!(words("trailing\\"), ["trailing"]);
+        }
         assert!(words("   ").is_empty());
         // An unclosed quote runs to the end.
         assert_eq!(words("x 'y z"), ["x", "y z"]);

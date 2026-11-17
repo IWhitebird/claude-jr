@@ -55,6 +55,12 @@ fn find() -> PathBuf {
 }
 
 impl Shell {
+    /// The program, for starting it some other way.
+    #[cfg(test)]
+    pub fn program(&self) -> String {
+        self.program.display().to_string()
+    }
+
     /// What to call it when talking to the model.
     pub fn name(&self) -> &'static str {
         if self.powershell { "PowerShell" } else { "bash" }

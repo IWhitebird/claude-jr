@@ -158,7 +158,7 @@ mod tests {
         // A file that vanished is an error naming it.
         std::fs::remove_file(dir.join("alpha/SKILL.md")).unwrap();
         let err = load(&skills, &json!({"name": "alpha"})).unwrap_err();
-        assert!(err.contains("alpha/SKILL.md"), "{err}");
+        assert!(err.contains("SKILL.md: "), "{err}");
     }
 
     #[test]

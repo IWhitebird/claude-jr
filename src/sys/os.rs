@@ -74,6 +74,25 @@ pub fn file_id(file: &File) -> io::Result<(u64, u64)> {
     Ok((info.volume as u64, (info.index_high as u64) << 32 | info.index_low as u64))
 }
 
+/// Takes `file` for this process until it is closed, if no one else has:
+/// false means another holder (another window on the same conversation).
+/// The file can still be read and written by anyone.
+#[cfg(unix)]
+pub fn claim(file: &File) -> bool {
+    !matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+/// On Windows a locked stretch of a file can't be read by others, so the
+/// lock is put on one byte far past anything the file will hold.
+#[cfg(windows)]
+pub fn claim(file: &File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    const FAIL_AT_ONCE_AND_EXCLUSIVE: u32 = 1 | 2;
+    let mut at = win::Overlapped { offset_high: 0x4000_0000, ..Default::default() };
+    // SAFETY: the handle is this open file's; `at` lives through the call.
+    unsafe { win::LockFileEx(file.as_raw_handle(), FAIL_AT_ONCE_AND_EXCLUSIVE, 0, 1, 0, &mut at) != 0 }
+}
+
 /// Makes a file that is about to be created readable by its owner only
 /// (`mode` on Unix; on Windows a file in the user's folder already is).
 pub fn owner_only(options: &mut OpenOptions, mode: u32) -> &mut OpenOptions {
@@ -155,6 +174,44 @@ pub fn alive(pid: u64) -> bool {
     }
 }
 
+/// A way to break another thread out of a read it is blocked in. On Unix
+/// closing the connection does that; on Windows it does not, and the read
+/// has to be cancelled by name.
+pub struct Interrupt(#[cfg(windows)] usize);
+
+impl Interrupt {
+    /// For the thread this is called on.
+    pub fn of_this_thread() -> Interrupt {
+        #[cfg(windows)]
+        {
+            const THREAD_TERMINATE: u32 = 1; // what cancelling its I/O asks for
+            // SAFETY: opens a handle to the calling thread; closed on drop.
+            Interrupt(unsafe { win::OpenThread(THREAD_TERMINATE, 0, win::GetCurrentThreadId()) } as usize)
+        }
+        #[cfg(unix)]
+        Interrupt()
+    }
+
+    /// Cancels what that thread is waiting on, if anything.
+    pub fn now(&self) {
+        #[cfg(windows)]
+        if self.0 != 0 {
+            // SAFETY: the handle is the one opened above.
+            unsafe { win::CancelSynchronousIo(self.0 as *mut std::ffi::c_void) };
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Interrupt {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            // SAFETY: closes the handle opened in `of_this_thread`.
+            unsafe { win::CloseHandle(self.0 as *mut std::ffi::c_void) };
+        }
+    }
+}
+
 /// The Windows calls used above and in signals.rs, declared here so that no
 /// extra crate is needed for them.
 #[cfg(windows)]
@@ -174,10 +231,36 @@ pub mod win {
         pub index_low: u32,
     }
 
+    #[repr(C)]
+    pub struct Overlapped {
+        pub internal: usize,
+        pub internal_high: usize,
+        pub offset: u32,
+        pub offset_high: u32,
+        pub event: *mut c_void,
+    }
+
+    impl Default for Overlapped {
+        fn default() -> Self {
+            Overlapped { internal: 0, internal_high: 0, offset: 0, offset_high: 0, event: std::ptr::null_mut() }
+        }
+    }
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        pub fn LockFileEx(
+            file: *mut c_void,
+            flags: u32,
+            reserved: u32,
+            low: u32,
+            high: u32,
+            at: *mut Overlapped,
+        ) -> i32;
         pub fn GetFileInformationByHandle(file: *mut c_void, info: *mut FileInfo) -> i32;
         pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        pub fn OpenThread(access: u32, inherit: i32, thread: u32) -> *mut c_void;
+        pub fn GetCurrentThreadId() -> u32;
+        pub fn CancelSynchronousIo(thread: *mut c_void) -> i32;
         pub fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
         pub fn CloseHandle(handle: *mut c_void) -> i32;
         pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
@@ -208,6 +291,13 @@ mod tests {
         let again = File::open(&a).unwrap();
         assert_eq!(file_id(&file).unwrap(), file_id(&again).unwrap());
         assert_ne!(file_id(&file).unwrap(), file_id(&File::open(&b).unwrap()).unwrap());
+
+        // Whoever claims a file first has it; it stays readable meanwhile.
+        assert!(claim(&file));
+        assert!(!claim(&again), "someone else has it");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "012345678ab");
+        drop(file);
+        assert!(claim(&again), "free once the holder closed it");
 
         let private = dir.join("private");
         let made = owner_only(OpenOptions::new().create(true).write(true), 0o600).open(&private).unwrap();

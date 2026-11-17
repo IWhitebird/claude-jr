@@ -288,7 +288,8 @@ fn bash_handles_hostile_commands() {
     let killed = bash("kill -9 $$", 5).unwrap_err();
     assert!(!killed.is_empty());
     // The shell survives all of that and still runs in the project.
-    assert_eq!(bash("pwd", 5).unwrap().lines().next().unwrap(), dir.canonicalize().unwrap().to_str().unwrap());
+    let pwd = bash(if cfg!(windows) { "pwd -W" } else { "pwd" }, 5).unwrap();
+    assert_eq!(Path::new(pwd.lines().next().unwrap()).canonicalize().unwrap(), dir.canonicalize().unwrap());
     assert!(started.elapsed() < std::time::Duration::from_secs(40), "took {:?}", started.elapsed());
     t.shutdown();
     let _ = std::fs::remove_dir_all(dir);

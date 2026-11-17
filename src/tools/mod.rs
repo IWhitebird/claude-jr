@@ -177,7 +177,11 @@ impl Tools {
                     return real.display().to_string();
                 }
                 // Outside the project: the full resolved path, never the raw text.
-                full.strip_prefix(&self.root).unwrap_or(&full).display().to_string()
+                // Inside it: written with forward slashes on every system, as rules are.
+                match full.strip_prefix(&self.root) {
+                    Ok(inside) => inside.display().to_string().replace(std::path::MAIN_SEPARATOR, "/"),
+                    Err(_) => full.display().to_string(),
+                }
             }
             "agent" => input["description"].as_str().unwrap_or("").to_string(),
             "skill" => input["name"].as_str().unwrap_or("").to_string(),
@@ -488,7 +492,7 @@ mod tests {
         assert_eq!(subject("src/./app.css"), "src/app.css");
         assert_eq!(subject("src/../index.html"), "index.html");
         let escaped = subject("src/../../outside.txt");
-        assert!(escaped.starts_with('/'), "{escaped}");
+        assert!(Path::new(&escaped).is_absolute(), "{escaped}");
         assert_eq!(PathBuf::from(&escaped), dir.parent().unwrap().join("outside.txt"));
         let rules = crate::permission::Rules::new(vec!["edit:src/*".into()]);
         assert!(rules.allows("edit", &subject("src/a.css")));
