@@ -1,5 +1,6 @@
 // /stats: memory and CPU used by claude-jr and the processes it started,
-// read straight from /proc on Linux and asked of `ps` elsewhere.
+// read straight from /proc on Linux, asked of `ps` on macOS and of the
+// system on Windows.
 
 use std::time::Duration;
 
@@ -13,11 +14,24 @@ struct Proc {
 
 /// What is known about process `pid` ("self" for us).
 fn read(pid: &str) -> Option<Proc> {
+    #[cfg(windows)]
+    return read_windows(pid);
+    #[cfg(not(windows))]
     read_proc(pid).or_else(|| read_ps(pid))
+}
+
+/// Windows: no names or thread counts without a good deal more code.
+#[cfg(windows)]
+fn read_windows(pid: &str) -> Option<Proc> {
+    let which = if pid == "self" { None } else { Some(pid.parse().ok()?) };
+    let (rss_kb, peak_kb, cpu) = crate::sys::os::usage(which)?;
+    let name = if pid == "self" { "claude-jr" } else { "command" }.to_string();
+    Some(Proc { name, rss_kb, peak_kb, threads: 0, cpu })
 }
 
 /// Where there is no /proc (macOS): what `ps` says. It doesn't know the
 /// peak or, in a form every system shares, the number of threads.
+#[cfg(not(windows))]
 fn read_ps(pid: &str) -> Option<Proc> {
     let pid = if pid == "self" { std::process::id().to_string() } else { pid.to_string() };
     let out = std::process::Command::new("ps").args(["-o", "rss=,time=,comm=", "-p", &pid]).output().ok()?;
@@ -32,6 +46,7 @@ fn read_ps(pid: &str) -> Option<Proc> {
 /// CPU time as `ps` prints it: "0:01.50" (minutes, seconds) on macOS,
 /// "00:00:01" (hours, minutes, seconds) on Linux, with days in front
 /// ("1-02:03:04") for a long-lived process.
+#[cfg(not(windows))]
 fn cpu_time(text: &str) -> Option<Duration> {
     let (days, rest) = match text.split_once('-') {
         Some((days, rest)) => (days.parse::<f64>().ok()?, rest),
@@ -46,6 +61,7 @@ fn cpu_time(text: &str) -> Option<Duration> {
 }
 
 /// Reads /proc/<pid>.
+#[cfg(not(windows))]
 fn read_proc(pid: &str) -> Option<Proc> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let field = |key: &str| {
@@ -72,6 +88,7 @@ fn read_proc(pid: &str) -> Option<Proc> {
 
 /// Kernel clock ticks per second. 100 on every common Linux setup; reading it
 /// properly needs libc's sysconf, which isn't worth a dependency.
+#[cfg(not(windows))]
 fn clock_ticks() -> u64 {
     100
 }
@@ -116,7 +133,6 @@ fn clock(d: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)] // /proc or ps
     #[test]
     fn reads_own_process() {
         let me = super::read("self").unwrap();
@@ -139,7 +155,6 @@ mod tests {
         assert_eq!((secs("soon"), secs("1:2:3:4")), (None, None));
     }
 
-    #[cfg(unix)] // /proc or ps
     #[test]
     fn children_are_listed_with_a_total() {
         let me = std::process::id();

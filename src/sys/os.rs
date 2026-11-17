@@ -229,6 +229,37 @@ pub fn alive(pid: u64) -> bool {
     }
 }
 
+/// What Windows knows about a process's use (None: this process): memory
+/// now and at its peak in kB, and CPU time. Linux and macOS are read where
+/// /stats is (ui/stats.rs), from /proc and ps.
+#[cfg(windows)]
+pub fn usage(pid: Option<u32>) -> Option<(u64, u64, std::time::Duration)> {
+    const QUERY_LIMITED: u32 = 0x1000;
+    // SAFETY: plain system calls filling structs of the documented sizes, on
+    // a handle that is opened and closed here (or the process's own).
+    unsafe {
+        let handle = match pid {
+            Some(pid) => win::OpenProcess(QUERY_LIMITED, 0, pid),
+            None => win::GetCurrentProcess(),
+        };
+        if handle.is_null() {
+            return None;
+        }
+        let mut memory = [0usize; 9]; // PROCESS_MEMORY_COUNTERS: two u32, then eight sizes
+        let size = std::mem::size_of_val(&memory) as u32;
+        *memory.as_mut_ptr().cast::<u32>() = size;
+        let mut times = [[0u32; 2]; 4]; // created, exited, in the kernel, in the program
+        let ok = win::K32GetProcessMemoryInfo(handle, memory.as_mut_ptr().cast(), size) != 0
+            && win::GetProcessTimes(handle, &mut times[0], &mut times[1], &mut times[2], &mut times[3]) != 0;
+        if pid.is_some() {
+            win::CloseHandle(handle);
+        }
+        let ticks = |t: [u32; 2]| (t[1] as u64) << 32 | t[0] as u64; // 100 ns each
+        let cpu = std::time::Duration::from_nanos((ticks(times[2]) + ticks(times[3])) * 100);
+        ok.then_some((memory[2] as u64 / 1024, memory[1] as u64 / 1024, cpu))
+    }
+}
+
 /// The Windows calls used above and in signals.rs, declared here so that no
 /// extra crate is needed for them.
 #[cfg(windows)]
@@ -295,6 +326,15 @@ pub mod win {
         pub fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
         pub fn TerminateJobObject(job: *mut c_void, code: u32) -> i32;
         pub fn GetStdHandle(which: u32) -> *mut c_void;
+        pub fn GetCurrentProcess() -> *mut c_void;
+        pub fn K32GetProcessMemoryInfo(process: *mut c_void, counters: *mut c_void, size: u32) -> i32;
+        pub fn GetProcessTimes(
+            process: *mut c_void,
+            created: *mut [u32; 2],
+            exited: *mut [u32; 2],
+            kernel: *mut [u32; 2],
+            user: *mut [u32; 2],
+        ) -> i32;
         pub fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
         pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
     }

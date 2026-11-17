@@ -233,7 +233,6 @@ What is different there:
 - Esc while a reply has not yet begun stops as soon as the server reacts to
   the closed connection, which the real ones do at once; a server that
   ignores it can keep the wait going for up to a minute.
-- `/stats` has no numbers to show there.
 - Windows Terminal, or the terminal in VS Code, is the one to use; the old
   console window has not been tried.
 - 64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
