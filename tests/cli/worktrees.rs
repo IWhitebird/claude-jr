@@ -36,6 +36,30 @@ fn a_worktree_run_leaves_its_work_on_a_branch_and_the_folder_alone() {
     assert!(e.proj.join("demo.txt").exists());
 }
 
+/// An agent that commits its own work (as real models often do) still has
+/// its files listed: they are no longer "changed", but the run changed them.
+#[test]
+fn files_the_run_committed_itself_are_still_reported() {
+    let commit = "echo made > made.txt && git add made.txt && git -c user.name=a -c user.email=a@e.x commit -q -m mine";
+    let e = Env::with(&[("MOCK_CMD", commit), ("MOCK_ROUNDS", "1")]);
+    let git = repository(&e);
+    let o = e.run(&["--worktree", "-y", "-p", "make it", "--output-format", "json"]);
+    ok(&o);
+    let r: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap_or_else(|e| panic!("{e}: {}", o.out));
+    let files: Vec<(&str, &str)> = r["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["path"].as_str().unwrap(), f["status"].as_str().unwrap()))
+        .collect();
+    assert!(files.contains(&("made.txt", "new")), "committed by the agent: {files:?}");
+    assert!(files.contains(&("demo.txt", "new")), "left for the run to commit: {files:?}");
+    assert_eq!(files.len(), 2, "each once: {files:?}");
+    let branch = r["worktree"]["branch"].as_str().unwrap();
+    assert_eq!(r["worktree"]["commits"], 2, "the agent's commit and the run's");
+    assert_eq!(git(&["show", &format!("{branch}:made.txt")]), "made");
+}
+
 #[test]
 fn a_worktree_with_nothing_in_it_is_removed_and_bad_places_are_refused() {
     let e = Env::with(&[("MOCK_ROUNDS", "0")]);

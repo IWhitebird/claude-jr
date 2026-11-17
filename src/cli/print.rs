@@ -125,6 +125,14 @@ fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
     // Before the commit: afterwards nothing counts as changed any more.
     fields["files"] = log.files();
     if let Some(worktree) = &options.worktree {
+        // And what it committed along the way, which no longer shows as changed.
+        if let Some(files) = fields["files"].as_array_mut() {
+            for (path, status) in worktree.committed() {
+                if !files.iter().any(|f| f["path"] == path.as_str()) {
+                    files.push(serde_json::json!({ "path": path, "status": status }));
+                }
+            }
+        }
         let left = worktree.finish(Some(prompt));
         eprintln!("{}", crate::work::worktree::summary(&left));
         fields["worktree"] = left;

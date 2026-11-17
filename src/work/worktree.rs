@@ -104,6 +104,24 @@ impl Worktree {
         git(&self.repo, &["diff", "--name-status", &self.base, &self.branch]).unwrap_or_default().replace('\t', " ")
     }
 
+    /// The files the run has committed here itself, as (path, what happened
+    /// to it): an agent that commits its own work leaves nothing "changed"
+    /// behind for the run's report to find.
+    pub fn committed(&self) -> Vec<(String, &'static str)> {
+        let listing = git(&self.path, &["diff", "--name-status", &self.base, "HEAD"]).unwrap_or_default();
+        let entry = |line: &str| {
+            let (code, path) = line.split_once('\t')?;
+            let what = match code.chars().next()? {
+                'A' => "new",
+                'D' => "deleted",
+                'R' => "renamed",
+                _ => "changed",
+            };
+            Some((path.rsplit('\t').next()?.to_string(), what))
+        };
+        listing.lines().filter_map(entry).collect()
+    }
+
     /// Where the repository keeps its own data (`.git`), which a sandboxed
     /// run must be able to write to for commits in the worktree to work.
     pub fn git_dir(&self) -> PathBuf {
