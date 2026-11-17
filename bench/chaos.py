@@ -46,7 +46,7 @@ def alive(sock):
     return tmux(sock, "display", "-p", "-t", "t", "#{pane_dead}").stdout.strip() == "0"
 
 
-def run(seed):
+def attempt(seed, refused):
     rng = random.Random(seed)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -142,11 +142,18 @@ def run(seed):
     finally:
         tmux(sock, "kill-server")
         mock.kill()
-        refused = open(f"{home}/requests.invalid").read() if os.path.exists(f"{home}/requests.invalid") else ""
+        if os.path.exists(f"{home}/requests.invalid"):
+            refused.append(open(f"{home}/requests.invalid").read())
         shutil.rmtree(home, ignore_errors=True)
-        if refused:
-            # A conversation the real API would refuse is a bug whatever else happened.
-            return "a malformed request was sent: " + refused.split("\n")[0], log
+
+
+def run(seed):
+    refused = []
+    problem, log = attempt(seed, refused)
+    if refused and refused[0]:
+        # A conversation the real API would refuse is a bug whatever else happened.
+        return "a malformed request was sent: " + refused[0].split("\n")[0], log
+    return problem, log
 
 
 failed = 0
