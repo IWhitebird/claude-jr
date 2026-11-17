@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks the real binary on Windows against the fake API (no key, no network):
 # a run with tools in Git Bash and in PowerShell, a session that continues,
-# background tasks (start, merge, cancel) and the MCP server. Run it from Git
-# Bash; CI does on every push.
+# background tasks (start, merge, cancel), the MCP server, the installer and
+# --update against a release folder of its own, and how much memory a run
+# takes. Run it from Git Bash; CI does on every push.
 #
 #   bash bench/windows.sh target/x86_64-pc-windows-msvc/release/claudejr.exe
 set -u
@@ -35,7 +36,7 @@ mock() {
     for _ in $(seq 100); do [ -s "$work/port" ] && break; sleep 0.1; done
     export ANTHROPIC_BASE_URL="http://127.0.0.1:$(head -1 "$work/port" | tr -d '\r')"
 }
-trap '[ -n "${mock_pid:-}" ] && kill "$mock_pid" 2>/dev/null; rm -rf "$work"' EXIT
+trap '[ -n "${mock_pid:-}" ] && kill "$mock_pid" 2>/dev/null; [ -n "${web_pid:-}" ] && kill "$web_pid" 2>/dev/null; rm -rf "$work"' EXIT
 
 cd "$work/proj"
 [ "$("$bin" --version | tr -d '\r' | cut -d' ' -f1)" = claude-jr ] && say ok "it starts" || say FAIL "--version"
@@ -94,6 +95,63 @@ after=$(sleeping)
 reply=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$bin" mcp -y 2>/dev/null)
 echo "$reply" | grep -q '"name":"claude-jr"' && echo "$reply" | grep -q start_task \
     && say ok "the MCP server answers" || say FAIL "mcp: ${reply:0:200}"
+
+# ---- installing and updating, from a release folder served here ----------
+cd "$work"
+version=$("$bin" --version | tr -d '\r' | cut -d' ' -f2)
+mkdir rel && cp "$bin" rel/claudejr-windows-x86_64.exe && echo "$version" >rel/version
+(cd rel && sha256sum claudejr-windows-x86_64.exe >checksums.txt)
+serve() { # serve DIR: a web server for it; its address goes into CLAUDE_JR_RELEASES
+    [ -n "${web_pid:-}" ] && kill "$web_pid" 2>/dev/null
+    port=$("$py" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+    "$py" -m http.server "$port" --bind 127.0.0.1 --directory "$(cygpath -m "$1")" >/dev/null 2>&1 &
+    web_pid=$!
+    sleep 1.5
+    export CLAUDE_JR_RELEASES="http://127.0.0.1:$port"
+}
+installer=$(cygpath -m "$root/install.ps1")
+serve "$work/rel"
+CLAUDE_JR_BIN=$(cygpath -w "$work/bin") powershell -NoProfile -ExecutionPolicy Bypass -File "$installer" >"$work/install.out" 2>&1
+[ "$("$work/bin/claudejr.exe" --version 2>/dev/null | tr -d '\r')" = "claude-jr $version" ] \
+    && say ok "install.ps1 installs the release and it runs" || say FAIL "install.ps1: $(tail -3 "$work/install.out")"
+# Over a copy that is already there (as when updating by installing again).
+CLAUDE_JR_BIN=$(cygpath -w "$work/bin") powershell -NoProfile -ExecutionPolicy Bypass -File "$installer" >"$work/install.out" 2>&1 \
+    && [ -f "$work/bin/claudejr.exe" ] && say ok "installing again replaces the one that is there" || say FAIL "installing again: $(tail -3 "$work/install.out")"
+# A download that doesn't match its checksum is not installed.
+mkdir bad && cp rel/* bad/ && echo tampered >>bad/claudejr-windows-x86_64.exe
+serve "$work/bad"
+CLAUDE_JR_BIN=$(cygpath -w "$work/bin2") powershell -NoProfile -ExecutionPolicy Bypass -File "$installer" >"$work/install.out" 2>&1
+[ ! -e "$work/bin2/claudejr.exe" ] && grep -q "checksum" "$work/install.out" \
+    && say ok "a download that fails its checksum is refused" || say FAIL "a bad checksum got through: $(tail -3 "$work/install.out")"
+
+# --update: nothing newer, then a newer release (a stand-in that says 9.9.9).
+serve "$work/rel"
+"$work/bin/claudejr.exe" --update 2>&1 | grep -q "is the newest version" && say ok "--update with nothing newer changes nothing" || say FAIL "--update, nothing newer"
+if command -v rustc >/dev/null; then
+    mkdir new && echo 'fn main() { println!("claude-jr 9.9.9"); }' >new/v.rs
+    rustc -o "$(cygpath -m "$work/new/claudejr-windows-x86_64.exe")" "$(cygpath -m "$work/new/v.rs")" 2>/dev/null
+    echo 9.9.9 >new/version
+    serve "$work/new"
+    out=$("$work/bin/claudejr.exe" --update 2>&1)
+    [ "$("$work/bin/claudejr.exe" --version | tr -d '\r')" = "claude-jr 9.9.9" ] && echo "$out" | grep -q "Updated claude-jr $version to 9.9.9" \
+        && say ok "--update replaces the program while it runs" || say FAIL "--update: $out"
+    # And once more: the copy set aside last time must not be in the way.
+    echo 'fn main() { println!("claude-jr 9.9.10"); }' >new/v.rs
+    rustc -o "$(cygpath -m "$work/new/next.exe")" "$(cygpath -m "$work/new/v.rs")" 2>/dev/null
+    cp "$bin" "$work/bin/claudejr.exe" 2>/dev/null || { mv "$work/bin/claudejr.exe" "$work/bin/x.exe"; cp "$bin" "$work/bin/claudejr.exe"; }
+    cp new/next.exe new/claudejr-windows-x86_64.exe && echo 9.9.10 >new/version
+    "$work/bin/claudejr.exe" --update >/dev/null 2>&1
+    [ "$("$work/bin/claudejr.exe" --version | tr -d '\r')" = "claude-jr 9.9.10" ] && say ok "and again, over what the last update left" || say FAIL "a second --update"
+fi
+kill "$web_pid" 2>/dev/null
+
+# ---- memory: what a run takes on Windows (reported, not judged) ----------
+cd "$work/proj"
+mock MOCK_ROUNDS=20 MOCK_OUTPUT_KB=40
+peak=$(powershell -NoProfile -Command "\$p = Start-Process -FilePath '$bin' -ArgumentList '-y','-p','run' -PassThru -WindowStyle Hidden; \$null = \$p.Handle; \$p.WaitForExit(); [math]::Round(\$p.PeakWorkingSet64 / 1MB, 1)" | tr -d '\r')
+echo "  memory: a run of 20 commands peaked at ${peak} MB (working set)"
+idle=$(powershell -NoProfile -Command "\$i = New-Object System.Diagnostics.ProcessStartInfo; \$i.FileName = '$bin'; \$i.Arguments = 'mcp -y'; \$i.RedirectStandardInput = \$true; \$i.RedirectStandardOutput = \$true; \$i.UseShellExecute = \$false; \$p = [System.Diagnostics.Process]::Start(\$i); Start-Sleep 3; \$p.Refresh(); [math]::Round(\$p.WorkingSet64 / 1MB, 1), [math]::Round(\$p.PrivateMemorySize64 / 1MB, 1) -join ' '; \$p.Kill()" | tr -d '\r')
+echo "  memory: the MCP server waiting for calls holds (working set, private) ${idle} MB"
 
 echo "windows: $pass passed, $fail failed"
 [ "$fail" = 0 ]

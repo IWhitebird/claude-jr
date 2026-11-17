@@ -2,9 +2,12 @@ name: release
 # Pushing a tag like v0.1.0 builds one plain binary per platform and publishes
 # them with a `version` file and checksums. install.sh, install.ps1 and
 # `claudejr --update` download from the latest release.
+# Started by hand (the "Run workflow" button, or `gh workflow run release`) it
+# builds every binary and publishes nothing: a rehearsal.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -30,14 +33,17 @@ jobs:
       - run: ./build.sh ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/claudejr${{ matrix.exe }} ${{ matrix.name }}
       # The binary must run and carry the tag's version (the Intel Mac build can't run on this runner).
-      - if: matrix.target != 'x86_64-apple-darwin'
+      - if: matrix.target != 'x86_64-apple-darwin' && startsWith(github.ref, 'refs/tags/')
         run: test "$(./${{ matrix.name }} --version)" = "claude-jr ${GITHUB_REF_NAME#v}"
+      - if: matrix.target != 'x86_64-apple-darwin' && !startsWith(github.ref, 'refs/tags/')
+        run: ./${{ matrix.name }} --version
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
   publish:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
