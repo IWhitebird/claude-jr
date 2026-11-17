@@ -145,16 +145,59 @@ pub fn apart(cmd: &mut Command, detached: bool) -> &mut Command {
     cmd
 }
 
+/// Call once `child`, started with `apart`, is running, so that `kill_tree`
+/// reaches everything it goes on to start. On Unix the process group already
+/// does that. On Windows the child is put in a job: the processes of Git's
+/// bash don't keep the parent links a kill of "the tree" would follow.
+pub fn hold(child: &std::process::Child) {
+    #[cfg(unix)]
+    let _ = child;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        // SAFETY: makes a job, puts the child in it, and keeps the job's handle.
+        unsafe {
+            let job = win::CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+            if !job.is_null() && win::AssignProcessToJobObject(job, child.as_raw_handle()) != 0 {
+                win::keep_job(child.id(), job as usize);
+            } else if !job.is_null() {
+                win::CloseHandle(job);
+            }
+        }
+    }
+}
+
+/// Call when a held process has ended by itself (what it left running stays).
+pub fn release(pid: u32) {
+    #[cfg(unix)]
+    let _ = pid;
+    #[cfg(windows)]
+    if let Some(job) = win::take_job(pid) {
+        // SAFETY: closes the handle `hold` kept.
+        unsafe { win::CloseHandle(job as *mut std::ffi::c_void) };
+    }
+}
+
 /// Kills a process started with `apart` and everything it started.
 pub fn kill_tree(pid: u32) {
     #[cfg(unix)]
     let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
     #[cfg(windows)]
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    {
+        if let Some(job) = win::take_job(pid) {
+            // SAFETY: ends every process in the job `hold` made, then closes it.
+            unsafe {
+                win::TerminateJobObject(job as *mut std::ffi::c_void, 1);
+                win::CloseHandle(job as *mut std::ffi::c_void);
+            }
+        }
+        // And by parent links, for a process that was never held (a worker).
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 }
 
 /// Whether a process with this id exists.
@@ -191,6 +234,20 @@ pub fn alive(pid: u64) -> bool {
 #[cfg(windows)]
 pub mod win {
     use std::ffi::c_void;
+    use std::sync::Mutex;
+
+    /// The job each held process is in: (process id, the job's handle).
+    static JOBS: Mutex<Vec<(u32, usize)>> = Mutex::new(Vec::new());
+
+    pub fn keep_job(pid: u32, job: usize) {
+        JOBS.lock().unwrap_or_else(|e| e.into_inner()).push((pid, job));
+    }
+
+    pub fn take_job(pid: u32) -> Option<usize> {
+        let mut jobs = JOBS.lock().unwrap_or_else(|e| e.into_inner());
+        let at = jobs.iter().position(|j| j.0 == pid)?;
+        Some(jobs.swap_remove(at).1)
+    }
 
     #[repr(C)]
     #[derive(Default)]
@@ -234,6 +291,9 @@ pub mod win {
         pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
         pub fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
         pub fn CloseHandle(handle: *mut c_void) -> i32;
+        pub fn CreateJobObjectW(security: *mut c_void, name: *const u16) -> *mut c_void;
+        pub fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+        pub fn TerminateJobObject(job: *mut c_void, code: u32) -> i32;
         pub fn GetStdHandle(which: u32) -> *mut c_void;
         pub fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
         pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
@@ -286,6 +346,7 @@ mod tests {
         assert!(!alive(0));
         let shell = crate::sys::shell::shell();
         let mut child = apart(&mut shell.command("sleep 30 & sleep 30"), false).spawn().unwrap();
+        hold(&child);
         let pid = child.id();
         assert!(alive(pid as u64));
         kill_tree(pid);

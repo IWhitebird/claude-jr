@@ -1,7 +1,7 @@
 // bash, in the foreground or as a background job, and `jobs` to watch those.
 
 use super::{MAX_BYTES, Output, Tools, def};
-use crate::sys::os::kill_tree;
+use crate::sys::os::{self, kill_tree};
 use crate::sys::shell::shell;
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
@@ -114,6 +114,7 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     };
 
     t.running.lock().unwrap().retain(|&p| p != pid);
+    os::release(pid);
     if !pipe_closed {
         let _ = done.recv_timeout(Duration::from_millis(300));
     }
@@ -168,7 +169,9 @@ pub fn jobs(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
 fn spawn(script: &str, cwd: &std::path::Path) -> Result<Child, String> {
     let mut cmd = shell().command(script);
     cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-    crate::sys::os::apart(&mut cmd, false).spawn().map_err(|e| format!("could not start {}: {e}", shell().name()))
+    let child = os::apart(&mut cmd, false).spawn().map_err(|e| format!("could not start {}: {e}", shell().name()))?;
+    os::hold(&child);
+    Ok(child)
 }
 
 /// Copies the child's stdout into `sink` on a side thread. The returned
@@ -272,7 +275,9 @@ impl Jobs {
         let inner = self.0.clone();
         let reaper_job = job.clone();
         let _ = thread::Builder::new().name("job-wait".into()).spawn(move || {
-            let status = match child.wait() {
+            let status = child.wait();
+            os::release(reaper_job.pid);
+            let status = match status {
                 Ok(s) => match s.code() {
                     Some(_) if reaper_job.killed.load(Ordering::Relaxed) => "killed".to_string(),
                     Some(c) => format!("exit {c}"),
