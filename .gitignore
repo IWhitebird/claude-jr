@@ -4,3 +4,4 @@ bench/results/
 .claude/
 .env
 *.profraw
+__pycache__/

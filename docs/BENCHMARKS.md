@@ -49,18 +49,45 @@ More of claude-jr's own numbers (`bench/`):
 
 ## SWE-bench Verified
 
-A first run, on a fixed random sample of [SWE-bench Verified](https://www.swebench.com/) tasks, scored
-with the official harness ([`bench/swe/run.py`](../bench/swe/run.py), results in `bench/swe/results/`):
+All 500 tasks of [SWE-bench Verified](https://www.swebench.com/) with Opus, and a fixed random sample of
+100 with Sonnet, scored with the official harness ([`bench/swe/run.py`](../bench/swe/run.py)):
 
 | model | tasks | resolved | cost | median time per task |
 |---|---|---|---|---|
-| claude-sonnet-5-5 | 100 | 88 (88%) | $5.06 | 14 s |
-| claude-opus-5-5 | 50 (the first 50 of the same list) | 45 (90%) | $5.33 | 27 s |
+| claude-opus-5-5 | all 500 | 467 (93.4%) | $67.32 (13 cents a task) | 34 s |
+| claude-sonnet-5-5 | 100 | 88 (88%) | $5.06 (5 cents a task) | 14 s |
 
-On those same 50 tasks Sonnet resolved 44. With samples this small the true rates could be anywhere
-from about 80% to 95%, so the two models can't be told apart here, and this is not a leaderboard
-entry. The tasks are public and old enough that the models may have seen them. Each task ran once,
+Of the 33 tasks Opus did not resolve, four (`psf__requests-1724`, `-1766`, `-1921`, `-2317`) fail on this
+machine with the reference fix as well, so they could not have been scored as resolved here; they are
+counted as failures all the same. Without them it is 467 of 496 (94.2%). One task ran into the 25-minute
+limit; its patch passed and it counts as resolved, but its cost is missing from the total. The run was
+made in two sittings with builds a few days apart, same prompt and tools. This is not a leaderboard entry.
+The tasks are public and old enough that the models may have seen them. Each task ran once,
 in the task's own container, with no retries and no hints.
+
+## Handing work out: when it pays
+
+The same main agent (Opus 5.5) was given ten independent pieces of work in one repository three ways:
+do it all itself; give each piece to a subagent; give each to a claude-jr worker over MCP, as Claude Code
+would. Subagents and workers ran on Haiku 5.5, each in its own worktree. Two sizes: ten one-line fixes,
+and ten packages of six fixes each. One run of each ([`bench/workers/run.py`](../bench/workers/run.py)):
+
+| | ten small fixes | | | ten packages (60 fixes) | | |
+|---|---|---|---|---|---|---|
+| | fixed | time | cost | fixed | time | cost |
+| alone | 10/10 | 22 s | $0.12 | 60/60 | 39 s | $0.22 |
+| with subagents | 10/10 | 42 s | $0.19 | 60/60 | 76 s | $0.32 |
+| with workers | 10/10 | 39 s | $0.18 | 60/60 | 77 s | $0.34 |
+
+On work of this size, doing it alone wins on both counts. Opus reads and edits many files in one reply, so
+sixty small fixes take it a handful of requests; handing them out means writing ten briefs, waiting, and
+merging ten branches, and that organising is what costs. The ten workers together cost 4 cents of the
+$0.34 (0.4 cents each) and held 12.7 MB between them, the 22 processes of the run included.
+
+So this does not show handing work out to be cheaper, and the numbers above should not be read that way.
+What it does show is that the workers themselves are nearly free; whether delegation pays depends on the
+pieces being long enough (many steps each, where one agent's context would grow with every step) to be
+worth a brief and a merge. That case has not been measured here yet.
 
 ## Measuring it yourself
 

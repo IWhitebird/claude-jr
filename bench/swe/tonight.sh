@@ -24,7 +24,8 @@ log=$res/tonight.log
 # A key in .env, if there is one; else the one claude-jr itself has from
 # /login. ENV_FILE=/dev/null skips .env (for when the key in it is an old one).
 set -a
-[ -f "${ENV_FILE-.env}" ] && . "./${ENV_FILE-.env}"
+env_file=${ENV_FILE-.env}
+[ -f "$env_file" ] && . "$(realpath "$env_file")"
 set +a
 mkdir -p "$res"
 rm -f $res/swe-finished

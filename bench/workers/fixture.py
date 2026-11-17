@@ -305,8 +305,8 @@ EXPORTS = {"slug": "slugify", "duration": "parse_duration", "lru": "LRU", "roman
            "intervals": "merge", "wrap": "wrap", "version": "newer", "flatten": "flatten", "average": "moving_average"}
 
 
-def write(root, names=None, fixed=False):
-    """Writes the package into `root` (a new git repository with one commit)."""
+def package(root, names=None, fixed=False):
+    """Writes the package into the folder `root`."""
     os.makedirs(os.path.join(root, "pkg"))
     os.makedirs(os.path.join(root, "tests"))
     for d in ("pkg", "tests"):
@@ -321,9 +321,33 @@ def write(root, names=None, fixed=False):
     with open(os.path.join(root, "README.md"), "w") as f:
         f.write("# pkg\n\nSmall helpers. Each module in `pkg/` has its tests in `tests/`:\n\n"
                 "    python3 -m unittest tests.test_NAME\n")
+
+
+def commit(root):
     git = ["git", "-c", "user.name=bench", "-c", "user.email=bench@example.com", "-c", "commit.gpgsign=false"]
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "the package as found"]):
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "the code as found"]):
         subprocess.run(git + args, cwd=root, check=True)
+
+
+def write(root, names=None, fixed=False):
+    """The package in `root`, as a new git repository with one commit."""
+    package(root, names, fixed)
+    commit(root)
+
+
+def services(count, each):
+    """`count` folders (svc01, svc02, ...) and the `each` modules in each: a
+    different run of the ten for every folder, so no two hold the same set."""
+    names = list(MODULES)
+    return {f"svc{i + 1:02}": [names[(i * 3 + j) % len(names)] for j in range(each)] for i in range(count)}
+
+
+def write_services(root, plan, fixed=False):
+    """A repository of several packages, each in a folder of its own (see `services`)."""
+    os.makedirs(root)
+    for folder, names in plan.items():
+        package(os.path.join(root, folder), names, fixed)
+    commit(root)
 
 
 def passing(root, names=None):
@@ -343,5 +367,12 @@ if __name__ == "__main__":
         write(os.path.join(tmp, "found"))
         write(os.path.join(tmp, "fixed"), fixed=True)
         found, fixed = passing(os.path.join(tmp, "found")), passing(os.path.join(tmp, "fixed"))
+        plan = services(10, 6)
+        write_services(os.path.join(tmp, "many"), plan)
+        write_services(os.path.join(tmp, "many-fixed"), plan, fixed=True)
+        many = sum(len(passing(os.path.join(tmp, "many", f), n)) for f, n in plan.items())
+        many_fixed = sum(len(passing(os.path.join(tmp, "many-fixed", f), n)) for f, n in plan.items())
     print(f"as shipped: {len(found)} of {len(MODULES)} pass {found}; once fixed: {len(fixed)} pass")
-    sys.exit(0 if not found and len(fixed) == len(MODULES) else 1)
+    print(f"ten services of six: {many} of 60 pass as shipped, {many_fixed} once fixed; "
+          f"{len(set(map(tuple, plan.values())))} different sets")
+    sys.exit(0 if not found and len(fixed) == len(MODULES) and many == 0 and many_fixed == 60 else 1)

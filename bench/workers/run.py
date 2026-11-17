@@ -1,5 +1,7 @@
-# Ten independent fixes, done three ways by the same main agent, to see what
-# handing work out buys: wall time, money, memory.
+# Ten independent pieces of work, done three ways by the same main agent, to
+# see what handing work out buys: wall time, money, memory. Two sizes: ten
+# one-line fixes (the default; small enough that handing them out only adds
+# overhead), and with --each N ten packages of N fixes each.
 #
 #   alone      the main agent does all ten itself, one after another
 #   subagents  it gives each to a subagent of its own (threads in its process)
@@ -10,7 +12,8 @@
 # worker model (WORKER, Haiku unless set). Each arrangement starts from the
 # same repository (see fixture.py) and is scored by running the tests after.
 #
-#   python3 bench/workers/run.py BINARY                     all three, real API (costs a few dollars)
+#   python3 bench/workers/run.py BINARY                     all three, real API (under a dollar)
+#   python3 bench/workers/run.py BINARY --each 6            the bigger job: ten packages of six fixes (a few dollars)
 #   python3 bench/workers/run.py BINARY --only workers --tasks 2 --main claude-haiku-5-5   a cheap trial
 #   python3 bench/workers/run.py BINARY --dry-run           against the fake API: checks the plumbing only
 #
@@ -27,16 +30,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 WHAT = ("This repository has a small Python package: modules in pkg/, each with tests in tests/ "
         "(python3 -m unittest tests.test_NAME). {n} modules have a bug that makes their tests fail: {names}. "
         "Fix each module so that its tests pass. Do not change the tests.")
+WHAT_MANY = ("This repository has {n} small Python packages, each in a folder of its own: {names}. In each folder, "
+             "modules are in pkg/ and their tests in tests/ (run from inside the folder: python3 -m unittest "
+             "discover -s tests -t .). Every module in every folder has a bug that makes its tests fail, and the "
+             "folders do not all hold the same modules. Fix every module so that all tests pass. Do not change the tests.")
 HOW = {
-    "alone": "Do all of it yourself, one module after another. Do not use the agent tool.",
-    "subagents": ("Give each module to a subagent of its own with the agent tool, with worktree set to true, and "
+    "alone": "Do all of it yourself, one {unit} after another. Do not use the agent tool.",
+    "subagents": ("Give each {unit} to a subagent of its own with the agent tool, with worktree set to true, and "
                   "start them all in one message so they run side by side. Tell each one everything it needs: the "
-                  "module, its test command, and not to touch anything else. When they have finished, merge every "
+                  "{unit}, its test command, and not to touch anything else. When they have finished, merge every "
                   "branch they report, then run all the tests and fix whatever still fails yourself."),
-    "workers": ("Give each module to a claude-jr worker of its own with the start_task tool: one call per module, "
-                "all in one message, each prompt self-contained (the module, its test command, and not to touch "
+    "workers": ("Give each {unit} to a claude-jr worker of its own with the start_task tool: one call per {unit}, "
+                "all in one message, each prompt self-contained (the {unit}, its test command, and not to touch "
                 "anything else). Then call wait_tasks until all have finished, merge_task each one, run all the "
-                "tests and fix whatever still fails yourself. Do not fix the modules yourself before that."),
+                "tests and fix whatever still fails yourself. Do not fix anything yourself before that."),
 }
 
 
@@ -72,7 +79,11 @@ def run(arrangement, binary, names, args, env):
     """One arrangement in a fresh copy of the repository. Returns its measurements."""
     work = tempfile.mkdtemp(prefix=f"cjr-workers-{arrangement}-")
     repo, home = os.path.join(work, "repo"), os.path.join(work, "home")
-    fixture.write(repo, names)
+    plan = fixture.services(len(names), args.each) if args.each else None
+    if plan:
+        fixture.write_services(repo, plan)
+    else:
+        fixture.write(repo, names)
     os.makedirs(os.path.join(home, "claude-jr"))
     # A copy of the binary of this run's own: its processes are then found by path.
     exe = os.path.join(work, "claudejr")
@@ -81,7 +92,8 @@ def run(arrangement, binary, names, args, env):
     if arrangement == "workers":
         config["mcp_servers"] = {"claude-jr": {"command": exe, "args": ["mcp", "-y"]}}
     json.dump(config, open(os.path.join(home, "claude-jr", "config.json"), "w"))
-    prompt = WHAT.format(n=len(names), names=", ".join(names)) + " " + HOW[arrangement]
+    what, pieces, unit = (WHAT_MANY, list(plan), "folder") if plan else (WHAT, names, "module")
+    prompt = what.format(n=len(pieces), names=", ".join(pieces)) + " " + HOW[arrangement].format(unit=unit)
     env = dict(env, HOME=home, XDG_CONFIG_HOME=home, XDG_DATA_HOME=home)
 
     peak = {"kb": 0, "processes": 0}
@@ -121,12 +133,15 @@ def run(arrangement, binary, names, args, env):
     steps = [json.loads(l) for l in open(os.path.join(work, "log.jsonl"))] if os.path.exists(
         os.path.join(work, "log.jsonl")) else []
     handed = sum(1 for s in steps if s.get("type") == "step" and s.get("tool") in ("agent", "mcp__claude-jr__start_task"))
-    fixed = fixture.passing(repo, names)
+    if plan:
+        fixed = sum(len(fixture.passing(os.path.join(repo, folder), mods)) for folder, mods in plan.items())
+    else:
+        fixed = len(fixture.passing(repo, names))
     row = {
         "arrangement": arrangement,
         "ok": bool(report.get("ok")),
-        "fixed": len(fixed),
-        "of": len(names),
+        "fixed": fixed,
+        "of": len(names) * (args.each or 1),
         "seconds": round(seconds, 1),
         "cost_usd": round(report.get("cost_usd", 0) + sum(w.get("cost_usd", 0) for w in workers), 4),
         "main_cost_usd": round(report.get("cost_usd", 0), 4),
@@ -148,7 +163,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary")
     ap.add_argument("--only", action="append", choices=list(HOW), help="run just this arrangement (repeatable)")
-    ap.add_argument("--tasks", type=int, default=len(fixture.MODULES), help="how many of the ten modules")
+    ap.add_argument("--tasks", type=int, default=len(fixture.MODULES), help="how many pieces of work (up to ten)")
+    ap.add_argument("--each", type=int, default=0, help="make each piece a package of this many fixes (up to ten)")
     ap.add_argument("--main", default="claude-opus-5-5", help="the main agent's model")
     ap.add_argument("--worker", help="the worker model (default: claude-jr's own default, Haiku)")
     ap.add_argument("--timeout", type=int, default=1800)
@@ -184,7 +200,8 @@ def main():
     if not args.dry_run:
         out = os.path.join(ROOT, "bench/results", time.strftime("workers-%Y%m%d-%H%M%S.json"))
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        json.dump({"main": args.main, "worker": args.worker or "default", "tasks": len(names), "runs": rows},
+        json.dump({"main": args.main, "worker": args.worker or "default", "tasks": len(names), "each": args.each or 1,
+                   "runs": rows},
                   open(out, "w"), indent=1)
         print(f"saved {out}")
 

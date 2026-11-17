@@ -20,7 +20,7 @@
     <td align="center"><b>2 MB</b><br>binary, no runtime</td>
     <td align="center"><b>0.7 MB</b><br>memory when idle</td>
     <td align="center"><b>5 ms</b><br>to start</td>
-    <td align="center"><b>88%</b><br>SWE-bench Verified<br>100-task sample, Sonnet 5.5</td>
+    <td align="center"><b>93.4%</b><br>SWE-bench Verified<br>all 500 tasks, Opus 5.5</td>
   </tr>
 </table>
 
@@ -28,8 +28,8 @@
 
 claude-jr (Claude Junior) is a small, fast alternative to Claude Code, written
 in Rust. It reads and edits your files and runs commands, asking before
-anything changes, with Claude or any other model. On a 100-task sample of
-SWE-bench Verified it resolved 88%.
+anything changes, with Claude or any other model. On SWE-bench Verified it resolved 467 of the
+500 tasks (93.4%).
 
 It is also built to be run many at once. Claude Code, Cursor or Codex can hand
 it tasks over MCP; each worker gets its own git worktree and branch and holds
@@ -51,8 +51,8 @@ the newest release.
 - **Tiny.** One static 2 MB file. No Node, no Python, nothing to install first.
 - **Light.** 0.7 MB of memory when idle, and under 4 MB however long the session gets, because the conversation lives on disk instead of in memory. A whole session, commands included, fits in a 16 MB container on a twentieth of a CPU core.
 - **Fast.** It starts in 5 ms and uses no CPU while it waits.
-- **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs 5 to 10 cents.
-- **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, so handing work off costs less than doing it. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
+- **Cheap to run.** A short fixed prompt, about 3,000 tokens with its tools. A SWE-bench task costs about 5 cents with Sonnet and 13 with Opus.
+- **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, at well under a cent for a small task. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
 - **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU. Claude through Amazon Bedrock or Google Vertex AI with `-m bedrock/...` and `-m vertex/...` (in the next release; not yet tested against the real services).
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
 - **Tested.** 397 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
@@ -74,12 +74,12 @@ A thousand claude-jr agents working at once hold 488 MB between them
 
 [SWE-bench Verified](https://www.swebench.com/), one attempt per task, official scoring:
 
-| model             | tasks        | resolved | cost  |
-|-------------------|--------------|----------|-------|
-| claude-sonnet-5-5 | 100 of 500   | 88%      | $5.06 |
-| claude-opus-5-5   | 50 of 500    | 90%      | $5.33 |
+| model             | tasks        | resolved        | cost   |
+|-------------------|--------------|-----------------|--------|
+| claude-opus-5-5   | all 500      | 467 (93.4%)     | $67.32 |
+| claude-sonnet-5-5 | 100 of 500   | 88 (88%)        | $5.06  |
 
-The tasks were picked at random from the full set of 500. How everything is
+Sonnet's 100 were picked at random from the 500. How everything is
 measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Use
