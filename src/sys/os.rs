@@ -330,7 +330,14 @@ mod tests {
         assert!(!claim(&again), "someone else has it");
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "012345678ab");
         drop(file);
-        assert!(claim(&again), "free once the holder closed it");
+        // (A program another test is just starting can hold a copy of the file for a moment.)
+        let freed = (0..100).any(|_| {
+            claim(&again) || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(freed, "free once the holder closed it");
 
         let private = dir.join("private");
         let made = owner_only(OpenOptions::new().create(true).write(true), 0o600).open(&private).unwrap();

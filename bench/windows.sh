@@ -83,8 +83,14 @@ sleep 3
 "$bin" task cancel "$id" >/dev/null 2>&1
 status=$("$bin" task result "$id" | field status)
 [ "$status" = cancelled ] && say ok "cancelling stops it" || { say FAIL "after cancel: $status"; show "$id"; }
-sleep 1
-tasklist 2>/dev/null | grep -qi '^sleep' && say FAIL "the cancelled task's command is still running" || say ok "and the command it was running"
+sleep 3
+if tasklist 2>/dev/null | grep -qi '^sleep'; then
+    say FAIL "the cancelled task's command is still running"
+    powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'sleep|bash|claudejr' } | Format-Table ProcessId,ParentProcessId,Name,CreationDate -AutoSize | Out-String -Width 200"
+    show "$id"
+else
+    say ok "and the command it was running"
+fi
 
 reply=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$bin" mcp -y 2>/dev/null)
 echo "$reply" | grep -q '"name":"claude-jr"' && echo "$reply" | grep -q start_task \
