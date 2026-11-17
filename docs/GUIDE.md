@@ -2,6 +2,29 @@
 
 Everything the command does, in one place. The short version is in the [README](../README.md).
 
+## Start here
+
+```sh
+curl -fsSL https://claudejr.iwhitebird.com/install | sh    # Linux, macOS
+cd your-project
+claudejr
+```
+
+The first time, it asks for an Anthropic API key and saves it for you (or set
+`ANTHROPIC_API_KEY`; or skip the key and use a local model:
+`claudejr -m ollama/qwen3`). Then type what you want done. It reads files
+freely, and asks before it edits one or runs a command; `shift-tab` changes
+how much it asks. `esc` stops it, `/` lists every command, and `/rewind`
+takes back anything it did.
+
+Three things worth trying first:
+
+| | |
+|---|---|
+| `explain how this project is laid out` | it reads its way around and tells you |
+| `claudejr --sandbox` | let it work without asking, unable to write outside the project (Linux) |
+| `claudejr -p "fix the failing test" -y` | one task, no conversation, for scripts and CI |
+
 ## Use
 
 ```sh

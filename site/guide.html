@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Using claude-jr · claude-jr</title>
+<meta name="description" content="How to use claude-jr: commands, keys, permission modes, tools, skills, MCP, the sandbox, other models, background tasks and config.">
+<link rel="canonical" href="https://claudejr.iwhitebird.com/guide">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<meta name="theme-color" content="#f4f1e9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="Using claude-jr · claude-jr">
+<meta property="og:description" content="How to use claude-jr: commands, keys, permission modes, tools, skills, MCP, the sandbox, other models, background tasks and config.">
+<meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* The documents, set like the front page: paper, serif headings, rules. */
+  :root {
+    color-scheme: light dark;
+    --paper: #f4f1e9; --ink: #1b1915; --ink-2: #4d4842; --ink-3: #736d63;
+    --rule: #ddd7cb; --clay: #bf5a37; --clay-text: #a8492a; --code: #ebe6da;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #161412; --ink: #ece6dc; --ink-2: #b9b1a6; --ink-3: #968e83; --rule: #322d28; --clay: #e0805c; --clay-text: #e8906e; --code: #221f1b; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16.5px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { color: var(--clay-text); }
+  :focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+  .frame { max-width: 1040px; margin: 0 auto; padding-inline: max(22px, env(safe-area-inset-left)) max(22px, env(safe-area-inset-right)); }
+  header.top { padding-block: 22px; border-bottom: 1px solid var(--rule); }
+  header.top .frame { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header.top img { width: 30px; height: 26px; image-rendering: pixelated; }
+  header.top .name { font: 500 17px var(--sans); text-decoration: none; }
+  header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; color: var(--ink-2); flex-wrap: wrap; }
+  header.top nav a { text-decoration: none; }
+  header.top nav a[aria-current] { color: var(--ink); font-weight: 600; }
+  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-block: 40px 80px; }
+  aside nav { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 7px; font-size: 14.5px; max-height: calc(100vh - 48px); overflow-y: auto; }
+  aside nav a { text-decoration: none; color: var(--ink-2); }
+  aside b { font-size: 13px; font-weight: 500; color: var(--ink-3); margin-bottom: 4px; }
+  @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; } aside { display: none; } }
+  article { min-width: 0; }
+  article h1 { font: 400 clamp(2.1rem, 5vw, 2.9rem)/1.1 var(--serif); letter-spacing: -0.02em; margin: 0 0 20px; }
+  article h2 { font: 400 1.75rem/1.2 var(--serif); letter-spacing: -0.01em; margin: 56px 0 12px; padding-top: 22px; border-top: 1px solid var(--rule); }
+  article h3 { font: 600 1.05rem var(--sans); margin: 32px 0 8px; }
+  article p, article li { color: var(--ink-2); }
+  article strong { color: var(--ink); font-weight: 600; }
+  article ul, article ol { padding-left: 1.3em; }
+  article li { margin: 4px 0; }
+  code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); }
+  pre code { background: none; padding: 0; font: inherit; }
+  .scroll { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); white-space: nowrap; }
+  td { color: var(--ink-2); }
+  td:first-child { color: var(--ink); }
+  footer { border-top: 1px solid var(--rule); padding-block: 24px 44px; font-size: 14.5px; color: var(--ink-3); }
+  footer .frame { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  footer a { color: var(--ink-2); text-decoration: none; }
+</style>
+<script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="frame">
+    <img src="/logo.svg" alt="" width="30" height="26">
+    <a class="name" href="/">claude-jr</a>
+    <nav><a href="/guide" aria-current=page>Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture">Architecture</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
+  </div>
+</header>
+<div class="frame layout">
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#start-here">Start here</a><a href="#use">Use</a><a href="#modes">Modes</a><a href="#tools">Tools</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sandbox">Sandbox</a><a href="#windows">Windows</a><a href="#other-models">Other models</a><a href="#claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</a><a href="#running-many-at-once">Running many at once</a><a href="#working-for-another-agent">Working for another agent</a><a href="#memory-and-sessions">Memory and sessions</a><a href="#config">Config</a><a href="#how-it-works">How it works</a><a href="#not-included">Not included</a></nav></aside>
+  <article>
+<h1 id="using-claude-jr">Using claude-jr</h1>
+<p>Everything the command does, in one place. The short version is in the <a href="/">README</a>.</p>
+<h2 id="start-here">Start here</h2>
+<pre><code class="language-sh">curl -fsSL https://claudejr.iwhitebird.com/install | sh    # Linux, macOS
+cd your-project
+claudejr
+</code></pre>
+<p>The first time, it asks for an Anthropic API key and saves it for you (or set
+<code>ANTHROPIC_API_KEY</code>; or skip the key and use a local model:
+<code>claudejr -m ollama/qwen3</code>). Then type what you want done. It reads files
+freely, and asks before it edits one or runs a command; <code>shift-tab</code> changes
+how much it asks. <code>esc</code> stops it, <code>/</code> lists every command, and <code>/rewind</code>
+takes back anything it did.</p>
+<p>Three things worth trying first:</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>explain how this project is laid out</code></td>
+<td>it reads its way around and tells you</td>
+</tr>
+<tr>
+<td><code>claudejr --sandbox</code></td>
+<td>let it work without asking, unable to write outside the project (Linux)</td>
+</tr>
+<tr>
+<td><code>claudejr -p &quot;fix the failing test&quot; -y</code></td>
+<td>one task, no conversation, for scripts and CI</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="use">Use</h2>
+<pre><code class="language-sh">claudejr                         # start; the first time, it asks for your API key
+claudejr --sandbox               # only allow writes inside this directory
+claudejr -c                      # continue the last conversation here
+claudejr -r &quot;auth refactor&quot;      # continue a named conversation
+claudejr -p &quot;explain main.rs&quot;    # one prompt, print the answer, exit
+claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
+claudejr -p &quot;fix the tests&quot; -y --output-format json --max-cost 2   # for scripts: JSON result, stop at $2
+</code></pre>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>enter</td>
+<td>send</td>
+</tr>
+<tr>
+<td>ctrl-j, shift-enter, <code>\</code> + enter</td>
+<td>new line</td>
+</tr>
+<tr>
+<td>shift-tab</td>
+<td>change mode</td>
+</tr>
+<tr>
+<td>esc</td>
+<td>stop the current turn</td>
+</tr>
+<tr>
+<td>ctrl-c</td>
+<td>clear input; twice to quit</td>
+</tr>
+<tr>
+<td>up / down</td>
+<td>history</td>
+</tr>
+<tr>
+<td>ctrl-v</td>
+<td>paste: an image if the clipboard has one, otherwise its text</td>
+</tr>
+</tbody>
+</table></div>
+<p>A long paste shows in the input as a short label, such as <code>[Pasted #1: 40 lines, 3104 chars]</code>;
+the whole text is sent. Backspace removes the label in one go.</p>
+<p>Type <code>/</code> to see every command; keep typing to narrow the list, up/down to pick,
+tab to complete, enter to run.</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/model</code></td>
+<td>pick a model from the list (price, what it's for), or <code>/model &lt;id&gt;</code></td>
+</tr>
+<tr>
+<td><code>/effort LEVEL</code></td>
+<td>low, medium, high, xhigh, max, or default</td>
+</tr>
+<tr>
+<td><code>/rewind</code></td>
+<td>go back to before an earlier message; undoes the agent's file changes</td>
+</tr>
+<tr>
+<td><code>/compact [focus]</code></td>
+<td>replace the conversation with a summary to free up context</td>
+</tr>
+<tr>
+<td><code>/resume</code></td>
+<td>pick an earlier conversation in this folder</td>
+</tr>
+<tr>
+<td><code>/rename NAME</code></td>
+<td>name this conversation</td>
+</tr>
+<tr>
+<td><code>/clear</code>, <code>/new</code></td>
+<td>start over on a clean screen</td>
+</tr>
+<tr>
+<td><code>/jobs</code>, <code>/kill N</code></td>
+<td>background jobs</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>layout, model, effort, starting mode, web tools, sandbox</td>
+</tr>
+<tr>
+<td><code>/memory</code>, <code>/skills</code>, <code>/mcp</code></td>
+<td>what's loaded</td>
+</tr>
+<tr>
+<td><code>/stats</code></td>
+<td>memory and CPU of claude-jr and everything it started</td>
+</tr>
+<tr>
+<td><code>/cost</code></td>
+<td>tokens and spend so far</td>
+</tr>
+<tr>
+<td><code>/login</code>, <code>/logout</code></td>
+<td>add, change or remove your API key</td>
+</tr>
+<tr>
+<td><code>/&lt;skill&gt; args</code></td>
+<td>run a skill</td>
+</tr>
+<tr>
+<td><code>#some note</code></td>
+<td>save a note to <code>./AGENTS.md</code></td>
+</tr>
+<tr>
+<td><code>!command</code></td>
+<td>run a command yourself; the agent sees the output</td>
+</tr>
+</tbody>
+</table></div>
+<p>Images: drag a file into the terminal (its path is pasted and the image is
+attached) or press ctrl+v with a screenshot in the clipboard. The agent can
+also <code>read</code> image files, like a design or a screenshot of your app. Images are
+copied once into <code>~/.local/share/claude-jr/images/</code> and encoded from disk while
+a request is sent, so they don't sit in memory.</p>
+<p>The input stays on the bottom rows of the screen and the conversation scrolls
+above it; running subagents and background jobs are listed under the input.
+Resizing the terminal redraws what's on screen at the new width. Tables are
+drawn with boxes and a line between rows.
+<code>&quot;layout&quot;: &quot;inline&quot;</code> in the config (or <code>/settings</code>) puts the input right after
+the conversation instead.</p>
+<p>Your key is saved to <code>~/.config/claude-jr/credentials</code>, readable only by you.
+<code>ANTHROPIC_API_KEY</code> works too and takes priority.</p>
+<h2 id="modes">Modes</h2>
+<p>Shift-tab cycles through them; the current one shows under the input box.</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>edits</th>
+<th>commands</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>normal</td>
+<td>ask</td>
+<td>ask</td>
+</tr>
+<tr>
+<td>accept edits</td>
+<td>run</td>
+<td>ask</td>
+</tr>
+<tr>
+<td>plan</td>
+<td>refused; the model is told to plan instead</td>
+<td>ask</td>
+</tr>
+<tr>
+<td>auto</td>
+<td>run inside the project</td>
+<td>a small model (Haiku) reviews each one: routine ones run, risky ones ask you, with the reason</td>
+</tr>
+<tr>
+<td>skip permissions</td>
+<td>run</td>
+<td>run</td>
+</tr>
+</tbody>
+</table></div>
+<p>When it asks: <code>y</code> yes, <code>a</code> always for this session, <code>n</code> no. <code>-y</code> starts in
+skip-permissions mode. With <code>-p</code>, anything that would ask is refused.</p>
+<p>Auto mode costs a fraction of a cent per reviewed command. It blocks things
+like <code>git push</code>, deleting outside the project, <code>sudo</code>, and sending data over
+the network unless your request plausibly needs them.</p>
+<h2 id="tools">Tools</h2>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read</code>, <code>write</code>, <code>edit</code></td>
+<td>files; edits must match exactly once, and a file must be read before it's changed</td>
+</tr>
+<tr>
+<td><code>bash</code></td>
+<td>commands; <code>cd</code> carries over; <code>background: true</code> for servers, watchers and long builds</td>
+</tr>
+<tr>
+<td><code>jobs</code></td>
+<td>list, read, wait on or kill background jobs; <code>wait</code> can stop as soon as output contains some text (&quot;Listening on&quot;)</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td>a subagent with its own context for a self-contained task; several run in parallel</td>
+</tr>
+<tr>
+<td><code>ask_user</code></td>
+<td>the model asks you something, with options you pick by number</td>
+</tr>
+<tr>
+<td><code>todo</code></td>
+<td>a task list for longer work, shown as it changes</td>
+</tr>
+<tr>
+<td><code>memory</code></td>
+<td>notes the agent keeps about you and the project, loaded every session</td>
+</tr>
+<tr>
+<td><code>skill</code></td>
+<td>loads a skill's instructions</td>
+</tr>
+<tr>
+<td><code>web_search</code>, <code>web_fetch</code></td>
+<td>Anthropic's server-side tools: nothing runs locally, and they are not asked about first (see MCP below); set <code>&quot;web_tools&quot;: false</code> to turn them off</td>
+</tr>
+<tr>
+<td>MCP tools</td>
+<td>whatever your MCP servers provide</td>
+</tr>
+</tbody>
+</table></div>
+<p>Reads, subagents, skills and MCP calls in the same reply run at the same time.
+When a background job ends, you see a notice and the model is told with your
+next message.</p>
+<h2 id="skills">Skills</h2>
+<p>Same format as Claude Code, so existing skills work. Put them in
+<code>.claude/skills/&lt;name&gt;/SKILL.md</code> (project) or <code>~/.claude/skills/</code> (yours):</p>
+<pre><code class="language-markdown">---
+name: release
+description: Cut a release: bump the version, tag, write notes.
+---
+1. ...
+</code></pre>
+<p>Only names and descriptions are sent up front. The model loads a skill when a
+task matches it, or you run it with <code>/release</code>.</p>
+<h2 id="mcp">MCP</h2>
+<p><code>.mcp.json</code> (Claude Code's format) or <code>&quot;mcp_servers&quot;</code> in the config:</p>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;files&quot;:  { &quot;command&quot;: &quot;npx&quot;, &quot;args&quot;: [&quot;-y&quot;, &quot;@modelcontextprotocol/server-filesystem&quot;, &quot;.&quot;] },
+    &quot;linear&quot;: { &quot;url&quot;: &quot;https://mcp.linear.app/mcp&quot;, &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer ${LINEAR_TOKEN}&quot; } }
+  }
+}
+</code></pre>
+<ul>
+<li><strong>Local servers</strong> (<code>command</code>) run as their own processes and talk JSON-RPC
+over stdin/stdout. claude-jr adds one small thread per server; the server's
+own memory is separate, and <code>/stats</code> shows it.</li>
+<li><strong>Remote servers</strong> (<code>url</code>) are handed to the API's MCP connector, so
+Anthropic calls them and they cost nothing locally. The URL must be
+reachable from the internet.</li>
+</ul>
+<p>Remote MCP tools and web search/fetch run on Anthropic's servers inside one
+request, so claude-jr only sees them after they have run: they are not
+approved one by one, and plan mode does not stop them. Each call is still
+listed in the transcript with its arguments, and failures are marked. To avoid
+this, use local servers (every call goes through the normal permission check),
+leave out <code>url</code> servers, and set <code>&quot;web_tools&quot;: false</code> in the config. Remote
+servers come only from your own config or from a trusted folder's <code>.mcp.json</code>;
+an untrusted folder's <code>.mcp.json</code> is ignored.</p>
+<h2 id="sandbox">Sandbox</h2>
+<pre><code class="language-sh">claudejr --sandbox
+</code></pre>
+<p>claude-jr restarts itself inside <a href="https://github.com/containers/bubblewrap">bubblewrap</a>,
+so the kernel enforces the limits for every tool, including its own file edits:</p>
+<ul>
+<li><strong>writable</strong>: the current directory, its session files, package caches, a private <code>/tmp</code></li>
+<li><strong>read-only</strong>: the rest of the system, toolchains in <code>$HOME</code> (<code>.cargo</code>, <code>.rustup</code>, <code>.nvm</code>, ...),
+and the project's git hooks and git config, so nothing can be planted that runs on your next
+git command</li>
+<li><strong>hidden</strong>: everything else in <code>$HOME</code> (ssh keys, tokens, other projects), your session's
+sockets in <code>$XDG_RUNTIME_DIR</code> (D-Bus, ssh and gpg agents, the desktop), and the Docker,
+Podman and containerd sockets, any of which would be a way out</li>
+</ul>
+<p>What it doesn't cover:</p>
+<ul>
+<li><strong>The project's own files.</strong> They are writable by design, so a command can still change a
+<code>Makefile</code>, a script, or <code>.envrc</code> that you later run outside the sandbox. Review changes
+before running them.</li>
+<li><strong>Package caches.</strong> <code>~/.cargo/registry</code>, <code>~/.npm</code>, <code>~/.cache</code> stay writable so builds work;
+a command could change downloaded source there that a later build outside the sandbox uses.</li>
+<li><strong>The network.</strong> It stays on, because the agent needs the API.</li>
+<li><strong>Pasting a screenshot</strong> with ctrl+v doesn't work inside it, since the desktop's clipboard
+socket is hidden. Dragging an image file in still does.</li>
+</ul>
+<p><code>bench/sandbox.sh</code> checks all of this: a fake model tries to delete a file outside the
+project, write to <code>$HOME</code>, plant a git hook, change the git config, and reach the Docker
+socket and the session bus. All must fail, while a write and a commit in the project
+must work. To try the agent on a repo without risking anything, use a throwaway worktree:</p>
+<pre><code class="language-sh">git worktree add /tmp/try &amp;&amp; cd /tmp/try &amp;&amp; claudejr --sandbox
+</code></pre>
+<p>Linux only for now.</p>
+<h2 id="windows">Windows</h2>
+<p>New, and so far checked only on GitHub's Windows machines and not by a person
+at a Windows desk; please report what you find. Install from PowerShell:</p>
+<pre><code class="language-powershell">irm https://claudejr.iwhitebird.com/install.ps1 | iex
+</code></pre>
+<p>What is different there:</p>
+<ul>
+<li><strong>Commands run in Git Bash</strong>, the bash that comes with
+<a href="https://git-scm.com/download/win">Git for Windows</a>, so the model's usual
+<code>grep</code>, <code>ls</code> and pipes work. Without Git, commands run in PowerShell and the
+model is told to write PowerShell. <code>CLAUDE_JR_SHELL</code> names another shell.</li>
+<li><strong>Files</strong> are in <code>%APPDATA%\claude-jr</code> (config, the saved key) and
+<code>%LOCALAPPDATA%\claude-jr</code> (sessions, tasks, worktrees). <code>XDG_CONFIG_HOME</code>
+and <code>XDG_DATA_HOME</code> move them, as elsewhere.</li>
+<li><strong>No sandbox</strong> (<code>--sandbox</code> is Linux's bubblewrap) and no idle memory trim,
+so memory at rest is higher than the Linux figures.</li>
+<li>Esc while a reply has not yet begun stops as soon as the server reacts to
+the closed connection, which the real ones do at once; a server that
+ignores it can keep the wait going for up to a minute.</li>
+<li><code>/stats</code> has no numbers to show there.</li>
+<li>Windows Terminal, or the terminal in VS Code, is the one to use; the old
+console window has not been tried.</li>
+<li>64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
+too, with the Linux build.</li>
+</ul>
+<h2 id="other-models">Other models</h2>
+<p>A model id with a provider's name in front goes to that provider; a plain id
+is Anthropic's, as before. (Claude through a cloud account is the next section.)</p>
+<pre><code class="language-sh">claudejr -m ollama/qwen3:8b            # a local model, no key
+claudejr -m openai/gpt-5               # needs OPENAI_API_KEY
+claudejr -m openrouter/meta/llama-4    # needs OPENROUTER_API_KEY
+</code></pre>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openai</code>, <code>openrouter</code>, <code>gemini</code>, <code>groq</code>, <code>deepseek</code>, <code>mistral</code>, <code>xai</code></td>
+<td><code>OPENAI_API_KEY</code>, <code>OPENROUTER_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>GROQ_API_KEY</code>, <code>DEEPSEEK_API_KEY</code>, <code>MISTRAL_API_KEY</code>, <code>XAI_API_KEY</code></td>
+</tr>
+<tr>
+<td><code>ollama</code>, <code>lmstudio</code>, <code>llamacpp</code> (local servers on their usual ports; <code>OLLAMA_HOST</code> is read)</td>
+<td>none</td>
+</tr>
+</tbody>
+</table></div>
+<p>Any other server that speaks Chat Completions or the Messages format can be
+added in the config and used as <code>-m work/some-model</code>:</p>
+<pre><code class="language-json">{ &quot;providers&quot;: {
+    &quot;work&quot;: { &quot;base_url&quot;: &quot;https://llm.example.com/v1&quot;, &quot;key_env&quot;: &quot;WORK_LLM_KEY&quot;, &quot;context&quot;: 128000 },
+    &quot;other&quot;: { &quot;base_url&quot;: &quot;https://api.example.ai&quot;, &quot;api&quot;: &quot;anthropic&quot;, &quot;key_env&quot;: &quot;OTHER_KEY&quot; }
+} }
+</code></pre>
+<p>Things to know:</p>
+<ul>
+<li>The model has to be good at calling tools; small local models often aren't.</li>
+<li>Ollama gives a model a 4,096-token context unless told otherwise, which is
+less than claude-jr's own instructions and tools need. Raise it (for example
+<code>OLLAMA_CONTEXT_LENGTH=32768 ollama serve</code>).</li>
+<li>Web search, cost figures, automatic compaction and effort levels are
+Anthropic's; with other models <code>/compact</code> still works when you run it.</li>
+<li>A conversation can be continued with a different provider's model: the
+history is kept in one format and translated for whoever is asked.</li>
+</ul>
+<h2 id="claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</h2>
+<p>The same Claude models, billed by your cloud account. <strong>Not yet tested
+against the real services</strong>: there was no AWS or Google Cloud account to test
+with, so this is built from the documentation and checked against a stand-in
+that refuses what each cloud documents it refuses (and checks every AWS
+signature). <code>bench/provider.sh bedrock/claude-haiku-5-5</code> is the real test; if
+you run it, please say how it went.</p>
+<pre><code class="language-sh">claudejr -m bedrock/claude-opus-5-5
+claudejr -m vertex/claude-opus-5-5
+</code></pre>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th></th>
+<th>Bedrock</th>
+<th>Vertex</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Login</td>
+<td><code>AWS_BEARER_TOKEN_BEDROCK</code> (a Bedrock API key), or <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> (and <code>AWS_SESSION_TOKEN</code> if you have one)</td>
+<td><code>VERTEX_ACCESS_TOKEN</code>, or else whatever <code>gcloud auth print-access-token</code> prints</td>
+</tr>
+<tr>
+<td>Where</td>
+<td><code>AWS_REGION</code> (then <code>AWS_DEFAULT_REGION</code>, then <code>us-east-1</code>)</td>
+<td><code>ANTHROPIC_VERTEX_PROJECT_ID</code> (or <code>GOOGLE_CLOUD_PROJECT</code>), and <code>CLOUD_ML_REGION</code> (<code>global</code> if unset)</td>
+</tr>
+<tr>
+<td>Model ids</td>
+<td>Claude's own names; <code>anthropic.</code> is put in front for you</td>
+<td>Claude's own names; older models with their date, as in <code>claude-haiku-4-5@20251001</code></td>
+</tr>
+<tr>
+<td>A gateway in front</td>
+<td><code>ANTHROPIC_BEDROCK_BASE_URL</code></td>
+<td><code>ANTHROPIC_VERTEX_BASE_URL</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Things to know:</p>
+<ul>
+<li>Thinking, effort levels, prompt caching, automatic compaction, costs and
+context sizes work as they do with Anthropic directly.</li>
+<li>Neither cloud has web search and fetch as claude-jr uses them, the refusal
+fallback, or remote MCP servers, so those are left out. Local MCP servers work.</li>
+<li>Bedrock is spoken to at its Messages address (<code>bedrock-mantle</code>). Models it
+serves only at the older address (Fable 5.2 today) are not available, and
+neither are <code>~/.aws</code> profiles, SSO or instance roles: export the keys.</li>
+<li>With access keys every request is signed, which means reading the
+conversation through once more to hash it: about 2 ms for a 4 MB history. A
+Bedrock API key avoids that.</li>
+<li>Costs shown are Anthropic's list prices; a single-region endpoint costs a
+tenth more than that.</li>
+<li>On Vertex, a service-account key file is not read: use <code>gcloud</code>, or pass a token.</li>
+</ul>
+<h2 id="running-many-at-once">Running many at once</h2>
+<p>Three pieces make a run something another program, or another agent, can
+start, watch and collect.</p>
+<p><strong>A worktree of its own.</strong> <code>--worktree</code> does the work in a git worktree on a
+new branch, so several runs in one repository can't touch each other's files
+or yours. It starts from the current commit and lives outside the repository.
+A headless run commits what it changed; a worktree in which nothing changed is
+removed again.</p>
+<pre><code class="language-sh">claudejr --worktree -y -p &quot;fix the flaky test&quot;
+# The work is on branch claudejr/6a7d01 (1 commit) ...
+</code></pre>
+<p><strong>A record of what it did.</strong> <code>--log FILE</code> writes one JSON line per step:
+each tool call with its input, what allowed it to run (the mode, an allow
+rule, the reviewer, you) or that it was refused, how it went and how long it
+took. <code>--output-format stream-json</code> prints the same lines to stdout as they
+happen. Both end with the result, which <code>--output-format json</code> prints alone:
+the final answer, the files changed, the branch, cost and tokens.</p>
+<p><strong>Tasks.</strong> A task is a run that carries on in the background:</p>
+<pre><code class="language-sh">id=$(claudejr task start -y &quot;add tests for the parser&quot;)   # returns at once
+claudejr task list                # what is running, what finished
+claudejr task wait $id            # blocks until it has finished
+claudejr task result $id          # the outcome as JSON, or how far it is
+claudejr task log $id -f          # follow every step
+claudejr task merge $id           # take its branch, clean up
+claudejr task drop $id            # or throw it away
+</code></pre>
+<p>In a git repository each task gets its own worktree and branch, named after
+its id. A group of tasks can share one budget, and all stop when it is used
+up:</p>
+<pre><code class="language-sh">for t in &quot;fix lint in api&quot; &quot;fix lint in ui&quot; &quot;fix lint in tools&quot;; do
+  claudejr task start -y --group lint --budget 2.00 &quot;$t&quot;
+done
+claudejr task wait
+</code></pre>
+<p>Each worker holds about half a megabyte, so the number you can run at once is
+set by your API rate limits, not by memory.</p>
+<p><strong>A fleet.</strong> The same in one command: a list of tasks, run a few at a time,
+with a table at the end of what each did and the branch it left.</p>
+<pre><code class="language-sh">claudejr fleet -y --max 4 --budget 5 &quot;fix lint in api&quot; &quot;fix lint in ui&quot; &quot;fix lint in tools&quot;
+claudejr fleet -y --merge --file tasks.txt     # one task per line; merge each branch when done
+</code></pre>
+<p><strong>Subagents in worktrees.</strong> Inside a session the agent can do the same with
+its own subagents: one started with <code>worktree: true</code> works in its own copy of
+the repository, its work is committed when it finishes, and its report ends
+with the branch for the main agent to merge. A subagent can start subagents of
+its own, one level down and no further, and at most 16 run at once.</p>
+<p><strong>The worker model.</strong> Work that is handed off (a task, a fleet's tasks, a
+task another agent starts over MCP, a subagent) is done by the worker model,
+not the one you talk to. Beside a Claude model that is <code>claude-haiku-5-5</code>,
+which does a well-described job at a fortieth of Opus's price; beside any
+other provider's model, or Claude through Bedrock or Vertex, it is that model
+itself.</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>To change it</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>for one task</td>
+<td><code>claudejr task start -m claude-sonnet-5-5 &quot;...&quot;</code>, <code>claudejr fleet -m ...</code>, or <code>model</code> in an MCP <code>start_task</code> call</td>
+</tr>
+<tr>
+<td>for every worker</td>
+<td><code>&quot;worker_model&quot;: &quot;claude-sonnet-5-5&quot;</code> in the config, or <code>CLAUDE_JR_WORKER_MODEL</code></td>
+</tr>
+<tr>
+<td>for an agent's workers</td>
+<td><code>claudejr install claude-code -m claude-sonnet-5-5</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><code>task list</code>, a fleet's table and every task's result name the model that did
+the work.</p>
+<h2 id="working-for-another-agent">Working for another agent</h2>
+<p>Another coding agent can hand work to claude-jr workers and stay the one you
+talk to. <code>claudejr mcp</code> is an MCP server whose tools start tasks, wait for
+them, read their results, logs and diffs, and merge or drop their branches.</p>
+<pre><code class="language-sh">claudejr install claude-code     # this project: .mcp.json and a skill
+claudejr install cursor          # this project: .cursor/mcp.json and a rule
+claudejr install codex           # ~/.codex/config.toml
+claudejr install claude-code --user     # every project
+claudejr uninstall claude-code   # takes it out again
+</code></pre>
+<p>What the workers may do is yours to decide, not the calling agent's: it is set
+when you install, with the server's options.</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th>Installed with</th>
+<th>Workers can</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>nothing, on Linux with bubblewrap</td>
+<td>edit and run commands, confined to their worktree</td>
+</tr>
+<tr>
+<td>nothing, elsewhere</td>
+<td>read only; the install says so</td>
+</tr>
+<tr>
+<td><code>-y</code></td>
+<td>edit and run commands</td>
+</tr>
+<tr>
+<td><code>-y --sandbox</code></td>
+<td>the same, confined to their worktree (Linux)</td>
+</tr>
+<tr>
+<td><code>-m MODEL</code></td>
+<td>use that model, not the worker model (a call can still name another)</td>
+</tr>
+<tr>
+<td><code>--budget USD</code></td>
+<td>spend that much between them, then stop</td>
+</tr>
+</tbody>
+</table></div>
+<p>Any other MCP client can use it too: the command is <code>claudejr mcp</code> plus those
+options, over stdio.</p>
+<h2 id="memory-and-sessions">Memory and sessions</h2>
+<ul>
+<li><strong>In RAM</strong>: only the current conversation, kept as the exact JSON text sent
+to the API. Requests are streamed straight from it, so it's never copied.
+Tool output is cut to 50 KB (start and end) before it's stored.</li>
+<li><strong>Context</strong>: the footer shows <code>used/window</code> tokens. Near the limit the API
+compacts older turns on its side.</li>
+<li><strong>On disk</strong>: <code>~/.local/share/claude-jr/sessions/&lt;directory&gt;/</code>, one message
+per line, only ever appended to. <code>--sessions</code> lists them.</li>
+<li><strong>Instructions</strong>: <code>AGENTS.md</code> or <code>CLAUDE.md</code> in the current directory, its
+parents, and <code>~/.config/claude-jr/</code>. <code>#note</code> appends to <code>./AGENTS.md</code>.</li>
+<li><strong>The agent's own notes</strong>: <code>~/.local/share/claude-jr/memory/&lt;project&gt;/MEMORY.md</code>,
+kept with the <code>memory</code> tool (8 KB cap) and loaded at the start of each session.</li>
+<li><strong>Rewind</strong>: before the agent first changes a file in a turn, the original is
+copied next to the session. <code>/rewind</code> puts files back; shell commands' changes
+aren't tracked.</li>
+<li><strong>Compaction</strong>: <code>/compact</code> replaces the conversation with a detailed summary.
+Near the limit, the API also compacts on its side.</li>
+</ul>
+<p>When claude-jr exits, by quitting, a signal or closing the terminal, it stops
+every command, background job and MCP server it started.</p>
+<h2 id="config">Config</h2>
+<p><code>~/.config/claude-jr/config.json</code>, then <code>./.claude-jr.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;model&quot;: &quot;claude-sonnet-5-5&quot;,
+  &quot;effort&quot;: &quot;high&quot;,
+  &quot;auto_model&quot;: &quot;claude-haiku-5-5&quot;,
+  &quot;worker_model&quot;: &quot;claude-haiku-5-5&quot;,
+  &quot;allow&quot;: [&quot;bash:cargo *&quot;, &quot;bash:git status&quot;, &quot;edit&quot;],
+  &quot;sandbox&quot;: { &quot;enabled&quot;: true, &quot;read&quot;: [&quot;/opt/sdk&quot;], &quot;write&quot;: [] },
+  &quot;layout&quot;: &quot;bottom&quot;,
+  &quot;mode&quot;: &quot;normal&quot;,
+  &quot;web_tools&quot;: true,
+  &quot;mcp_servers&quot;: {}
+}
+</code></pre>
+<p><code>allow</code> rules skip the prompt: <code>tool</code> for every call, or <code>tool:pattern</code> where
+<code>*</code> matches anything; <code>mcp__server</code> covers all of a server's tools. A command
+with <code>;</code>, <code>&amp;&amp;</code>, <code>|</code>, <code>$(...)</code> or redirects only matches a rule that spells it
+out exactly, so <code>cargo *</code> can't approve <code>cargo test; rm -rf ~</code>.</p>
+<h2 id="how-it-works">How it works</h2>
+<p>The full picture, with diagrams, is in <a href="/architecture">ARCHITECTURE.md</a>.</p>
+<pre><code> key reader ─┐
+             ├─&gt; UI thread ── commands ──&gt; agent thread ──&gt; Claude API
+ agent ──────┘   (draws)    &lt;── events ───  (runs tools; subagents and
+                                             parallel calls on more threads)
+</code></pre>
+<ul>
+<li><strong>No async runtime.</strong> Plain threads and channels. The UI blocks on one
+channel, so it uses no CPU while you think. While text streams in it draws
+at most ~30 frames a second and rewrites only the lines that changed;
+finished rows of a long paragraph go to scrollback as soon as they can't
+change.</li>
+<li><strong>Messages are stored as the JSON text that goes over the wire.</strong> A request
+is streamed straight from them and the session file is the same text.</li>
+<li><strong>The history only grows.</strong> That keeps the prompt cache warm and the model's
+earlier reasoning valid. The system prompt and tool list are fixed per
+session; mode changes, notes and job notices go into the next user message.</li>
+<li><strong>The UI writes finished lines once</strong> into normal terminal scrollback and
+redraws only the few lines at the bottom.</li>
+</ul>
+<pre><code>src/
+  main.rs         args, config, start
+  agent/          conversation, tool loop, subagents, modes and approval
+  tools/          read/write/edit, bash and jobs, todo, skills, MCP client
+  api.rs          requests, streaming, retries, per-model features, prices
+  prompt.rs       system prompt, AGENTS.md, notes
+  session.rs      saved conversations
+  sandbox.rs      bubblewrap
+  signals.rs      clean exit on signals
+  permission.rs   allow rules
+  config.rs       config files
+  print.rs        -p output
+  ui/             terminal UI: loop, drawing, input, markdown, /stats
+bench/
+  mock.py         fake API for tests and benchmarks
+  mem.sh          long session; fails above 16 MB
+  cpu.sh          idle and busy CPU
+  ui.py           the UI while a reply streams in
+  compare.py      side by side with Claude Code, pi and Codex
+  box.sh          run in a small container (CPUS=0.05 MEMORY=16m bench/box.sh)
+  sandbox.sh      check the sandbox
+</code></pre>
+<h2 id="not-included">Not included</h2>
+<p>Plugins, hooks, IDE integration.</p>
+
+  </article>
+</div>
+<footer>
+  <div class="frame">
+    <a href="/">claude-jr</a>
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">This page on GitHub</a>
+    <span>MIT licensed; not made by or affiliated with Anthropic.</span>
+  </div>
+</footer>
+</body>
+</html>

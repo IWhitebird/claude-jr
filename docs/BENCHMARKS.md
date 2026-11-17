@@ -121,7 +121,13 @@ worth a brief and a merge. That case has not been measured here yet.
 The Windows build is 2.03 MB (`claudejr-windows-x86_64.exe`). CI builds it on a Windows machine, runs the
 283 unit tests that apply there, and puts the binary through [`bench/windows.sh`](../bench/windows.sh)
 against the fake API: a run with tools in Git Bash and in PowerShell, a session that continues, and
-background tasks started, merged and cancelled. Its memory and CPU have not been measured.
+background tasks started, merged and cancelled, the installer (which must refuse a download that fails
+its checksum) and `--update` replacing the program while it runs.
+
+On that machine a run of 20 commands peaked at 8.2 MB, and the MCP server waiting for calls held 5.8 MB
+(1.2 MB of it its own; the rest is Windows' shared libraries, which every program is charged for). Those
+are working-set figures, Windows' counterpart of the Linux numbers above; there is no idle trim on
+Windows, and the interactive UI has not been measured there.
 
 ## Measuring it yourself
 
