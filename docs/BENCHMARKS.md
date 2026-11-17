@@ -89,6 +89,13 @@ What it does show is that the workers themselves are nearly free; whether delega
 pieces being long enough (many steps each, where one agent's context would grow with every step) to be
 worth a brief and a merge. That case has not been measured here yet.
 
+## Windows
+
+The Windows build is 2.03 MB (`claudejr-windows-x86_64.exe`). CI builds it on a Windows machine, runs the
+283 unit tests that apply there, and puts the binary through [`bench/windows.sh`](../bench/windows.sh)
+against the fake API: a run with tools in Git Bash and in PowerShell, a session that continues, and
+background tasks started, merged and cancelled. Its memory and CPU have not been measured.
+
 ## Measuring it yourself
 
 | What | How |

@@ -41,7 +41,9 @@ about half a megabyte, so a thousand of them fit in 500 MB.
 curl -fsSL https://claudejr.iwhitebird.com/install | sh
 ```
 
-Linux and macOS, x86_64 and ARM. On Windows, run it inside WSL. Then run
+Linux and macOS, x86_64 and ARM. On Windows, from the next release (0.3.0),
+`irm https://claudejr.iwhitebird.com/install.ps1 | iex` in PowerShell; until
+then, inside WSL. Then run
 `claudejr`; it asks for your Anthropic API key the first time, or start it with
 another provider's model (`claudejr -m ollama/qwen3`). `claudejr --update` gets
 the newest release.
@@ -55,7 +57,7 @@ the newest release.
 - **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, at well under a cent for a small task. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
 - **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU. Claude through Amazon Bedrock or Google Vertex AI with `-m bedrock/...` and `-m vertex/...` (in the next release; not yet tested against the real services).
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 397 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
+- **Tested.** 401 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 
