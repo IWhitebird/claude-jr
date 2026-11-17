@@ -22,6 +22,9 @@
 #   busy   one prompt in print mode, ROUNDS bash calls with streamed text in
 #          between: wall time, the agent's own CPU and peak memory (sampled
 #          from /proc), and the total including the commands it ran
+#   sent   what the agent sends the API during that run: how many requests,
+#          and the size of its instructions and tool definitions, which go
+#          out (and are paid for, cached or not) with every one of them
 #
 # Each agent runs with a fresh, empty HOME so your own config isn't touched.
 
@@ -212,7 +215,27 @@ def busy(argv, env, cwd):
     }
 
 
-def run_agent(name, binary, port):
+def sent(log):
+    """What the fake API received since the log was last emptied."""
+    try:
+        bodies = [json.loads(line) for line in open(log)]
+    except (FileNotFoundError, ValueError):
+        return None
+    # The requests of the conversation itself (an agent may make others: titles, checks).
+    main = [b for b in bodies if b.get("tools")]
+    if not main:
+        return None
+    first = main[0]
+    system = first.get("system") or ""
+    return {
+        "requests": len(bodies),
+        "system_bytes": len(system if isinstance(system, str) else json.dumps(system)),
+        "tools": len(first["tools"]),
+        "tools_bytes": len(json.dumps(first["tools"])),
+    }
+
+
+def run_agent(name, binary, port, log):
     home = tempfile.mkdtemp(prefix=f"cmp-{name}-")
     project = os.path.join(home, "project")
     os.makedirs(project)
@@ -222,8 +245,10 @@ def run_agent(name, binary, port):
     result["idle"] = idle(interactive(binary), env, project)
     if oneshot:
         # Totals for everything the run started, from the kernel's accounting.
+        open(log, "w").close()  # what the idle UI sent doesn't count
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         result["busy"] = busy(oneshot(binary), env, project)
+        result["sent"] = sent(log)
         after = resource.getrusage(resource.RUSAGE_CHILDREN)
         result["busy"]["total_cpu_s"] = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
     shutil.rmtree(home, ignore_errors=True)
@@ -249,6 +274,12 @@ def table(results):
     rows.append(("busy: agent's own CPU", *[b(r, "own_cpu_s", lambda v: f"{v * 1000:.0f} ms") for r in results]))
     rows.append(("busy: agent's own peak memory", *[b(r, "own_peak_kb", mb) for r in results]))
     rows.append(("busy: CPU incl. commands", *[b(r, "total_cpu_s", lambda v: f"{v * 1000:.0f} ms") for r in results]))
+    def s(r, fmt):
+        return fmt(r["sent"]) if r.get("sent") else "n/a"
+    rows.append(("sent: requests for the run", *[s(r, lambda v: str(v["requests"])) for r in results]))
+    rows.append(("sent: instructions", *[s(r, lambda v: f"{v['system_bytes'] / 1024:.1f} KB") for r in results]))
+    rows.append(("sent: tool definitions", *[s(r, lambda v: f"{v['tools']} tools, {v['tools_bytes'] / 1024:.1f} KB") for r in results]))
+    rows.append(("sent: both, in tokens (about)", *[s(r, lambda v: f"{(v['system_bytes'] + v['tools_bytes']) / 4000:.1f}k") for r in results]))
     widths = [max(len(str(row[i])) for row in rows) for i in range(len(rows[0]))]
     lines = []
     for i, row in enumerate(rows):
@@ -269,16 +300,20 @@ def main():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    mock_env = dict(os.environ, MOCK_SCENARIO="bench", MOCK_ROUNDS=str(ROUNDS), MOCK_OUTPUT_KB="4")
+    log = tempfile.mkstemp(prefix="cmp-requests-")[1]
+    mock_env = dict(os.environ, MOCK_SCENARIO="bench", MOCK_ROUNDS=str(ROUNDS), MOCK_OUTPUT_KB="4", MOCK_LOG=log)
     mock = subprocess.Popen([sys.executable, "-I", os.path.join(ROOT, "bench/mock.py"), str(port)], env=mock_env)
     time.sleep(0.5)
     try:
         results = []
         for n, b in found:
             print(f"measuring {n} ...", file=sys.stderr)
-            results.append(run_agent(n, b, port))
+            results.append(run_agent(n, b, port, log))
     finally:
         mock.kill()
+        for leftover in (log, log + ".headers", log + ".invalid"):
+            if os.path.exists(leftover):
+                os.remove(leftover)
 
     print(table(results))
     os.makedirs(os.path.join(ROOT, "bench/results"), exist_ok=True)

@@ -68,7 +68,9 @@ Next to Claude Code, on the same laptop and the same fake API, so no model time 
 | install size                  | 2.0 MB    | 354 MB      | 177        |
 | memory, idle                  | 0.7 MB    | 148 MB      | 200        |
 | memory at its peak, 20 tool calls | 2.2 MB | 289 MB     | 130        |
+| memory at its peak, 100 tool calls | 2.2 MB | 335 MB    | 150        |
 | its own CPU for 20 tool calls | 40 ms     | 1,140 ms    | 28         |
+| instructions and tools sent with every request | 6.6 KB | 35.8 KB | 5 |
 | startup                       | 4 ms      | 157 ms      | 40         |
 
 Claude Code 2.1.326, measured 18 November 2026 with `bench/compare.py`. Claude

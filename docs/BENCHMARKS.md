@@ -19,6 +19,15 @@ Busy = one prompt that makes 20 bash calls with streamed text in between.
 | busy: agent's own CPU         | 40 ms     | 1140 ms     | 28         |
 | busy: agent's own peak memory | 2.2 MB    | 288.9 MB    | 130        |
 | busy: CPU incl. commands      | 119 ms    | 1268 ms     | 11         |
+| the same with 100 calls: own CPU | 250 ms | 3550 ms     | 14         |
+| the same with 100 calls: peak memory | 2.2 MB | 335.0 MB | 150       |
+| sent with every request: instructions | 1.5 KB | 6.1 KB  |            |
+| sent with every request: tool definitions | 10 tools, 5.1 KB | 12 tools, 29.7 KB | |
+| sent with every request: both | 6.6 KB (about 1.7k tokens) | 35.8 KB (about 9k tokens) | 5 |
+
+"Sent with every request" is what each puts in front of the conversation in print mode (`-p`), read from
+what the fake API received; the token figures are bytes divided by four, an estimate. It is paid for on
+every request, at the cached price after the first. Interactive sessions offer more tools in both.
 
 Claude Code 2.1.326 and claude-jr's static x86_64 build (2,030,368 bytes), 18 November 2026, on a Linux
 laptop. Claude Code is a much larger product (plugins, hooks, IDE integration, an auto-updater and more);
