@@ -2,7 +2,7 @@
 # Installs claudejr (claude-jr, "Claude Junior") from the latest release:
 #   curl -fsSL https://claudejr.iwhitebird.com/install | sh
 # It goes to ~/.local/bin (set CLAUDE_JR_BIN for another folder). Linux and
-# macOS, x86_64 and ARM. On Windows, run it inside WSL.
+# macOS, x86_64 and ARM. Windows has install.ps1.
 set -eu
 
 base=${CLAUDE_JR_RELEASES:-https://github.com/IWhitebird/claude-jr/releases/latest/download}
@@ -11,7 +11,7 @@ dir=${CLAUDE_JR_BIN:-$HOME/.local/bin}
 case $(uname -s) in
     Linux) os=linux ;;
     Darwin) os=macos ;;
-    *) echo "claude-jr has builds for Linux and macOS. On Windows, run this inside WSL." >&2; exit 1 ;;
+    *) echo "This script is for Linux and macOS. On Windows, in PowerShell: irm https://claudejr.iwhitebird.com/install.ps1 | iex" >&2; exit 1 ;;
 esac
 case $(uname -m) in
     x86_64 | amd64) arch=x86_64 ;;

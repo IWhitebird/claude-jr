@@ -8,6 +8,10 @@
 //
 // Needs: script (util-linux), stty, kill, touch, python3.
 
+// These drive the binary with shell scripts, a pseudo-terminal and Unix paths.
+// On Windows the same ground is covered by bench/windows.sh.
+#![cfg(unix)]
+
 mod common;
 
 mod commands;

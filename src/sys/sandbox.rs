@@ -14,7 +14,6 @@
 // The network stays on, because the agent needs the API.
 
 use crate::store::config::{SandboxConfig, config_dir, data_dir};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -139,7 +138,10 @@ pub fn exec(cfg: &SandboxConfig) -> String {
     cmd.args(["--setenv", ENV, "1"]);
     cmd.arg("--").arg(&exe).args(std::env::args_os().skip(1));
 
-    let err = cmd.exec();
+    #[cfg(not(unix))]
+    let err = std::io::Error::other("there is no sandbox on this system; it needs Linux");
+    #[cfg(unix)]
+    let err = std::os::unix::process::CommandExt::exec(&mut cmd);
     if err.kind() == std::io::ErrorKind::NotFound {
         "--sandbox needs bubblewrap: install it with your package manager (bwrap)".into()
     } else {

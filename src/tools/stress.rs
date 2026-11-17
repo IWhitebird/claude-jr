@@ -92,6 +92,7 @@ impl Rng {
 }
 
 /// The most memory this process has used, in kB.
+#[cfg(unix)]
 fn peak_kb() -> u64 {
     let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
     status.lines().find_map(|l| l.strip_prefix("VmHWM:")?.split_whitespace().next()?.parse().ok()).unwrap_or(0)
@@ -138,6 +139,7 @@ fn no_tool_panics_or_hangs_on_malformed_input() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
 #[test]
 fn reading_odd_files_answers() {
     let (t, dir) = test_tools("stress-read");

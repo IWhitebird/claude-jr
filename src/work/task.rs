@@ -14,9 +14,9 @@
 
 use super::budget;
 use crate::store::config::data_dir;
+use crate::sys::os::{self, alive};
 use serde_json::{Value, json};
 use std::fs::{self, File};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,14 +41,6 @@ pub fn write_json(path: &Path, value: &Value) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, format!("{value:#}\n"))?;
     fs::rename(tmp, path)
-}
-
-fn alive(pid: u64) -> bool {
-    unsafe extern "C" {
-        fn kill(pid: i32, signal: i32) -> i32;
-    }
-    // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
-    pid > 0 && unsafe { kill(pid as i32, 0) } == 0
 }
 
 /// What `task start` was asked for.
@@ -118,7 +110,8 @@ pub fn start(start: &Start) -> Result<String, String> {
     }
     // Its own process group, and nothing tied to this terminal: it carries
     // on when the program that started it has gone.
-    cmd.stdin(Stdio::null()).stdout(output.try_clone().map_err(|e| e.to_string())?).stderr(output).process_group(0);
+    cmd.stdin(Stdio::null()).stdout(output.try_clone().map_err(|e| e.to_string())?).stderr(output);
+    os::apart(&mut cmd, true);
     let child = cmd.spawn().map_err(|e| format!("couldn't start the worker: {e}"))?;
     let task = json!({
         "id": id,
@@ -237,13 +230,19 @@ pub fn cancel(id: &str) -> Result<String, String> {
         return Ok(format!("{} had already finished ({})", name(&dir), task["status"].as_str().unwrap_or("")));
     }
     let pid = task["pid"].as_u64().unwrap_or(0);
-    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    // Asked first, so it can commit what it has: a signal, or on Windows
+    // (which has none to send) a file it watches for.
+    if cfg!(unix) {
+        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    } else {
+        let _ = fs::write(dir.join("stop"), "");
+    }
     let start = Instant::now();
     while alive(pid) && start.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(50));
     }
     if alive(pid) {
-        crate::tools::kill_group(pid as u32);
+        os::kill_tree(pid as u32);
     }
     if !dir.join("result.json").exists() {
         let _ = write_json(&dir.join("result.json"), &json!({ "ok": false, "cancelled": true, "error": "cancelled" }));

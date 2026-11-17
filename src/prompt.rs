@@ -34,12 +34,25 @@ mentioning it. Then say what you checked and what you could not.";
 
 /// Whether a program is installed.
 fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+    std::env::var_os("PATH").is_some_and(|p| {
+        std::env::split_paths(&p).any(|d| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)).is_file())
+    })
 }
 
 const INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const MAX_FILE: usize = 32 * 1024;
 const MAX_GIT_LINES: usize = 30;
+
+/// What the model has to know about the shell on Windows.
+fn windows_note(shell: &str) -> &'static str {
+    if shell == "PowerShell" {
+        "\n\nThis is Windows without Git Bash: the bash tool runs PowerShell, so write PowerShell commands \
+         (Get-ChildItem, Select-String, Get-Content), not bash ones."
+    } else {
+        "\n\nThis is Windows: the bash tool runs Git Bash. Unix commands work; write paths with forward \
+         slashes (C:/Users/me/file.txt)."
+    }
+}
 
 pub fn system() -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -48,6 +61,9 @@ pub fn system() -> String {
     // search would fail.
     if !on_path("rg") {
         s = s.replace("(rg, find, ls)", "(grep -rn, find, ls)");
+    }
+    if cfg!(windows) {
+        s.push_str(windows_note(crate::sys::shell::shell().name()));
     }
     let _ = write!(
         s,

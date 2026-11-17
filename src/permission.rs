@@ -7,13 +7,13 @@
 
 /// True for a file subject outside the project (absolute or `..`-relative).
 pub fn outside_project(subject: &str) -> bool {
-    subject.starts_with('/') || subject.starts_with("..")
+    subject.starts_with(['/', '\\']) || subject.starts_with("..") || std::path::Path::new(subject).is_absolute()
 }
 
 /// True for files an edit must never get through on trust: git internals
 /// (hooks, config), and the agent's own settings and MCP server config.
 pub fn sensitive(subject: &str) -> bool {
-    subject.split('/').any(|c| {
+    subject.split(['/', '\\']).any(|c| {
         let c = c.to_ascii_lowercase();
         matches!(c.as_str(), ".git" | ".claude" | ".mcp.json" | ".claude-jr.json")
     })

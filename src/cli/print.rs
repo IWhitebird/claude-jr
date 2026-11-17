@@ -60,10 +60,8 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
     if std::env::var_os(crate::work::task::ENV).is_some() {
         // A task that is cancelled winds down like any other run, so what it
         // did is still committed and its result still written.
-        for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT, signal_hook::consts::SIGHUP] {
-            let _ = signal_hook::flag::register(signal, options.stopped.clone());
-            let _ = signal_hook::flag::register(signal, agent.cancel.clone());
-        }
+        let stop_file = std::env::var_os(crate::work::task::ENV).map(|dir| std::path::Path::new(&dir).join("stop"));
+        crate::sys::signals::flag(vec![options.stopped.clone(), agent.cancel.clone()], stop_file);
     } else {
         crate::sys::signals::watch(agent.tools.clone(), false);
     }

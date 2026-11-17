@@ -1,14 +1,15 @@
 // bash, in the foreground or as a background job, and `jobs` to watch those.
 
 use super::{MAX_BYTES, Output, Tools, def};
+use crate::sys::os::kill_tree;
+use crate::sys::shell::shell;
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, LazyLock, Mutex, mpsc};
@@ -70,7 +71,7 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     static CALLS: AtomicU64 = AtomicU64::new(0);
     let n = CALLS.fetch_add(1, Ordering::Relaxed);
     let cwd_file = std::env::temp_dir().join(format!("claude-jr-{}-{n}.cwd", std::process::id()));
-    let script = format!("exec 2>&1\n{{\n{cmd}\n}}\n__rc=$?\npwd > '{}'\nexit $__rc", cwd_file.display());
+    let script = shell().reporting(cmd, &cwd_file);
 
     let mut child = spawn(&script, &cwd)?;
     let pid = child.id();
@@ -100,7 +101,7 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
             ));
         }
         if stopped.is_some() {
-            kill_group(child.id());
+            kill_tree(child.id());
             let _ = child.wait();
             break None;
         }
@@ -151,7 +152,7 @@ pub fn jobs(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     match action {
         "output" => Ok(job.report()),
         "kill" => {
-            kill_group(job.pid);
+            kill_tree(job.pid);
             job.wait_done(Duration::from_secs(2), None, cancel);
             Ok(job.report())
         }
@@ -165,16 +166,9 @@ pub fn jobs(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
 }
 
 fn spawn(script: &str, cwd: &std::path::Path) -> Result<Child, String> {
-    Command::new("bash")
-        .arg("-c")
-        .arg(script)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .map_err(|e| format!("could not start bash: {e}"))
+    let mut cmd = shell().command(script);
+    cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    crate::sys::os::apart(&mut cmd, false).spawn().map_err(|e| format!("could not start {}: {e}", shell().name()))
 }
 
 /// Copies the child's stdout into `sink` on a side thread. The returned
@@ -190,11 +184,6 @@ fn read_into(child: &mut Child, sink: Arc<Mutex<Capped>>) -> mpsc::Receiver<()> 
         let _ = tx.send(());
     });
     rx
-}
-
-/// Kills a process and everything it started (they share its process group).
-pub fn kill_group(pid: u32) {
-    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
 }
 
 fn join(text: &str, note: &str) -> String {
@@ -237,7 +226,7 @@ struct Job {
 
 impl Jobs {
     fn start(&self, cmd: &str, cwd: &std::path::Path) -> Output {
-        let mut child = spawn(&format!("exec 2>&1\n{cmd}"), cwd)?;
+        let mut child = spawn(&shell().merged(cmd), cwd)?;
         let mut list = self.0.list.lock().unwrap();
         // Drop the oldest finished jobs and their output; running ones stay.
         let finished = list.iter().filter(|j| j.status.lock().unwrap().is_some()).count();
@@ -315,7 +304,7 @@ impl Jobs {
     /// Stops a job. Returns false if there's no such job.
     pub fn kill(&self, id: usize) -> bool {
         let Some(job) = self.get(id) else { return false };
-        kill_group(job.pid);
+        kill_tree(job.pid);
         true
     }
 
@@ -340,7 +329,7 @@ impl Jobs {
 impl Jobs {
     pub fn kill_all(&self) {
         for pid in self.pids() {
-            kill_group(pid);
+            kill_tree(pid);
         }
     }
 }
@@ -704,6 +693,7 @@ mod tests {
         assert_eq!(tool(&t, "bash", json!({})).unwrap_err(), "missing command");
     }
 
+    #[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
     #[test]
     fn a_project_behind_a_symlink_is_not_a_change_of_directory() {
         let (_, real) = test_tools("bash-symlink");

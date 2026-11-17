@@ -24,7 +24,7 @@
       ]
     },
     {
-      "source": "/install",
+      "source": "/(install|install.ps1)",
       "headers": [
         {
           "key": "Content-Type",
@@ -41,6 +41,10 @@
     {
       "source": "/install",
       "destination": "https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.sh"
+    },
+    {
+      "source": "/install.ps1",
+      "destination": "https://raw.githubusercontent.com/IWhitebird/claude-jr/main/install.ps1"
     }
   ]
 }

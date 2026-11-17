@@ -9,6 +9,7 @@
 //   "mcp_servers": { "files": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] } }
 // }
 
+use crate::sys::os;
 use crate::tools::mcp::ServerConfig;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -137,32 +138,38 @@ pub fn trust() -> Result<(), String> {
 
 fn trust_dir(dir: &Path) -> Result<(), String> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
     let path = trusted_file();
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
+    let mut f = os::owner_only(std::fs::OpenOptions::new().create(true).append(true), 0o600)
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(f, "{}", dir.display()).map_err(|e| e.to_string())
 }
 
-fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+/// A folder named by an environment variable, if it is set to something.
+fn folder(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// The user's home folder (HOME; on Windows USERPROFILE when that isn't set).
+pub fn home() -> PathBuf {
+    folder("HOME").or_else(|| folder("USERPROFILE").filter(|_| cfg!(windows))).unwrap_or_default()
+}
+
+/// Settings: $XDG_CONFIG_HOME, else ~/.config (on Windows %APPDATA%).
 pub fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("claude-jr")
+    let windows = || folder("APPDATA").filter(|_| cfg!(windows));
+    folder("XDG_CONFIG_HOME").or_else(windows).unwrap_or_else(|| home().join(".config")).join("claude-jr")
 }
 
+/// Sessions, tasks and worktrees: $XDG_DATA_HOME, else ~/.local/share (on
+/// Windows %LOCALAPPDATA%, in a folder of its own beside the settings').
 pub fn data_dir() -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".local/share"))
-        .join("claude-jr")
+    if let Some(local) = folder("LOCALAPPDATA").filter(|_| cfg!(windows) && folder("XDG_DATA_HOME").is_none()) {
+        return local.join("claude-jr").join("data");
+    }
+    folder("XDG_DATA_HOME").unwrap_or_else(|| home().join(".local/share")).join("claude-jr")
 }
 
 /// The user's config file, as JSON (empty if there isn't one).
@@ -211,13 +218,12 @@ pub fn api_key() -> Option<String> {
 /// Saves the key so only this user can read it.
 pub fn save_api_key(key: &str) -> std::io::Result<PathBuf> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let path = credentials();
     std::fs::create_dir_all(config_dir())?;
-    let mut f = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&path)?;
+    let mut f =
+        os::owner_only(std::fs::OpenOptions::new().create(true).write(true).truncate(true), 0o600).open(&path)?;
     // The mode above only applies when the file is created.
-    use std::os::unix::fs::PermissionsExt;
-    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    os::keep_to_owner(&f, 0o600)?;
     f.write_all(key.as_bytes())?;
     Ok(path)
 }
@@ -337,6 +343,7 @@ mod tests {
         reset_user_files();
     }
 
+    #[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
     #[test]
     fn the_api_key_is_saved_private_and_removed() {
         use std::os::unix::fs::PermissionsExt;

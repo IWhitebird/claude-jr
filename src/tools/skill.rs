@@ -26,7 +26,7 @@ pub struct Skill {
 
 pub fn discover() -> Vec<Skill> {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = crate::store::config::home();
     let roots = [
         cwd.join(".claude/skills"),
         cwd.join(".claude-jr/skills"),

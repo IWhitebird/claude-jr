@@ -181,9 +181,11 @@ src/
     images.rs        pasted and attached images
     config.rs        config files, the saved API key, trusted folders
   sys/               what depends on the operating system
+    os.rs            files and processes, on Unix and on Windows
+    shell.rs         the shell commands run in (bash; on Windows Git's, or PowerShell)
     sandbox.rs       re-exec inside bubblewrap (Linux)
     mem.rs           handing unused program pages back (Linux)
-    signals.rs       clean exit on signals
+    signals.rs       clean exit on signals, or on Windows when the console closes
   permission.rs      allow rules
   prompt.rs          the system prompt, AGENTS.md, notes
 

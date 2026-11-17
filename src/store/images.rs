@@ -31,7 +31,7 @@ pub fn media_type(path: &Path) -> Option<&'static str> {
 /// for a dragged file: plain paths, 'quoted' or "quoted" ones, and spaces
 /// escaped with a backslash.
 pub fn paths_in(text: &str) -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = crate::store::config::home();
     let mut found = Vec::new();
     for word in words(text) {
         let word = word.trim_end_matches([',', '.', ';', ':', ')']);

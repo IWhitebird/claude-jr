@@ -629,6 +629,7 @@ fn rewinding_a_turn_that_changed_nothing_works() {
     assert!(rig.agent.messages.is_empty());
 }
 
+#[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
 #[test]
 fn rewind_that_cannot_restore_keeps_the_conversation() {
     use std::os::unix::fs::PermissionsExt;

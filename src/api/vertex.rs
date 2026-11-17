@@ -103,6 +103,7 @@ mod tests {
         assert!(address(&none, "m").unwrap_err().to_string().contains("ANTHROPIC_VERTEX_PROJECT_ID"));
     }
 
+    #[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
     #[test]
     fn a_given_token_is_used_and_gclouds_is_asked_for_once() {
         let kept = Kept::default();

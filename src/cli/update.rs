@@ -1,7 +1,7 @@
 // `claudejr --update` and /update: replace this binary with the newest
 // release. Each release publishes a `version` file and one plain binary per
-// platform (claudejr-linux-x86_64, claudejr-macos-aarch64, ...), so nothing
-// has to be unpacked.
+// platform (claudejr-linux-x86_64, claudejr-macos-aarch64,
+// claudejr-windows-x86_64.exe, ...), so nothing has to be unpacked.
 
 use std::io::Read;
 use std::path::Path;
@@ -21,9 +21,12 @@ fn asset() -> Option<String> {
     let os = match std::env::consts::OS {
         "linux" => "linux",
         "macos" => "macos",
+        "windows" if std::env::consts::ARCH == "x86_64" => "windows",
         _ => return None,
     };
-    matches!(std::env::consts::ARCH, "x86_64" | "aarch64").then(|| format!("claudejr-{os}-{}", std::env::consts::ARCH))
+    let exe = std::env::consts::EXE_SUFFIX;
+    matches!(std::env::consts::ARCH, "x86_64" | "aarch64")
+        .then(|| format!("claudejr-{os}-{}{exe}", std::env::consts::ARCH))
 }
 
 /// One of a host's addresses can be unreachable from a given network while
@@ -71,27 +74,39 @@ pub fn run() -> Result<String, String> {
     }
 
     let exe = std::env::current_exe().and_then(|p| p.canonicalize()).map_err(|e| e.to_string())?;
-    let new = exe.with_extension("update");
-    let result = download(&format!("{base}/{asset}"), &new).and_then(|()| check(&new, &latest)).and_then(|()| {
-        // Renaming over a running binary is fine: the old one stays open until it exits.
-        std::fs::rename(&new, &exe).map_err(|e| format!("couldn't replace {}: {e}", exe.display()))
-    });
+    // (Windows only runs a file whose name ends in .exe.)
+    let new = exe.with_extension(format!("update{}", std::env::consts::EXE_SUFFIX));
+    let result = download(&format!("{base}/{asset}"), &new)
+        .and_then(|()| check(&new, &latest))
+        .and_then(|()| replace(&exe, &new).map_err(|e| format!("couldn't replace {}: {e}", exe.display())));
     if result.is_err() {
         let _ = std::fs::remove_file(&new);
     }
     result.map(|()| format!("Updated claude-jr {current} to {latest}. Start it again to use the new version."))
 }
 
+/// Puts `new` where the running program `exe` is.
+fn replace(exe: &Path, new: &Path) -> std::io::Result<()> {
+    if cfg!(windows) {
+        // A running program can't be written over on Windows, but it can be
+        // moved aside; the old one is cleared away by the next update.
+        let old = exe.with_extension("old.exe");
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(exe, &old)?;
+        return std::fs::rename(new, exe).inspect_err(|_| {
+            let _ = std::fs::rename(&old, exe);
+        });
+    }
+    // Renaming over a running binary is fine: the old one stays open until it exits.
+    std::fs::rename(new, exe)
+}
+
 fn download(url: &str, to: &Path) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
     let mut body = get(url)?.into_with_config().limit(MAX_BYTES).reader();
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o755)
-        .open(to)
-        .map_err(|e| format!("can't write {} ({e}); install it again with the install script", to.display()))?;
+    let mut file =
+        crate::sys::os::owner_only(std::fs::OpenOptions::new().write(true).create(true).truncate(true), 0o755)
+            .open(to)
+            .map_err(|e| format!("can't write {} ({e}); install it again with the install script", to.display()))?;
     let mut buf = [0u8; 64 * 1024];
     loop {
         match body.read(&mut buf).map_err(|e| format!("the download failed: {e}"))? {

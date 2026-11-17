@@ -105,9 +105,8 @@ pub(super) fn read_file(
     left: &mut usize,
     buf: &mut [u8],
 ) -> std::io::Result<usize> {
-    use std::os::unix::fs::FileExt;
     let want = buf.len().min(*left);
-    let n = file.read_at(&mut buf[..want], *at)?;
+    let n = crate::sys::os::read_at(file, &mut buf[..want], *at)?;
     if n == 0 && want > 0 {
         return Err(std::io::ErrorKind::UnexpectedEof.into());
     }

@@ -152,7 +152,7 @@ impl App {
 
     pub(super) fn header(&mut self) {
         let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::store::config::home().display().to_string();
         let cwd = match cwd.strip_prefix(&home) {
             Some(rest) if !home.is_empty() => format!("~{rest}"),
             _ => cwd,

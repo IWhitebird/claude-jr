@@ -5,7 +5,6 @@
 // so its state sits behind small locks and every method takes `&self`.
 
 mod bash;
-pub use bash::kill_group;
 pub mod checkpoint;
 mod fs;
 pub mod mcp;
@@ -268,7 +267,7 @@ impl Tools {
     /// jobs run in their own process group and would otherwise outlive us.
     pub fn shutdown(&self) {
         for &pid in self.running.lock().unwrap().iter() {
-            bash::kill_group(pid);
+            crate::sys::os::kill_tree(pid);
         }
         self.jobs.kill_all();
         self.mcp.stop();
@@ -496,6 +495,7 @@ mod tests {
         assert!(!rules.allows("edit", &subject("src/../../etc/passwd")));
     }
 
+    #[cfg(unix)] // symlinks, file modes and shell scripts as Unix has them
     #[test]
     fn symlinks_out_of_the_project_count_as_outside() {
         let (t, dir) = test_tools("symlink");

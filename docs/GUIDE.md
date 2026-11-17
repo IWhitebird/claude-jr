@@ -187,6 +187,31 @@ git worktree add /tmp/try && cd /tmp/try && claudejr --sandbox
 
 Linux only for now.
 
+## Windows
+
+New, and so far checked only on GitHub's Windows machines and not by a person
+at a Windows desk; please report what you find. Install from PowerShell:
+
+```powershell
+irm https://claudejr.iwhitebird.com/install.ps1 | iex
+```
+
+What is different there:
+
+- **Commands run in Git Bash**, the bash that comes with
+  [Git for Windows](https://git-scm.com/download/win), so the model's usual
+  `grep`, `ls` and pipes work. Without Git, commands run in PowerShell and the
+  model is told to write PowerShell. `CLAUDE_JR_SHELL` names another shell.
+- **Files** are in `%APPDATA%\claude-jr` (config, the saved key) and
+  `%LOCALAPPDATA%\claude-jr` (sessions, tasks, worktrees). `XDG_CONFIG_HOME`
+  and `XDG_DATA_HOME` move them, as elsewhere.
+- **No sandbox** (`--sandbox` is Linux's bubblewrap) and no idle memory trim,
+  so memory at rest is higher than the Linux figures.
+- Windows Terminal, or the terminal in VS Code, is the one to use; the old
+  console window has not been tried.
+- 64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
+  too, with the Linux build.
+
 ## Other models
 
 A model id with a provider's name in front goes to that provider; a plain id
@@ -465,4 +490,4 @@ bench/
 
 ## Not included
 
-Other providers, plugins, hooks, IDE integration, Windows.
+Plugins, hooks, IDE integration.

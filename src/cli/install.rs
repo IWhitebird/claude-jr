@@ -121,7 +121,7 @@ fn parse(args: &[String]) -> Result<Request, String> {
 }
 
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute()).ok_or_else(|| "HOME isn't set".to_string())
+    Some(crate::store::config::home()).filter(|h| h.is_absolute()).ok_or_else(|| "HOME isn't set".to_string())
 }
 
 /// The command another program should run to start claude-jr: its plain name

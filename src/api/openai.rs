@@ -17,13 +17,13 @@
 
 use crate::api::provider::Provider;
 use crate::api::{Body, Cancelled, Chunk, Lines, Message, Part, Reply, Request, Retryable, Text, Usage};
+use crate::sys::os;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::BufRead;
-use std::os::unix::fs::{FileExt, MetadataExt};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -186,7 +186,7 @@ impl Translated {
     /// Keeps `bytes` as the translation under `key` and says where it is.
     fn keep(&mut self, key: (u64, u64, u64, usize), bytes: &[u8]) -> Option<(Arc<File>, u64, usize)> {
         let file = self.file()?;
-        file.write_all_at(bytes, self.end).ok()?;
+        os::write_all_at(&file, bytes, self.end).ok()?;
         let at = self.end;
         self.end += bytes.len() as u64;
         self.at.insert(key, (at, bytes.len()));
@@ -223,8 +223,8 @@ pub fn body<'a, M: Message>(
                 (u64::MAX, hasher.finish(), 0, json.len())
             }
             Text::Saved { file, at, len } => {
-                let meta = file.metadata()?;
-                (meta.dev(), meta.ino(), at, len)
+                let (volume, id) = os::file_id(file)?;
+                (volume, id, at, len)
             }
         };
         let known = {
@@ -238,7 +238,7 @@ pub fn body<'a, M: Message>(
                     Text::Memory(json) => translate(json)?,
                     Text::Saved { file, at, len } => {
                         let mut buf = vec![0; len];
-                        file.read_exact_at(&mut buf, at)?;
+                        os::read_exact_at(file, &mut buf, at)?;
                         translate(std::str::from_utf8(&buf).map_err(std::io::Error::other)?)?
                     }
                 };

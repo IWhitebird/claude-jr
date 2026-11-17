@@ -6,12 +6,12 @@
 // is saved, memory keeps only where its line is, and requests read it from
 // there. A long session then takes no more memory than a short one.
 
+use crate::sys::os::read_exact_at;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, Write};
-use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,7 +58,7 @@ impl Msg {
             Body::Memory(json) => Cow::Borrowed(json),
             Body::Saved { file, at, len } => {
                 let mut buf = vec![0; *len];
-                let read = file.read_exact_at(&mut buf, *at).ok().and_then(|()| String::from_utf8(buf).ok());
+                let read = read_exact_at(file, &mut buf, *at).ok().and_then(|()| String::from_utf8(buf).ok());
                 Cow::Owned(read.unwrap_or_default())
             }
         }
@@ -319,7 +319,7 @@ impl Session {
 fn ends_with_newline(f: &File) -> bool {
     let Ok(len) = f.metadata().map(|m| m.len()) else { return true };
     let mut last = [0];
-    len == 0 || (f.read_exact_at(&mut last, len - 1).is_ok() && last[0] == b'\n')
+    len == 0 || (read_exact_at(f, &mut last, len - 1).is_ok() && last[0] == b'\n')
 }
 
 /// Session files for this directory, oldest first (names are millisecond timestamps).
