@@ -62,6 +62,7 @@ grep -q 'from-powershell' "$work/requests" && say ok "commands run in PowerShell
 grep -q 'the bash tool runs PowerShell' "$work/requests" && say ok "the model is told which shell it has" || say FAIL "the prompt doesn't name PowerShell"
 
 # Background tasks need a repository to branch from.
+mkdir "$work/repo" && cd "$work/repo"
 git init -q -b main . && git config user.name t && git config user.email t@example.com && git config commit.gpgsign false
 echo kept >kept.txt && git add -A && git commit -q -m first
 mock
@@ -74,12 +75,16 @@ state=$("$bin" task wait "$id" 2>"$work/err")
     && say ok "its branch merges into this one" || { say FAIL "task merge: $(tail -2 "$work/err")"; show "$id"; }
 
 mock MOCK_CMD='sleep 60' MOCK_ROUNDS=1
+began=$(date +%s)
 id=$("$bin" task start -y "slow work" | tr -d '\r')
+[ $(( $(date +%s) - began )) -lt 10 ] && say ok "starting returns at once, to a script that captures the id too" || say FAIL "task start waited for its worker"
 sleep 3
 [ "$("$bin" task result "$id" | field status)" = running ] && say ok "a running task is seen as running" || { say FAIL "not running"; show "$id"; }
 "$bin" task cancel "$id" >/dev/null 2>&1
 status=$("$bin" task result "$id" | field status)
-[ "$status" = cancelled ] && say ok "cancelling stops it" || say FAIL "after cancel: $status"
+[ "$status" = cancelled ] && say ok "cancelling stops it" || { say FAIL "after cancel: $status"; show "$id"; }
+sleep 1
+tasklist 2>/dev/null | grep -qi '^sleep' && say FAIL "the cancelled task's command is still running" || say ok "and the command it was running"
 
 reply=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$bin" mcp -y 2>/dev/null)
 echo "$reply" | grep -q '"name":"claude-jr"' && echo "$reply" | grep -q start_task \

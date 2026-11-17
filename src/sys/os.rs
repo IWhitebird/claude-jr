@@ -130,6 +130,16 @@ pub fn apart(cmd: &mut Command, detached: bool) -> &mut Command {
         // terminal leaves it running, yet there for the shells it starts.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let flags = CREATE_NEW_PROCESS_GROUP | if detached { CREATE_NO_WINDOW } else { 0 };
+        if detached {
+            // A child gets every handle of ours that may be inherited. If it
+            // got our output pipe, whoever reads that pipe (a script capturing
+            // what we print) would wait for the child to finish too.
+            const INHERIT: u32 = 1;
+            for stream in [-10i32, -11, -12] {
+                // SAFETY: changes a flag on this process's own standard handles.
+                unsafe { win::SetHandleInformation(win::GetStdHandle(stream as u32), INHERIT, 0) };
+            }
+        }
         std::os::windows::process::CommandExt::creation_flags(cmd, flags);
     }
     cmd
@@ -224,6 +234,8 @@ pub mod win {
         pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
         pub fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
         pub fn CloseHandle(handle: *mut c_void) -> i32;
+        pub fn GetStdHandle(which: u32) -> *mut c_void;
+        pub fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
         pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
     }
 }
