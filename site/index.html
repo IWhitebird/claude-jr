@@ -3,16 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>claude-jr (Claude Junior): a coding agent for the terminal in one 2 MB binary</title>
 <meta name="description" content="claude-jr, or Claude Junior, is a small, fast coding agent for the terminal: a lightweight Claude Code alternative written in Rust. One 2 MB binary, 0.7 MB of memory when idle, 5 ms to start, 93.4% on SWE-bench Verified.">
 <link rel="canonical" href="https://claudejr.iwhitebird.com/">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" type="image/png" href="/favicon.png">
-<meta name="theme-color" content="#f4f1e9">
+<meta name="theme-color" content="#f4f1e9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="claude-jr">
 <meta property="og:title" content="claude-jr (Claude Junior): a coding agent in one 2 MB binary">
-<meta property="og:description" content="A small, fast alternative to Claude Code, and the workers your main agent hands tasks to: half a megabyte each. 2 MB binary, 0.7 MB idle, 5 ms to start, 93.4% on SWE-bench Verified.">
+<meta property="og:description" content="A small, fast alternative to Claude Code. 2 MB binary, 0.7 MB of memory when idle, 5 ms to start, 93.4% on SWE-bench Verified.">
 <meta property="og:url" content="https://claudejr.iwhitebird.com/">
 <meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
 <meta property="og:image:width" content="1280">
@@ -42,27 +44,34 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  /* A typeset page, not a landing kit: one column of text on ivory paper, serif
-     headlines, rules instead of boxes; the terminal is the only dark object. */
+  /* A typeset page, not a landing kit: one column of text on paper, serif
+     headlines, rules instead of boxes. The terminal and the mascot are the
+     only things that move, and only for people who haven't asked for less. */
   :root {
-    color-scheme: light;
-    --paper: #f4f1e9;
-    --ink: #1b1915;
-    --ink-2: #4d4842;
-    --ink-3: #8a847a;
-    --rule: #ddd7cb;
-    --clay: #bf5a37;
-    --term: #121010;
+    color-scheme: light dark;
+    --paper: #f4f1e9; --ink: #1b1915; --ink-2: #4d4842; --ink-3: #736d63;
+    --rule: #ddd7cb; --clay: #bf5a37; --clay-text: #a8492a; --other: #b9b2a5;
+    --term: #121010; --term-edge: transparent; --key: #fbf9f4;
     --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
     --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #161412; --ink: #ece6dc; --ink-2: #b9b1a6; --ink-3: #968e83;
+      --rule: #322d28; --clay: #e0805c; --clay-text: #e8906e; --other: #5a534b;
+      --term: #0c0b0a; --term-edge: #322d28; --key: #201d1a;
+    }
+  }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
   a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-  a:hover { color: var(--clay); }
+  a:hover { color: var(--clay-text); }
+  :focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
   .col { max-width: 720px; margin: 0 auto; padding-left: max(22px, env(safe-area-inset-left)); padding-right: max(22px, env(safe-area-inset-right)); }
   .wide { max-width: 880px; }
+  button { font: inherit; color: inherit; }
 
   header.top { padding-block: 22px; }
   header.top .col { display: flex; align-items: center; gap: 12px; }
@@ -70,39 +79,82 @@
   header.top .name { font: 500 17px var(--sans); text-decoration: none; }
   header.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--ink-2); }
   header.top nav a { text-decoration: none; }
+  @media (max-width: 520px) { header.top nav .opt { display: none; } }
 
-  .intro { padding-block: 72px 8px; }
+  /* ---- the opening: words on the left, Junior on the right ---- */
+  .intro { padding-block: 56px 8px; display: grid; grid-template-columns: 1fr auto; column-gap: 40px; align-items: start; }
+  .intro > * { grid-column: 1; }
+  .intro .install, .intro .fine { grid-column: 1 / -1; }
+  .intro .junior { grid-column: 2; grid-row: 1 / span 2; margin-top: 6px; text-align: center; }
+  .intro .junior .jr { margin-inline: auto; }
+  @media (max-width: 760px) {
+    .intro { grid-template-columns: 1fr; padding-top: 28px; }
+    .intro .junior { grid-column: 1; grid-row: 1; margin: 0 0 14px; display: flex; align-items: end; gap: 6px; }
+    .intro .junior .jr { width: 120px; height: auto; margin: 0; }
+  }
   h1 { font: 400 clamp(2.5rem, 6.4vw, 3.9rem)/1.06 var(--serif); letter-spacing: -0.02em; margin: 0 0 26px; text-wrap: balance; }
-  h1 em { font-style: italic; color: var(--clay); }
-  .intro p { font-size: 1.14rem; color: var(--ink-2); margin: 0 0 18px; max-width: 36em; }
+  h1 em { font-style: italic; color: var(--clay-text); }
+  .intro p { font-size: 1.14rem; color: var(--ink-2); margin: 0 0 18px; max-width: 34em; }
   .intro p strong { color: var(--ink); font-weight: 600; }
 
-  .install { margin: 34px 0 10px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 16px; padding-block: 16px; }
-  .install code { flex: 1; min-width: 0; font: 15px/1.5 var(--mono); }
-  @media (max-width: 560px) {
-    .install { flex-wrap: wrap; gap: 10px; }
-    .install code { flex-basis: 100%; font-size: 13px; }
+  .jr { display: block; overflow: visible; cursor: pointer; }
+  .jr .pupil { translate: var(--look, 0px) 0; }
+  .motion { margin-top: 6px; background: none; border: 0; padding: 4px 8px; font-size: 13px; color: var(--ink-3); cursor: pointer; border-radius: 6px; }
+  .motion:hover { color: var(--ink); }
+  @media (prefers-reduced-motion: no-preference) {
+    .jr .bob { animation: bob 1.3s steps(2, jump-none) infinite alternate; }
+    .jr .wing { transform-box: view-box; transform-origin: 100px 35px; animation: spin .45s steps(3, jump-none) infinite alternate; }
+    .jr .eye { transform-box: fill-box; transform-origin: 50% 75%; animation: blink 5s infinite; }
+    .jr .hat { transform-box: fill-box; transform-origin: 50% 100%; }
+    .jr.hop .bob { animation: hop .5s steps(5, jump-none); }
+    .jr.hop .hat { animation: tip .5s steps(5, jump-none); }
+    .jr.paused .bob, .jr.paused .wing, .jr.paused .eye { animation-play-state: paused; }
+    @keyframes bob { from { translate: 0 0; } to { translate: 0 -4px; } }
+    @keyframes spin { from { scale: 1 1; } to { scale: .3 1; } }
+    @keyframes blink { 0%, 93%, 100% { scale: 1 1; } 96% { scale: 1 .12; } }
+    @keyframes hop { 0%, 100% { translate: 0 0; } 40% { translate: 0 -22px; } 70% { translate: 0 -6px; } }
+    @keyframes tip { 0%, 100% { rotate: 0deg; } 40% { rotate: -14deg; } }
   }
+  @media (prefers-reduced-motion: reduce) { .motion { display: none; } }
+
+  .install { margin: 30px 0 10px; border-top: 1px solid var(--rule); }
+  .install .row { display: flex; align-items: center; gap: 16px; padding-block: 14px; border-bottom: 1px solid var(--rule); }
+  .install .os { flex: none; width: 7.5em; font-size: 13.5px; color: var(--ink-3); }
+  .install code { flex: 1; min-width: 0; font: 15px/1.5 var(--mono); overflow-wrap: anywhere; }
   .install code::before { content: "$ "; color: var(--ink-3); }
+  .install code.ps::before { content: "> "; }
+  @media (max-width: 560px) {
+    .install .row { flex-wrap: wrap; gap: 6px 10px; }
+    .install .os { width: auto; flex: 1; }
+    .install code { flex-basis: 100%; order: 3; font-size: 13px; }
+  }
   .copy { flex: none; font: 500 14px var(--sans); color: var(--ink-2); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
   .copy:hover { color: var(--ink); border-color: var(--ink-3); }
-  .copy:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
-  .intro p.fine { font-size: 14.5px; color: var(--ink-3); margin: 0; }
+  .intro p.fine { font-size: 14.5px; color: var(--ink-3); margin: 0; max-width: none; }
   .fine code { font-family: var(--mono); font-size: 13.5px; color: var(--ink-2); }
 
-  figure.shot { margin: 64px auto 0; }
-  .term { background: var(--term); color: #d8d0c7; border-radius: 10px; padding: 22px 24px 24px; overflow-x: auto;
-          font: 13.5px/1.65 var(--mono); box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 24px 48px -30px rgba(40,25,10,.5); }
+  /* ---- the terminal ---- */
+  figure.shot { margin: 56px auto 0; }
+  .term { background: var(--term); color: #d8d0c7; border: 1px solid var(--term-edge); border-radius: 10px; padding: 22px 24px 24px; overflow-x: auto;
+          font: 13.5px/1.65 var(--mono); box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 24px 48px -30px rgba(40,25,10,.5); color-scheme: dark; }
   .term pre { margin: 0; font: inherit; }
   .term .hd { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
   .term .hd img { width: 56px; height: 48px; image-rendering: pixelated; }
-  .term .hd div { color: #9b9187; line-height: 1.55; }
+  .term .hd > span { color: #9b9187; line-height: 1.55; }
   .term .hd b { color: #e0805c; font-weight: 500; }
-  .o { color: #e0805c; } .g { color: #6f665e; } .a { color: #94c27f; } .b { color: #f3ede6; }
+  .o { color: #e0805c; } .g { color: #8a8077; } .a { color: #94c27f; } .b { color: #f3ede6; }
   .box { display: block; border: 1px solid #3a332d; border-radius: 4px; padding: 6px 10px; margin-top: 16px; color: #9b9187; }
+  .ln { display: block; min-height: 1.65em; }
+  figcaption { display: flex; justify-content: flex-end; margin-top: 8px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .play .ln { animation: line .22s both; animation-delay: calc(var(--i) * 420ms); }
+    @keyframes line { from { opacity: 0; translate: 0 4px; } }
+  }
+  @media (prefers-reduced-motion: reduce) { figcaption { display: none; } }
 
-  section { padding-top: 76px; }
-  h2 { font: 400 clamp(1.75rem, 3.6vw, 2.25rem)/1.15 var(--serif); letter-spacing: -0.01em; margin: 0 0 16px; }
+  section { padding-top: 84px; }
+  h2 { font: 400 clamp(1.75rem, 3.6vw, 2.25rem)/1.15 var(--serif); letter-spacing: -0.01em; margin: 0 0 16px; text-wrap: balance; }
+  h3 { font: 600 1rem var(--sans); margin: 40px 0 6px; }
   section > .col > p { color: var(--ink-2); margin: 0 0 18px; }
 
   .figures { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--ink); margin-top: 28px; }
@@ -111,26 +163,75 @@
   .figures span { font-size: 14.5px; color: var(--ink-2); }
   @media (max-width: 620px) { .figures { grid-template-columns: 1fr 1fr; row-gap: 12px; } }
 
-  .scroll { overflow-x: auto; margin-top: 26px; }
+  /* ---- bars drawn to scale: ours is the sliver ---- */
+  .scale { margin: 14px 0 0; border-top: 1px solid var(--rule); }
+  .scale .m { padding: 14px 0 16px; border-bottom: 1px solid var(--rule); }
+  .scale .what { display: flex; justify-content: space-between; gap: 16px; font-size: 15.5px; margin-bottom: 8px; }
+  .scale .what span { color: var(--ink-3); font-size: 14px; white-space: nowrap; }
+  .bar { display: grid; grid-template-columns: 6.5em 1fr 5.5em; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .bar + .bar { margin-top: 5px; }
+  .bar i { display: block; height: 12px; width: var(--w); min-width: 2px; background: var(--other); border-radius: 1px; transform-origin: left; }
+  .bar.us { color: var(--clay-text); font-weight: 600; }
+  .bar.us i { background: var(--clay); }
+  .bar b { text-align: right; font-weight: inherit; }
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: view()) {
+      .bar i { animation: grow linear both; animation-timeline: view(); animation-range: entry 0% entry 90%; }
+      @keyframes grow { from { scale: 0 1; } }
+    }
+  }
+
+  .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 22px; align-items: start; }
+  .fit figure { margin: 0; }
+  .fit .block { aspect-ratio: 2 / 1; background: var(--other); border-radius: 2px; }
+  .fit .many { aspect-ratio: 2 / 1; display: grid; grid-template-columns: repeat(20, 1fr); grid-template-rows: repeat(10, 1fr); gap: 2px; }
+  .fit .many i { background: var(--clay); border-radius: 1px; min-height: 0; }
+  .fit figcaption { display: block; margin-top: 10px; font-size: 14.5px; color: var(--ink-2); }
+  @media (max-width: 560px) { .fit { grid-template-columns: 1fr; } }
+
+  .scroll { overflow-x: auto; margin-top: 22px; }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 15.5px; }
   th, td { padding: 11px 16px 11px 0; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
   th:last-child, td:last-child { padding-right: 0; }
   thead th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); }
-  td.us, th.us { color: var(--clay); font-weight: 600; }
+  tr.us td { color: var(--clay-text); font-weight: 600; }
   .uses td:last-child { color: var(--ink-2); text-align: left; white-space: normal; padding-left: 8px; }
   .uses td:first-child { width: 1%; }
+  table.tight th, table.tight td { padding-block: 7px; }
   .note { font-size: 14.5px; color: var(--ink-3); margin-top: 14px; }
 
+  /* ---- 500 tasks, one square each ---- */
+  .big { font: 400 clamp(4rem, 12vw, 6.5rem)/1 var(--serif); letter-spacing: -0.03em; color: var(--clay-text); margin: 22px 0 8px; }
+  .dots { display: grid; grid-template-columns: repeat(50, 1fr); gap: 3px; margin: 26px 0 10px; }
+  .dots i { aspect-ratio: 1; background: var(--clay); border-radius: 1px; }
+  .dots i.n { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+  @media (max-width: 560px) { .dots { grid-template-columns: repeat(25, 1fr); } }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14.5px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; background: var(--clay); border-radius: 1px; }
+  .legend i.n { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+
   dl.list { margin: 26px 0 0; border-top: 1px solid var(--rule); }
-  dl.list div { display: grid; grid-template-columns: 11em 1fr; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  dl.list > div { display: grid; grid-template-columns: 11em 1fr; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
   dl.list dt { font-weight: 600; }
   dl.list dd { margin: 0; color: var(--ink-2); }
-  @media (max-width: 560px) { dl.list div { grid-template-columns: 1fr; gap: 2px; } }
-  kbd { font: 13px var(--mono); border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; background: #fbf9f4; }
-  dd code, td code, p code { font: 14px var(--mono); }
+  @media (max-width: 560px) { dl.list > div { grid-template-columns: 1fr; gap: 2px; } }
+  kbd { font: 13px var(--mono); border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; background: var(--key); }
+  dd code, td code, p code, li code { font: 14px var(--mono); }
 
-  .big { font: 400 clamp(4rem, 12vw, 6.5rem)/1 var(--serif); letter-spacing: -0.03em; color: var(--clay); margin: 22px 0 8px; }
+  ol.how { list-style: none; counter-reset: how; margin: 26px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+  ol.how li { counter-increment: how; display: grid; grid-template-columns: 2.6em 1fr; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+  ol.how li::before { content: counter(how); font: 400 1.7rem/1.1 var(--serif); color: var(--clay-text); }
+  ol.how b { display: block; font-weight: 600; margin-bottom: 2px; }
+  ol.how span { color: var(--ink-2); }
+
+  details { border-bottom: 1px solid var(--rule); }
+  details:first-of-type { border-top: 1px solid var(--rule); margin-top: 26px; }
+  summary { cursor: pointer; padding: 14px 0; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--ink-3); font-weight: 400; }
+  details[open] summary::after { content: "−"; }
+  details p { margin: 0 0 16px; color: var(--ink-2); max-width: 40em; }
 
   footer { margin-top: 96px; border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14.5px; color: var(--ink-3); }
   footer .col { display: flex; flex-wrap: wrap; gap: 8px 22px; }
@@ -147,6 +248,8 @@
     <img src="/logo.svg" alt="" width="30" height="26">
     <a class="name" href="/">claude-jr</a>
     <nav>
+      <a class="opt" href="#numbers">Numbers</a>
+      <a class="opt" href="#how">How</a>
       <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">Guide</a>
       <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     </nav>
@@ -154,42 +257,43 @@
 </header>
 
 <main>
-  <div class="intro col">
+  <div class="intro col wide">
     <h1>A coding agent for the terminal, in a <em>2 MB</em> binary.</h1>
-    <p>claude-jr, or Claude Junior, is a small alternative to Claude Code: it reads your code, edits files and
-      runs commands, asking before anything changes. It is written in Rust with no runtime, so it
-      starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>: 160 times
-      less disk and 190 times less memory than Claude Code. It runs alone, or as the workers
-      Claude Code, Cursor or Codex hand tasks to: a thousand of them fit in 500 MB.</p>
-
-    <div class="install">
-      <code id="cmd">curl -fsSL https://claudejr.iwhitebird.com/install | sh</code>
-      <button class="copy" type="button">Copy</button>
+    <div class="junior">
+      <svg class="jr" viewBox="20 20 160 140" width="200" height="175" shape-rendering="crispEdges" aria-hidden="true"><g class="bob"><g class="hat"><rect class="wing" x="50" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="30" width="20" height="10" fill="#F2C14E"/><rect class="wing" x="110" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="40" width="20" height="10" fill="#F2C14E"/><rect x="60" y="50" width="80" height="10" fill="#6FA8DC"/><rect x="50" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="70" y="60" width="20" height="10" fill="#F2C14E"/><rect x="90" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="110" y="60" width="20" height="10" fill="#F2C14E"/><rect x="130" y="60" width="20" height="10" fill="#6FA8DC"/></g><rect x="40" y="70" width="120" height="10" fill="#D97757"/><rect x="40" y="80" width="20" height="10" fill="#D97757"/><rect x="80" y="80" width="40" height="10" fill="#D97757"/><rect x="140" y="80" width="20" height="10" fill="#D97757"/><rect x="40" y="90" width="20" height="10" fill="#D97757"/><rect x="80" y="90" width="40" height="10" fill="#D97757"/><rect x="140" y="90" width="20" height="10" fill="#D97757"/><rect x="40" y="100" width="10" height="10" fill="#D97757"/><rect x="50" y="100" width="10" height="10" fill="#F2A48B"/><rect x="60" y="100" width="80" height="10" fill="#D97757"/><rect x="140" y="100" width="10" height="10" fill="#F2A48B"/><rect x="150" y="100" width="10" height="10" fill="#D97757"/><rect x="40" y="110" width="40" height="10" fill="#D97757"/><rect x="80" y="110" width="10" height="10" fill="#2B211C"/><rect x="90" y="110" width="20" height="10" fill="#D97757"/><rect x="110" y="110" width="10" height="10" fill="#2B211C"/><rect x="120" y="110" width="40" height="10" fill="#D97757"/><rect x="40" y="120" width="50" height="10" fill="#D97757"/><rect x="90" y="120" width="20" height="10" fill="#2B211C"/><rect x="110" y="120" width="50" height="10" fill="#D97757"/><rect x="40" y="130" width="120" height="10" fill="#B9583A"/><rect x="50" y="140" width="20" height="10" fill="#B9583A"/><rect x="130" y="140" width="20" height="10" fill="#B9583A"/><rect x="60" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="60" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="70" y="80" width="10" height="10" fill="#2B211C"/><rect x="60" y="90" width="20" height="10" fill="#2B211C"/></g><rect x="120" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="120" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="130" y="80" width="10" height="10" fill="#2B211C"/><rect x="120" y="90" width="20" height="10" fill="#2B211C"/></g></g></svg>
+      <button class="motion" type="button">Pause</button>
     </div>
-    <p class="fine">Linux and macOS, on x86 and ARM; on Windows, inside WSL. Then run <code>claudejr</code> and paste an Anthropic API key.</p>
+    <p>claude-jr, or Claude Junior, is a small alternative to Claude Code: it reads your code, edits
+        files and runs commands, asking before anything changes. It is written in Rust with no
+        runtime, so it starts in <strong>5 ms</strong> and sits in <strong>0.7 MB of memory</strong>:
+        about 180 times less disk and 200 times less memory than Claude Code. On SWE-bench Verified
+        it resolved <strong>467 of 500</strong> tasks.</p>
+
+      <div class="install">
+        <div class="row">
+          <span class="os">Linux, macOS</span>
+          <code>curl -fsSL https://claudejr.iwhitebird.com/install | sh</code>
+          <button class="copy" type="button">Copy</button>
+        </div>
+        <!-- RELEASE 0.3.0: uncomment once a release carries the Windows binary.
+        <div class="row">
+          <span class="os">Windows</span>
+          <code class="ps">irm https://claudejr.iwhitebird.com/install.ps1 | iex</code>
+          <button class="copy" type="button">Copy</button>
+        </div>
+        -->
+      </div>
+      <p class="fine">x86 and ARM; on Windows, inside WSL. Then run <code>claudejr</code> and paste an Anthropic API key, or start it with a local model: <code>claudejr -m ollama/qwen3</code>.</p>
   </div>
 
   <figure class="shot col wide">
     <div class="term" role="img" aria-label="A claude-jr session: it finds a struct, edits it, and builds the project">
-<pre><span class="hd"><img src="/logo.svg" alt="" width="56" height="48"><span><b>claude-jr</b> 0.2.0<br>claude-opus-5-5 · ~/proj/cli<br>/help for commands · shift+tab to change mode</span></span><span class="b">&gt; add a --verbose flag to the cli</span>
-
-<span class="o">●</span> Bash(grep -n "struct Args" -A12 src/cli.rs)
-<span class="g">  ⎿ 9:pub struct Args {  … +11 lines</span>
-
-<span class="o">●</span> Edit(src/cli.rs)
-<span class="a">    13 + /// Print debug output
-    14 + #[arg(short, long)]
-    15 + pub verbose: bool,</span>
-<span class="g">  ⎿ Edited src/cli.rs (1 replacement)</span>
-
-<span class="o">●</span> Bash(cargo build)
-<span class="g">  ⎿ Finished `dev` profile in 2.1s</span>
-
-<span class="o">●</span> Added <span class="b">--verbose</span> to Args. The build passes.<span class="box">&gt; ask anything, or /help</span></pre>
+<pre><span class="hd"><img src="/logo.svg" alt="" width="56" height="48"><span><b>claude-jr</b> 0.2.0<br>claude-opus-5-5 · ~/proj/cli<br>/help for commands · shift+tab to change mode</span></span><span class="ln b" style="--i:1">&gt; add a --verbose flag to the cli</span><span class="ln" style="--i:1"></span><span class="ln" style="--i:3"><span class="o">●</span> Bash(grep -n "struct Args" -A12 src/cli.rs)</span><span class="ln g" style="--i:4">  ⎿ 9:pub struct Args {  … +11 lines</span><span class="ln" style="--i:4"></span><span class="ln" style="--i:6"><span class="o">●</span> Edit(src/cli.rs)</span><span class="ln a" style="--i:7">    13 + /// Print debug output</span><span class="ln a" style="--i:7">    14 + #[arg(short, long)]</span><span class="ln a" style="--i:7">    15 + pub verbose: bool,</span><span class="ln g" style="--i:8">  ⎿ Edited src/cli.rs (1 replacement)</span><span class="ln" style="--i:8"></span><span class="ln" style="--i:10"><span class="o">●</span> Bash(cargo build)</span><span class="ln g" style="--i:12">  ⎿ Finished `dev` profile in 2.1s</span><span class="ln" style="--i:12"></span><span class="ln" style="--i:14"><span class="o">●</span> Added <span class="b">--verbose</span> to Args. The build passes.</span><span class="box">&gt; ask anything, or /help</span></pre>
     </div>
+    <figcaption><button class="motion replay" type="button">Replay</button></figcaption>
   </figure>
 
-  <section>
+  <section id="numbers">
     <div class="col">
       <h2>Small enough not to notice</h2>
       <p>There is no Node or Python to install and nothing running in the background. Memory
@@ -203,32 +307,138 @@
         <div><b>0 ms</b><span>CPU while it waits</span></div>
       </div>
 
+      <h3>Next to Claude Code, drawn to scale</h3>
+      <div class="scale">
+        <div class="m">
+          <div class="what">Install size <span>177 times less</span></div>
+          <div class="bar us"><span>claude-jr</span><i style="--w:.56%"></i><b>2.0 MB</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>354 MB</b></div>
+        </div>
+        <div class="m">
+          <div class="what">Memory, sitting idle <span>200 times less</span></div>
+          <div class="bar us"><span>claude-jr</span><i style="--w:.5%"></i><b>0.7 MB</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>148 MB</b></div>
+        </div>
+        <div class="m">
+          <div class="what">Memory at its peak, 20 tool calls <span>130 times less</span></div>
+          <div class="bar us"><span>claude-jr</span><i style="--w:.76%"></i><b>2.2 MB</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>289 MB</b></div>
+        </div>
+        <div class="m">
+          <div class="what">Its own CPU time, 20 tool calls <span>28 times less</span></div>
+          <div class="bar us"><span>claude-jr</span><i style="--w:3.5%"></i><b>40 ms</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>1,140 ms</b></div>
+        </div>
+        <div class="m">
+          <div class="what">Time until the screen is ready <span>40 times less</span></div>
+          <div class="bar us"><span>claude-jr</span><i style="--w:2.5%"></i><b>4 ms</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>157 ms</b></div>
+        </div>
+      </div>
+      <p class="note">Claude Code 2.1.326 and claude-jr on the same Linux laptop, 18 November 2026,
+        both against the same fake API so the model's time isn't counted. Claude Code does a good
+        deal more than claude-jr; this is what the difference costs.
+        <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">How it's measured</a>.</p>
+
+      <h3>What that means in practice</h3>
+      <div class="fit">
+        <figure>
+          <div class="block" role="img" aria-label="One block: the memory of one idle Claude Code session"></div>
+          <figcaption>One Claude Code session, idle: 148 MB.</figcaption>
+        </figure>
+        <figure>
+          <div class="many" role="img" aria-label="Two hundred small squares filling the same area"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <figcaption>The same memory holds 200 claude-jr sessions.</figcaption>
+        </figure>
+      </div>
+
+      <h3>On disk, next to other terminal agents</h3>
       <div class="scroll">
         <table>
-          <thead><tr><th></th><th class="us">claude-jr</th><th>Claude Code</th><th>pi</th></tr></thead>
+          <thead><tr><th>Agent</th><th>Version</th><th>Installed size</th></tr></thead>
           <tbody>
-            <tr><td>Install size</td><td class="us">2.0 MB</td><td>324.5 MB</td><td>109.0 MB</td></tr>
-            <tr><td>Memory, idle</td><td class="us">0.7 MB</td><td>135.0 MB</td><td>141.1 MB</td></tr>
-            <tr><td>Memory, working</td><td class="us">2.0 MB</td><td>270.2 MB</td><td>137.5 MB</td></tr>
-            <tr><td>Startup</td><td class="us">5 ms</td><td>167 ms</td><td>~260 ms</td></tr>
-            <tr><td>Its own CPU, 20 tool calls</td><td class="us">30 ms</td><td>1,150 ms</td><td>580 ms</td></tr>
+            <tr class="us"><td>claude-jr</td><td>today's build</td><td>2.0 MB</td></tr>
+            <tr><td>Gemini CLI</td><td>0.68.0</td><td>103 MB</td></tr>
+            <tr><td>pi</td><td>0.73.1</td><td>150 MB</td></tr>
+            <tr><td>Claude Code</td><td>2.1.326</td><td>354 MB</td></tr>
+            <tr><td>Codex CLI</td><td>0.169.0</td><td>423 MB</td></tr>
+            <tr><td>opencode</td><td>1.19.6</td><td>432 MB</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note">All three run against the same fake API, so the model's time isn't counted;
-        <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">how it's measured</a>.</p>
+      <p class="note">What each one's own installer puts on disk on Linux x86-64 (for the npm ones, the
+        folder <code>npm install</code> fills; Node itself not counted). Size is the only thing compared
+        here: these are different tools with different features.</p>
     </div>
   </section>
 
   <section>
     <div class="col">
       <h2>And it gets the work done</h2>
-      <p><a href="https://www.swebench.com/">SWE-bench Verified</a> gives an agent real GitHub issues
-        from projects like Django, sympy and scikit-learn, and checks its fix with the projects' own
-        hidden tests.</p>
+      <p><a href="https://www.swebench.com/">SWE-bench Verified</a> gives an agent 500 real GitHub
+        issues from projects like Django, sympy and scikit-learn, and checks each fix with the
+        project's own hidden tests. claude-jr ran all of them with Claude Opus 5.5, one attempt each.</p>
       <div class="big">93.4%</div>
-      <p>467 of all 500 tasks resolved with Claude Opus 5.5, one attempt each, at about 13 cents a
-        task. With Claude Sonnet 5.5, 88 of a random 100, at about five cents a task.</p>
+      <div class="dots" role="img" aria-label="500 squares, one per task: 467 filled for resolved, 33 hollow for not resolved"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="legend"><span><i></i>467 resolved</span><span><i class="n"></i>33 not resolved</span></div>
+
+      <div class="scroll">
+        <table class="tight">
+          <thead><tr><th>Project</th><th>Resolved</th><th>Tasks</th></tr></thead>
+          <tbody>
+            <tr><td>django</td><td>218</td><td>231</td></tr>
+            <tr><td>sympy</td><td>69</td><td>75</td></tr>
+            <tr><td>sphinx</td><td>43</td><td>44</td></tr>
+            <tr><td>matplotlib</td><td>32</td><td>34</td></tr>
+            <tr><td>scikit-learn</td><td>32</td><td>32</td></tr>
+            <tr><td>astropy</td><td>21</td><td>22</td></tr>
+            <tr><td>xarray</td><td>20</td><td>22</td></tr>
+            <tr><td>pytest</td><td>17</td><td>19</td></tr>
+            <tr><td>pylint</td><td>8</td><td>10</td></tr>
+            <tr><td>requests</td><td>4</td><td>8</td></tr>
+            <tr><td>seaborn, flask</td><td>3</td><td>3</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">A task took 34 seconds and six requests at the median, and 13 cents on average
+        ($67 for the whole set). The four requests tasks counted as failures fail on the test machine
+        with the reference fix too. With Claude Sonnet 5.5 it resolved 88 of a random 100 at about five
+        cents each. The score is mostly the model's: what this shows is that a small agent doesn't
+        hold it back. It is not a leaderboard entry, and the tasks are old enough that the model may
+        have seen them. <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md#swe-bench-verified">Details</a>.</p>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="col">
+      <h2>How it stays small</h2>
+      <p>Nothing clever, mostly things left out.</p>
+      <ol class="how">
+        <li><div><b>The conversation lives on disk.</b><span>Every message is appended to the session file as it happens. Memory keeps only where each one is, and a request is streamed to the API straight from that file. A session with 8 MB of history uses the same 4 MB as a short one.</span></div></li>
+        <li><div><b>No runtime underneath.</b><span>One static binary, with nothing to start before it. There is no JavaScript engine to load and no garbage collector holding on to memory.</span></div></li>
+        <li><div><b>Threads instead of an async framework.</b><span>It talks to one model at a time, so a few plain threads and channels do the job, and they sleep in the kernel while waiting: zero CPU when idle.</span></div></li>
+        <li><div><b>A short, fixed prompt.</b><span>About 3,000 tokens with its tools, and the history only ever grows, so the provider's prompt cache stays valid from the first request to the last.</span></div></li>
+        <li><div><b>Unused pages go back.</b><span>When it goes quiet on Linux it hands the program pages it isn't using back to the system, which is how a working agent settles at 0.7 MB.</span></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Made to run many at once</h2>
+      <p>Because each one is so small, the limit on how many you run is your API rate limit, not
+        your machine. Background tasks each get a git worktree and branch of their own, so they
+        can't touch each other's files or yours, and a group of them can share one budget.</p>
+      <div class="figures">
+        <div><b>1,000</b><span>agents working at once</span></div>
+        <div><b>492 MB</b><span>between all of them</span></div>
+        <div><b>0.1 s</b><span>to start 40 tasks</span></div>
+        <div><b>1.2 MB</b><span>the MCP server, waiting</span></div>
+      </div>
+      <p class="note"><code>claudejr install claude-code</code> (or cursor, or codex) lets your main agent start
+        these workers itself. Whether handing work out pays depends on the work: on small jobs one
+        agent doing everything was faster in our own test, and
+        <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md#handing-work-out-when-it-pays">we say so</a>.</p>
     </div>
   </section>
 
@@ -236,16 +446,15 @@
     <div class="col">
       <h2>What's in it</h2>
       <dl class="list">
-        <div><dt>Workers for other agents</dt><dd><code>claudejr install claude-code</code> (or cursor, or codex) lets your main agent start claude-jr workers over MCP, then read, merge or drop what each one did.</dd></div>
-        <div><dt>Tasks and fleets</dt><dd>Runs carry on in the background, each in its own git worktree and branch, with a shared budget and a log of every step. <code>claudejr fleet</code> runs a whole list.</dd></div>
         <div><dt>Any model</dt><dd>Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with <code>-m provider/model</code>.</dd></div>
-        <div><dt>Subagents</dt><dd>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</dd></div>
         <div><dt>Permission modes</dt><dd>From asking about everything to an auto mode where a small model reviews each command. <kbd>shift</kbd> <kbd>tab</kbd> switches.</dd></div>
         <div><dt>A sandbox</dt><dd>With <code>--sandbox</code> on Linux it can only write to your project; keys, sockets and the rest of your home stay out of reach.</dd></div>
+        <div><dt>Tasks and fleets</dt><dd>Runs carry on in the background, each on its own branch, with a log of every step. <code>claudejr fleet</code> runs a whole list.</dd></div>
+        <div><dt>Workers for other agents</dt><dd>An MCP server through which Claude Code, Cursor or Codex start workers, then read, merge or drop what each one did.</dd></div>
+        <div><dt>Subagents</dt><dd>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</dd></div>
         <div><dt>Rewind and resume</dt><dd>Go back to before any message with its file changes undone. Every session is saved as it goes.</dd></div>
         <div><dt>Skills and MCP</dt><dd>Reads your <code>.claude/skills</code> and talks to MCP servers, local or remote.</dd></div>
         <div><dt>Images and the web</dt><dd>Drag in a screenshot, and it can search and fetch pages when the task needs them.</dd></div>
-        <div><dt>A stash</dt><dd><kbd>ctrl</kbd> <kbd>s</kbd> puts a half-written message aside while you send another.</dd></div>
         <div><dt>Scripting</dt><dd><code>claudejr -p "…"</code> runs one prompt, with JSON output and a spending limit for CI.</dd></div>
       </dl>
     </div>
@@ -272,6 +481,42 @@
       </div>
     </div>
   </section>
+
+  <section>
+    <div class="col">
+      <h2>Questions</h2>
+      <details>
+        <summary>Is this made by Anthropic?</summary>
+        <p>No. claude-jr is an independent, MIT-licensed project. It talks to Claude through
+          Anthropic's public API, the same way any program can.</p>
+      </details>
+      <details>
+        <summary>What do I need to run it?</summary>
+        <p>An API key from Anthropic, or from another provider it knows (OpenAI, Gemini, Groq,
+          OpenRouter and others), or a model running locally in Ollama, LM Studio or llama.cpp, which
+          needs no key at all. A Claude subscription login is not supported; it uses API keys.</p>
+      </details>
+      <details>
+        <summary>What does it leave out, to be this small?</summary>
+        <p>Plugins, hooks, IDE integration, and the breadth of a product with a team behind it. It has
+          the working core: tools, permissions, subagents, skills, MCP, sessions, a sandbox. If you
+          depend on one of the missing things, Claude Code is the right tool.</p>
+      </details>
+      <details>
+        <summary>Where does my code go?</summary>
+        <p>To the model provider you chose, and nowhere else. claude-jr has no telemetry and no account.
+          Beyond that it contacts only MCP servers you set up yourself, and GitHub when you ask it to <code>--update</code>.</p>
+      </details>
+      <details>
+        <summary>Can I check the numbers?</summary>
+        <p>Yes. Every figure on this page comes from a script in the repository's
+          <a href="https://github.com/IWhitebird/claude-jr/tree/main/bench">bench folder</a>, most of them
+          runnable without an API key, and
+          <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">the benchmarks page</a>
+          says how each was measured, including the ones that didn't go our way.</p>
+      </details>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -279,27 +524,64 @@
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">Guide</a>
     <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">Benchmarks</a>
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/ARCHITECTURE.md">Architecture</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
   </div>
 </footer>
 
 <script>
-  const btn = document.querySelector(".copy");
-  btn.addEventListener("click", async () => {
-    const cmd = document.getElementById("cmd");
-    try {
-      await navigator.clipboard.writeText(cmd.textContent);
-      btn.textContent = "Copied";
-    } catch {
-      const r = document.createRange();
-      r.selectNodeContents(cmd);
-      getSelection().removeAllRanges();
-      getSelection().addRange(r);
-      btn.textContent = "Selected";
-    }
-    setTimeout(() => (btn.textContent = "Copy"), 1600);
+  // Copy buttons: each copies the command beside it.
+  for (const btn of document.querySelectorAll(".copy")) {
+    btn.addEventListener("click", async () => {
+      const cmd = btn.parentElement.querySelector("code");
+      try {
+        await navigator.clipboard.writeText(cmd.textContent);
+        btn.textContent = "Copied";
+      } catch {
+        const r = document.createRange();
+        r.selectNodeContents(cmd);
+        getSelection().removeAllRanges();
+        getSelection().addRange(r);
+        btn.textContent = "Selected";
+      }
+      setTimeout(() => (btn.textContent = "Copy"), 1600);
+    });
+  }
+
+  // Junior looks toward the pointer, hops when clicked, and can be told to hold still.
+  const jr = document.querySelector(".jr");
+  const pause = document.querySelector(".junior .motion");
+  addEventListener("pointermove", (e) => {
+    const box = jr.getBoundingClientRect();
+    jr.style.setProperty("--look", e.clientX < box.left + box.width / 2 ? "-10px" : "0px");
+  }, { passive: true });
+  jr.addEventListener("click", () => {
+    jr.classList.remove("hop");
+    void jr.getBoundingClientRect();
+    jr.classList.add("hop");
   });
+  pause.addEventListener("click", () => {
+    pause.textContent = jr.classList.toggle("paused") ? "Play" : "Pause";
+  });
+
+  // The terminal plays once when it comes into view, and again on request.
+  const shot = document.querySelector(".shot");
+  const play = () => {
+    shot.classList.remove("play");
+    void shot.getBoundingClientRect();
+    shot.classList.add("play");
+  };
+  if ("IntersectionObserver" in window) {
+    const seen = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        play();
+        seen.disconnect();
+      }
+    }, { threshold: 0.35 });
+    seen.observe(shot);
+  }
+  shot.querySelector(".replay").addEventListener("click", play);
 </script>
 </body>
 </html>

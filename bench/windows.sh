@@ -100,7 +100,8 @@ echo "$reply" | grep -q '"name":"claude-jr"' && echo "$reply" | grep -q start_ta
 cd "$work"
 version=$("$bin" --version | tr -d '\r' | cut -d' ' -f2)
 mkdir rel && cp "$bin" rel/claudejr-windows-x86_64.exe && echo "$version" >rel/version
-(cd rel && sha256sum claudejr-windows-x86_64.exe >checksums.txt)
+# (As the release makes it, on Linux: two spaces, no binary-mode star.)
+(cd rel && sha256sum claudejr-windows-x86_64.exe | sed 's/ \*/  /' >checksums.txt)
 serve() { # serve DIR: a web server for it; its address goes into CLAUDE_JR_RELEASES
     [ -n "${web_pid:-}" ] && kill "$web_pid" 2>/dev/null
     port=$("$py" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
@@ -148,7 +149,7 @@ kill "$web_pid" 2>/dev/null
 # ---- memory: what a run takes on Windows (reported, not judged) ----------
 cd "$work/proj"
 mock MOCK_ROUNDS=20 MOCK_OUTPUT_KB=40
-peak=$(powershell -NoProfile -Command "\$p = Start-Process -FilePath '$bin' -ArgumentList '-y','-p','run' -PassThru -WindowStyle Hidden; \$null = \$p.Handle; \$p.WaitForExit(); [math]::Round(\$p.PeakWorkingSet64 / 1MB, 1)" | tr -d '\r')
+peak=$(powershell -NoProfile -Command "\$p = Start-Process -FilePath '$bin' -ArgumentList '-y','-p','run' -PassThru -WindowStyle Hidden; \$peak = 0; while (-not \$p.HasExited) { \$p.Refresh(); if (\$p.PeakWorkingSet64 -gt \$peak) { \$peak = \$p.PeakWorkingSet64 }; Start-Sleep -Milliseconds 20 }; [math]::Round(\$peak / 1MB, 1)" | tr -d '\r')
 echo "  memory: a run of 20 commands peaked at ${peak} MB (working set)"
 idle=$(powershell -NoProfile -Command "\$i = New-Object System.Diagnostics.ProcessStartInfo; \$i.FileName = '$bin'; \$i.Arguments = 'mcp -y'; \$i.RedirectStandardInput = \$true; \$i.RedirectStandardOutput = \$true; \$i.UseShellExecute = \$false; \$p = [System.Diagnostics.Process]::Start(\$i); Start-Sleep 3; \$p.Refresh(); [math]::Round(\$p.WorkingSet64 / 1MB, 1), [math]::Round(\$p.PrivateMemorySize64 / 1MB, 1) -join ' '; \$p.Kill()" | tr -d '\r')
 echo "  memory: the MCP server waiting for calls holds (working set, private) ${idle} MB"

@@ -15,7 +15,7 @@ try {
     Invoke-WebRequest -UseBasicParsing "$base/$name" -OutFile (Join-Path $tmp 'claudejr.exe')
     Invoke-WebRequest -UseBasicParsing "$base/checksums.txt" -OutFile (Join-Path $tmp 'checksums.txt')
 
-    $line = Get-Content (Join-Path $tmp 'checksums.txt') | Where-Object { $_ -match "  $([regex]::Escape($name))$" } | Select-Object -First 1
+    $line = Get-Content (Join-Path $tmp 'checksums.txt') | Where-Object { $_ -match "[ *]$([regex]::Escape($name))$" } | Select-Object -First 1
     $want = if ($line) { ($line -split ' ')[0] } else { '' }
     $got = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp 'claudejr.exe')).Hash.ToLower()
     if (-not $want -or $want -ne $got) {

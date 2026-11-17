@@ -168,6 +168,9 @@ def invalid(body):
         return "messages: at least one message is required"
     turns = []  # consecutive messages from one side count as one, as the API joins them
     for i, m in enumerate(messages):
+        # A system message partway through (the API takes those) belongs to neither side.
+        if isinstance(m, dict) and m.get("role") == "system":
+            continue
         if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
             return f"messages.{i}: role must be user or assistant"
         content = m.get("content")
