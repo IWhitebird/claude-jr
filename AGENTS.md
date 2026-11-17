@@ -11,7 +11,7 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 - `src/api`: talking to models (the client, each wire format, providers)
 - `src/work`: background tasks, worktrees, budgets, the run log
 - `src/store`: sessions, images and config on disk
-- `src/sys`: sandbox, memory trim, signals (what differs per OS)
+- `src/sys`: what differs per OS: files and processes, the shell, sandbox, memory trim, signals
 - `tests/cli`, `tests/ui`: the real binary against the fake API and in a pseudo-terminal
 - `bench/`: resource benchmarks (memory, CPU, idle, pty UI tests) and a fake API
 - `bench/evals/`: coding evals (run.py; --dry-run uses the fake API in bench/mock.py)
@@ -20,6 +20,11 @@ binary <= 4 MB. No async runtime; threads plus mpsc channels.
 - `cargo test --release`
 - `cargo clippy --release --all-targets -- -D warnings`
 - `cargo fmt --check`
+
+## Windows
+The code builds for Windows too; anything OS-specific belongs in `src/sys`.
+CI builds and tests it on a Windows machine (`bench/windows.sh`). The
+end-to-end suites in `tests/` are Unix-only.
 
 ## Release build
 `CC_x86_64_unknown_linux_musl=gcc ./build.sh x86_64-unknown-linux-musl`
