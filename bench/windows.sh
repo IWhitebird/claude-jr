@@ -75,6 +75,9 @@ state=$("$bin" task wait "$id" 2>"$work/err")
     && say ok "its branch merges into this one" || { say FAIL "task merge: $(tail -2 "$work/err")"; show "$id"; }
 
 mock MOCK_CMD='sleep 60' MOCK_ROUNDS=1
+# (Other steps of a CI job can have left a sleep of their own running.)
+sleeping() { tasklist 2>/dev/null | grep -ci '^sleep'; }
+before=$(sleeping)
 began=$(date +%s)
 id=$("$bin" task start -y "slow work" | tr -d '\r')
 [ $(( $(date +%s) - began )) -lt 10 ] && say ok "starting returns at once, to a script that captures the id too" || say FAIL "task start waited for its worker"
@@ -84,13 +87,9 @@ sleep 3
 status=$("$bin" task result "$id" | field status)
 [ "$status" = cancelled ] && say ok "cancelling stops it" || { say FAIL "after cancel: $status"; show "$id"; }
 sleep 3
-if tasklist 2>/dev/null | grep -qi '^sleep'; then
-    say FAIL "the cancelled task's command is still running"
-    powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'sleep|bash|claudejr' } | Format-Table ProcessId,ParentProcessId,Name,CreationDate -AutoSize | Out-String -Width 200"
-    show "$id"
-else
-    say ok "and the command it was running"
-fi
+after=$(sleeping)
+[ "$after" -le "$before" ] && say ok "and the command it was running" \
+    || { say FAIL "the cancelled task's command is still running ($before sleeps before, $after after)"; show "$id"; }
 
 reply=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$bin" mcp -y 2>/dev/null)
 echo "$reply" | grep -q '"name":"claude-jr"' && echo "$reply" | grep -q start_task \
