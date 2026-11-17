@@ -15,6 +15,15 @@ export XDG_CONFIG_HOME=$(cygpath -m "$work/cfg") XDG_DATA_HOME=$(cygpath -m "$wo
 export ANTHROPIC_API_KEY=mock CLAUDE_JR_OFFLINE_SECS=15
 pass=0; fail=0
 say() { if [ "$1" = ok ]; then pass=$((pass+1)); else fail=$((fail+1)); fi; printf '  %-4s %s\n' "$1" "$2"; }
+# What a task left behind, for when a check on it fails.
+show() {
+    echo "--- task $1: result, then the end of its output and log"
+    "$bin" task result "$1" 2>&1 | head -40
+    tail -15 "$work/data/claude-jr/tasks/$1/output.txt" 2>/dev/null
+    tail -8 "$work/data/claude-jr/tasks/$1/log.jsonl" 2>/dev/null | cut -c1-300
+    git worktree list 2>&1; git branch -a 2>&1
+    echo "---"
+}
 field() { "$py" -c 'import sys,json; print(json.load(sys.stdin).get(sys.argv[1]))' "$1" 2>/dev/null | tr -d '\r'; }
 
 # mock NAME=value...: a fake API with these settings; its address goes into the environment.
@@ -62,12 +71,12 @@ state=$("$bin" task wait "$id" 2>"$work/err")
 [ "$(echo "$state" | field status)" = done ] && say ok "it finishes, and waiting for it sees that" || say FAIL "task wait: $state $(tail -2 "$work/err")"
 "$bin" task list | grep -q "claude-haiku-5-5" && say ok "the list names the model that worked" || say FAIL "task list: $("$bin" task list)"
 "$bin" task merge "$id" >/dev/null 2>"$work/err" && git log --oneline | grep -q . && [ -f demo.txt ] \
-    && say ok "its branch merges into this one" || say FAIL "task merge: $(tail -2 "$work/err")"
+    && say ok "its branch merges into this one" || { say FAIL "task merge: $(tail -2 "$work/err")"; show "$id"; }
 
 mock MOCK_CMD='sleep 60' MOCK_ROUNDS=1
 id=$("$bin" task start -y "slow work" | tr -d '\r')
 sleep 3
-[ "$("$bin" task result "$id" | field status)" = running ] && say ok "a running task is seen as running" || say FAIL "not running: $("$bin" task result "$id")"
+[ "$("$bin" task result "$id" | field status)" = running ] && say ok "a running task is seen as running" || { say FAIL "not running"; show "$id"; }
 "$bin" task cancel "$id" >/dev/null 2>&1
 status=$("$bin" task result "$id" | field status)
 [ "$status" = cancelled ] && say ok "cancelling stops it" || say FAIL "after cancel: $status"

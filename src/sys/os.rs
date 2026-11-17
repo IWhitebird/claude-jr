@@ -125,9 +125,11 @@ pub fn apart(cmd: &mut Command, detached: bool) -> &mut Command {
     }
     #[cfg(windows)]
     {
-        const DETACHED_PROCESS: u32 = 0x8;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x200;
-        let flags = CREATE_NEW_PROCESS_GROUP | if detached { DETACHED_PROCESS } else { 0 };
+        // A console of its own that nobody sees: not ours, so closing our
+        // terminal leaves it running, yet there for the shells it starts.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let flags = CREATE_NEW_PROCESS_GROUP | if detached { CREATE_NO_WINDOW } else { 0 };
         std::os::windows::process::CommandExt::creation_flags(cmd, flags);
     }
     cmd
