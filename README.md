@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/logo.svg" width="140" alt="claude-jr (Claude Junior) mascot">
+  <img src="assets/logo-animated.svg" width="140" alt="claude-jr (Claude Junior) mascot">
 </p>
 
 <h1 align="center">claude-jr</h1>
 
 <p align="center">
   <b>Claude Junior</b>: a full coding agent for the terminal in one 2 MB binary.<br>
-  Use it on its own, or as the workers your main agent hands tasks to: half a megabyte each.
+  About 180 times smaller than Claude Code and 200 times lighter in memory, and it resolves 93.4% of SWE-bench Verified.
 </p>
 
 <p align="center">
@@ -57,22 +57,32 @@ the newest release.
 - **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, at well under a cent for a small task. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
 - **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU. Claude through Amazon Bedrock or Google Vertex AI with `-m bedrock/...` and `-m vertex/...` (in the next release; not yet tested against the real services).
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 401 tests with 98% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
+- **Tested.** 401 tests with 97% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 
-Against other agents, on the same fake API so no model time is counted:
+Next to Claude Code, on the same laptop and the same fake API, so no model time is counted:
 
-|                              | claude-jr | Claude Code | pi       |
-|------------------------------|-----------|-------------|----------|
-| install size                 | 2.0 MB    | 324.5 MB    | 109.0 MB |
-| startup                      | 5 ms      | 167 ms      | ~260 ms  |
-| memory, idle                 | 0.7 MB    | 135.0 MB    | 141.1 MB |
-| memory, working              | 2.1 MB    | 270.2 MB    | 137.5 MB |
-| its own CPU for 20 tool calls| 40 ms     | 1150 ms     | 580 ms   |
+|                               | claude-jr | Claude Code | times less |
+|-------------------------------|-----------|-------------|------------|
+| install size                  | 2.0 MB    | 354 MB      | 177        |
+| memory, idle                  | 0.7 MB    | 148 MB      | 200        |
+| memory at its peak, 20 tool calls | 2.2 MB | 289 MB     | 130        |
+| its own CPU for 20 tool calls | 40 ms     | 1,140 ms    | 28         |
+| startup                       | 4 ms      | 157 ms      | 40         |
 
-A thousand claude-jr agents working at once hold 488 MB between them
+Claude Code 2.1.326, measured 18 November 2026 with `bench/compare.py`. Claude
+Code does a good deal more than claude-jr; this is what the difference costs.
+The memory of one idle Claude Code session holds 200 of claude-jr's, and a
+thousand claude-jr agents working at once hold 492 MB between them
 (`bench/density.py`).
+
+On disk, next to other terminal agents (what each one's installer leaves on
+Linux x86-64; for the npm ones, Node itself not counted):
+
+| claude-jr | Gemini CLI 0.68 | pi 0.73 | Claude Code 2.1 | Codex CLI 0.169 | opencode 1.19 |
+|-----------|-----------------|---------|-----------------|-----------------|---------------|
+| **2 MB**  | 103 MB          | 150 MB  | 354 MB          | 423 MB          | 432 MB        |
 
 [SWE-bench Verified](https://www.swebench.com/), one attempt per task, official scoring:
 
@@ -81,8 +91,19 @@ A thousand claude-jr agents working at once hold 488 MB between them
 | claude-opus-5-5   | all 500      | 467 (93.4%)     | $67.32 |
 | claude-sonnet-5-5 | 100 of 500   | 88 (88%)        | $5.06  |
 
-Sonnet's 100 were picked at random from the 500. How everything is
-measured, and the rest of the numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Sonnet's 100 were picked at random from the 500. The score is mostly the
+model's; what it shows is that a small agent doesn't hold the model back.
+
+## How it stays small
+
+- **The conversation lives on disk.** Messages are appended to the session file and requests are streamed from it, so a session with 8 MB of history uses the same 4 MB as a short one.
+- **No runtime.** One static binary: no JavaScript engine to load, no garbage collector holding memory.
+- **Threads, not an async framework.** It talks to one model at a time; a few threads that sleep in the kernel are enough, hence zero CPU when idle.
+- **A short, fixed prompt** and a history that only grows, so the prompt cache stays valid for the whole session.
+- **Unused pages go back** to the system when it goes quiet (Linux), which is how it settles at 0.7 MB.
+
+How everything is measured, and the rest of the numbers, including the ones
+that didn't go our way: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Use
 

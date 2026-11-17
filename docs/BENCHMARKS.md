@@ -8,21 +8,39 @@ Measured with [`bench/compare.py`](../bench/compare.py): every agent runs agains
 the same fake API (no model time counted), with a fresh empty home folder.
 Busy = one prompt that makes 20 bash calls with streamed text in between.
 
-|                               | claude-jr | Claude Code | pi       |
-|-------------------------------|-----------|-------------|----------|
-| install size                  | 2.0 MB    | 324.5 MB    | 109.0 MB |
-| startup (screen settles)      | 5 ms      | 167 ms      | ~260 ms  |
-| memory, idle                  | 0.7 MB    | 135.0 MB    | 141.1 MB |
-| processes / threads, idle     | 1 / 4     | 1 / 15      | 1 / 11   |
-| CPU while idle 10s            | 0 ms      | 70 ms       | 0 ms     |
-| busy: wall time               | 0.09 s    | 1.84 s      | 1.24 s   |
-| busy: agent's own CPU         | 30 ms     | 1150 ms     | 580 ms   |
-| busy: agent's own peak memory | 2.1 MB    | 270.2 MB    | 137.5 MB |
-| busy: CPU incl. commands      | 116 ms    | 1285 ms     | 671 ms   |
+|                               | claude-jr | Claude Code | times less |
+|-------------------------------|-----------|-------------|------------|
+| install size                  | 2.0 MB    | 354.2 MB    | 177        |
+| startup (screen settles)      | 4 ms      | 157 ms      | 40         |
+| memory, idle                  | 0.7 MB    | 147.7 MB    | 200        |
+| processes / threads, idle     | 1 / 4     | 1 / 16      |            |
+| CPU while idle 5s             | 0 ms      | 50 ms       |            |
+| busy: wall time               | 0.10 s    | 1.57 s      | 16         |
+| busy: agent's own CPU         | 40 ms     | 1140 ms     | 28         |
+| busy: agent's own peak memory | 2.2 MB    | 288.9 MB    | 130        |
+| busy: CPU incl. commands      | 119 ms    | 1268 ms     | 11         |
 
-Claude Code 2.1.319, pi 1.5.0, claude-jr static x86_64 build. Codex 0.167.0
-was measured idle only (it speaks OpenAI's API): 150 MB, 37 threads, 322 ms
-startup, with a 306 MB binary.
+Claude Code 2.1.326 and claude-jr's static x86_64 build (2,030,368 bytes), 18 November 2026, on a Linux
+laptop. Claude Code is a much larger product (plugins, hooks, IDE integration, an auto-updater and more);
+the table shows what that costs in resources, not which is better.
+
+An earlier run (claude-jr 0.2.0, Claude Code 2.1.319) also had pi 1.5.0: 109 MB installed, 141 MB idle,
+~260 ms to start, 580 ms of CPU and a 138 MB peak for the 20 calls; and Codex 0.167.0, idle only (it
+speaks OpenAI's API): 150 MB, 37 threads, 322 ms to start.
+
+### Installed size next to other terminal agents
+
+What each one's installer leaves on disk on Linux x86-64, 18 November 2026. For the npm packages it is the
+`node_modules` folder that `npm install` fills, without Node itself. Only size was measured for these.
+
+| agent | version | installed |
+|---|---|---|
+| claude-jr | this build | 2.0 MB |
+| Gemini CLI (`@google/gemini-cli`) | 0.68.0 | 103 MB |
+| pi (`@mariozechner/pi-coding-agent`) | 0.73.1 | 150 MB |
+| Claude Code | 2.1.326 | 354 MB |
+| Codex CLI (`@openai/codex`) | 0.169.0 | 423 MB |
+| opencode (`opencode-ai`) | 1.19.6 | 432 MB |
 
 The release binary is built by [`build.sh`](../build.sh): optimised for size, with Rust's standard
 library rebuilt the same way. On Linux, whenever claude-jr goes quiet it hands the pages of its own
