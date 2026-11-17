@@ -163,6 +163,9 @@ fn stalled_server() -> (String, std::thread::JoinHandle<()>) {
 
 /// Esc stops a request at once even while it waits for the reply to begin
 /// (no read timeout can be picked up again there), and the next request works.
+// (Not on Windows: there the wait ends when the server answers the hang-up,
+// and this test's server never does.)
+#[cfg(unix)]
 #[test]
 fn cancel_works_before_the_reply_begins() {
     use std::io::{Read, Write};

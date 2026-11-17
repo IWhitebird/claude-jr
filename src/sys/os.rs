@@ -174,44 +174,6 @@ pub fn alive(pid: u64) -> bool {
     }
 }
 
-/// A way to break another thread out of a read it is blocked in. On Unix
-/// closing the connection does that; on Windows it does not, and the read
-/// has to be cancelled by name.
-pub struct Interrupt(#[cfg(windows)] usize);
-
-impl Interrupt {
-    /// For the thread this is called on.
-    pub fn of_this_thread() -> Interrupt {
-        #[cfg(windows)]
-        {
-            const THREAD_TERMINATE: u32 = 1; // what cancelling its I/O asks for
-            // SAFETY: opens a handle to the calling thread; closed on drop.
-            Interrupt(unsafe { win::OpenThread(THREAD_TERMINATE, 0, win::GetCurrentThreadId()) } as usize)
-        }
-        #[cfg(unix)]
-        Interrupt()
-    }
-
-    /// Cancels what that thread is waiting on, if anything.
-    pub fn now(&self) {
-        #[cfg(windows)]
-        if self.0 != 0 {
-            // SAFETY: the handle is the one opened above.
-            unsafe { win::CancelSynchronousIo(self.0 as *mut std::ffi::c_void) };
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Interrupt {
-    fn drop(&mut self) {
-        if self.0 != 0 {
-            // SAFETY: closes the handle opened in `of_this_thread`.
-            unsafe { win::CloseHandle(self.0 as *mut std::ffi::c_void) };
-        }
-    }
-}
-
 /// The Windows calls used above and in signals.rs, declared here so that no
 /// extra crate is needed for them.
 #[cfg(windows)]
@@ -258,9 +220,6 @@ pub mod win {
         ) -> i32;
         pub fn GetFileInformationByHandle(file: *mut c_void, info: *mut FileInfo) -> i32;
         pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
-        pub fn OpenThread(access: u32, inherit: i32, thread: u32) -> *mut c_void;
-        pub fn GetCurrentThreadId() -> u32;
-        pub fn CancelSynchronousIo(thread: *mut c_void) -> i32;
         pub fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
         pub fn CloseHandle(handle: *mut c_void) -> i32;
         pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
