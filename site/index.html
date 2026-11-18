@@ -89,7 +89,7 @@
   .intro .junior .jr { margin-inline: auto; }
   @media (max-width: 760px) {
     .intro { grid-template-columns: 1fr; padding-top: 28px; }
-    .intro .junior { grid-column: 1; grid-row: 1; margin: 0 0 14px; display: flex; align-items: end; gap: 6px; }
+    .intro .junior { grid-column: 1; grid-row: 1; margin: 0 0 14px; }
     .intro .junior .jr { width: 120px; height: auto; margin: 0; }
   }
   h1 { font: 400 clamp(2.5rem, 6.4vw, 3.9rem)/1.06 var(--serif); letter-spacing: -0.02em; margin: 0 0 26px; text-wrap: balance; }
@@ -108,7 +108,6 @@
     .jr .hat { transform-box: fill-box; transform-origin: 50% 100%; }
     .jr.hop .bob { animation: hop .5s steps(5, jump-none); }
     .jr.hop .hat { animation: tip .5s steps(5, jump-none); }
-    .jr.paused .bob, .jr.paused .wing, .jr.paused .eye { animation-play-state: paused; }
     @keyframes bob { from { translate: 0 0; } to { translate: 0 -4px; } }
     @keyframes spin { from { scale: 1 1; } to { scale: .3 1; } }
     @keyframes blink { 0%, 93%, 100% { scale: 1 1; } 96% { scale: 1 .12; } }
@@ -274,7 +273,6 @@
     <h1>A coding agent for the terminal, in a <em>2 MB</em> binary.</h1>
     <div class="junior">
       <svg class="jr" viewBox="20 20 160 140" width="200" height="175" shape-rendering="crispEdges" aria-hidden="true"><g class="bob"><g class="hat"><rect class="wing" x="50" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="30" width="20" height="10" fill="#F2C14E"/><rect class="wing" x="110" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="40" width="20" height="10" fill="#F2C14E"/><rect x="60" y="50" width="80" height="10" fill="#6FA8DC"/><rect x="50" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="70" y="60" width="20" height="10" fill="#F2C14E"/><rect x="90" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="110" y="60" width="20" height="10" fill="#F2C14E"/><rect x="130" y="60" width="20" height="10" fill="#6FA8DC"/></g><rect x="40" y="70" width="120" height="10" fill="#D97757"/><rect x="40" y="80" width="20" height="10" fill="#D97757"/><rect x="80" y="80" width="40" height="10" fill="#D97757"/><rect x="140" y="80" width="20" height="10" fill="#D97757"/><rect x="40" y="90" width="20" height="10" fill="#D97757"/><rect x="80" y="90" width="40" height="10" fill="#D97757"/><rect x="140" y="90" width="20" height="10" fill="#D97757"/><rect x="40" y="100" width="10" height="10" fill="#D97757"/><rect x="50" y="100" width="10" height="10" fill="#F2A48B"/><rect x="60" y="100" width="80" height="10" fill="#D97757"/><rect x="140" y="100" width="10" height="10" fill="#F2A48B"/><rect x="150" y="100" width="10" height="10" fill="#D97757"/><rect x="40" y="110" width="40" height="10" fill="#D97757"/><rect x="80" y="110" width="10" height="10" fill="#2B211C"/><rect x="90" y="110" width="20" height="10" fill="#D97757"/><rect x="110" y="110" width="10" height="10" fill="#2B211C"/><rect x="120" y="110" width="40" height="10" fill="#D97757"/><rect x="40" y="120" width="50" height="10" fill="#D97757"/><rect x="90" y="120" width="20" height="10" fill="#2B211C"/><rect x="110" y="120" width="50" height="10" fill="#D97757"/><rect x="40" y="130" width="120" height="10" fill="#B9583A"/><rect x="50" y="140" width="20" height="10" fill="#B9583A"/><rect x="130" y="140" width="20" height="10" fill="#B9583A"/><rect x="60" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="60" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="70" y="80" width="10" height="10" fill="#2B211C"/><rect x="60" y="90" width="20" height="10" fill="#2B211C"/></g><rect x="120" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="120" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="130" y="80" width="10" height="10" fill="#2B211C"/><rect x="120" y="90" width="20" height="10" fill="#2B211C"/></g></g></svg>
-      <button class="motion" type="button">Pause</button>
     </div>
     <p>claude-jr, or Claude Junior, is a small alternative to Claude Code: it reads your code, edits
         files and runs commands, asking before anything changes. It is written in Rust with no
@@ -597,9 +595,8 @@
     });
   }
 
-  // Junior looks toward the pointer, hops when clicked, and can be told to hold still.
+  // Junior looks toward the pointer and hops when clicked.
   const jr = document.querySelector(".jr");
-  const pause = document.querySelector(".junior .motion");
   addEventListener("pointermove", (e) => {
     const box = jr.getBoundingClientRect();
     jr.style.setProperty("--look", e.clientX < box.left + box.width / 2 ? "-10px" : "0px");
@@ -608,9 +605,6 @@
     jr.classList.remove("hop");
     void jr.getBoundingClientRect();
     jr.classList.add("hop");
-  });
-  pause.addEventListener("click", () => {
-    pause.textContent = jr.classList.toggle("paused") ? "Play" : "Pause";
   });
 
   // The terminal plays once when it comes into view, and again on request.
