@@ -80,3 +80,6 @@ jobs:
           cargo binstall --manifest-path . --strategies crate-meta-data --no-confirm --disable-telemetry \
             --root "$RUNNER_TEMP/binstall" claude-jr
           test "$("$RUNNER_TEMP/binstall/bin/claudejr" --version)" = "claude-jr $version"
+        # binstall asks GitHub's API whether the file is there; without a token a shared runner is turned away.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
