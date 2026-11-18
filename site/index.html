@@ -99,6 +99,8 @@
 
   .jr { display: block; overflow: visible; cursor: pointer; }
   .jr .pupil { translate: var(--look, 0px) 0; }
+  .jr .tng { opacity: 0; }
+  .jr.tongue .tng { opacity: 1; }
   .motion { margin-top: 6px; background: none; border: 0; padding: 4px 8px; font-size: 13px; color: var(--ink-3); cursor: pointer; border-radius: 6px; }
   .motion:hover { color: var(--ink); }
   @media (prefers-reduced-motion: no-preference) {
@@ -106,8 +108,25 @@
     .jr .wing { transform-box: view-box; transform-origin: 100px 35px; animation: spin .45s steps(3, jump-none) infinite alternate; }
     .jr .eye { transform-box: fill-box; transform-origin: 50% 75%; animation: blink 5s infinite; }
     .jr .hat { transform-box: fill-box; transform-origin: 50% 100%; }
+    /* What a click can set off; the script picks one. */
+    .jr .bob { transform-box: fill-box; transform-origin: 50% 100%; }
     .jr.hop .bob { animation: hop .5s steps(5, jump-none); }
     .jr.hop .hat { animation: tip .5s steps(5, jump-none); }
+    .jr.tongue .bob { animation: wiggle .8s steps(8, jump-none); }
+    .jr.wink .eye:last-of-type { animation: wink .8s steps(1); }
+    .jr.spin .bob { transform-origin: 50% 50%; animation: turn .6s steps(8, jump-none); }
+    .jr.shake .bob { animation: shake .5s steps(6, jump-none); }
+    .jr.squash .bob { animation: squash .6s steps(6, jump-none); }
+    .jr.hatoff .hat { animation: hatoff .8s steps(8, jump-none); }
+    .jr.fly .bob { animation: fly .9s steps(9, jump-none); }
+    .jr.fly .wing { animation: spin .09s steps(2, jump-none) infinite alternate; }
+    @keyframes wiggle { 0%, 100% { rotate: 0deg; } 25%, 75% { rotate: -5deg; } 50% { rotate: 5deg; } }
+    @keyframes wink { 0%, 100% { scale: 1 1; } 10%, 85% { scale: 1 .12; } }
+    @keyframes turn { to { rotate: 360deg; } }
+    @keyframes shake { 0%, 100% { translate: 0 0; } 20%, 60% { translate: -7px 0; } 40%, 80% { translate: 7px 0; } }
+    @keyframes squash { 0%, 100% { scale: 1 1; } 30% { scale: 1.16 .78; } 60% { scale: .92 1.1; } }
+    @keyframes hatoff { 0%, 100% { translate: 0 0; rotate: 0deg; } 40% { translate: 0 -34px; rotate: 18deg; } 70% { translate: 0 -10px; rotate: -8deg; } }
+    @keyframes fly { 0%, 100% { translate: 0 0; } 45%, 65% { translate: 0 -30px; } }
     @keyframes bob { from { translate: 0 0; } to { translate: 0 -4px; } }
     @keyframes spin { from { scale: 1 1; } to { scale: .3 1; } }
     @keyframes blink { 0%, 93%, 100% { scale: 1 1; } 96% { scale: 1 .12; } }
@@ -272,7 +291,7 @@
   <div class="intro col wide">
     <h1>A coding agent for the terminal, in a <em>2 MB</em> binary.</h1>
     <div class="junior">
-      <svg class="jr" viewBox="20 20 160 140" width="200" height="175" shape-rendering="crispEdges" aria-hidden="true"><g class="bob"><g class="hat"><rect class="wing" x="50" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="30" width="20" height="10" fill="#F2C14E"/><rect class="wing" x="110" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="40" width="20" height="10" fill="#F2C14E"/><rect x="60" y="50" width="80" height="10" fill="#6FA8DC"/><rect x="50" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="70" y="60" width="20" height="10" fill="#F2C14E"/><rect x="90" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="110" y="60" width="20" height="10" fill="#F2C14E"/><rect x="130" y="60" width="20" height="10" fill="#6FA8DC"/></g><rect x="40" y="70" width="120" height="10" fill="#D97757"/><rect x="40" y="80" width="20" height="10" fill="#D97757"/><rect x="80" y="80" width="40" height="10" fill="#D97757"/><rect x="140" y="80" width="20" height="10" fill="#D97757"/><rect x="40" y="90" width="20" height="10" fill="#D97757"/><rect x="80" y="90" width="40" height="10" fill="#D97757"/><rect x="140" y="90" width="20" height="10" fill="#D97757"/><rect x="40" y="100" width="10" height="10" fill="#D97757"/><rect x="50" y="100" width="10" height="10" fill="#F2A48B"/><rect x="60" y="100" width="80" height="10" fill="#D97757"/><rect x="140" y="100" width="10" height="10" fill="#F2A48B"/><rect x="150" y="100" width="10" height="10" fill="#D97757"/><rect x="40" y="110" width="40" height="10" fill="#D97757"/><rect x="80" y="110" width="10" height="10" fill="#2B211C"/><rect x="90" y="110" width="20" height="10" fill="#D97757"/><rect x="110" y="110" width="10" height="10" fill="#2B211C"/><rect x="120" y="110" width="40" height="10" fill="#D97757"/><rect x="40" y="120" width="50" height="10" fill="#D97757"/><rect x="90" y="120" width="20" height="10" fill="#2B211C"/><rect x="110" y="120" width="50" height="10" fill="#D97757"/><rect x="40" y="130" width="120" height="10" fill="#B9583A"/><rect x="50" y="140" width="20" height="10" fill="#B9583A"/><rect x="130" y="140" width="20" height="10" fill="#B9583A"/><rect x="60" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="60" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="70" y="80" width="10" height="10" fill="#2B211C"/><rect x="60" y="90" width="20" height="10" fill="#2B211C"/></g><rect x="120" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="120" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="130" y="80" width="10" height="10" fill="#2B211C"/><rect x="120" y="90" width="20" height="10" fill="#2B211C"/></g></g></svg>
+      <svg class="jr" viewBox="20 20 160 140" width="200" height="175" shape-rendering="crispEdges" aria-hidden="true"><g class="bob"><g class="hat"><rect class="wing" x="50" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="30" width="20" height="10" fill="#F2C14E"/><rect class="wing" x="110" y="30" width="40" height="10" fill="#6FA8DC"/><rect x="90" y="40" width="20" height="10" fill="#F2C14E"/><rect x="60" y="50" width="80" height="10" fill="#6FA8DC"/><rect x="50" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="70" y="60" width="20" height="10" fill="#F2C14E"/><rect x="90" y="60" width="20" height="10" fill="#6FA8DC"/><rect x="110" y="60" width="20" height="10" fill="#F2C14E"/><rect x="130" y="60" width="20" height="10" fill="#6FA8DC"/></g><rect x="40" y="70" width="120" height="10" fill="#D97757"/><rect x="40" y="80" width="20" height="10" fill="#D97757"/><rect x="80" y="80" width="40" height="10" fill="#D97757"/><rect x="140" y="80" width="20" height="10" fill="#D97757"/><rect x="40" y="90" width="20" height="10" fill="#D97757"/><rect x="80" y="90" width="40" height="10" fill="#D97757"/><rect x="140" y="90" width="20" height="10" fill="#D97757"/><rect x="40" y="100" width="10" height="10" fill="#D97757"/><rect x="50" y="100" width="10" height="10" fill="#F2A48B"/><rect x="60" y="100" width="80" height="10" fill="#D97757"/><rect x="140" y="100" width="10" height="10" fill="#F2A48B"/><rect x="150" y="100" width="10" height="10" fill="#D97757"/><rect x="40" y="110" width="40" height="10" fill="#D97757"/><rect x="80" y="110" width="10" height="10" fill="#2B211C"/><rect x="90" y="110" width="20" height="10" fill="#D97757"/><rect x="110" y="110" width="10" height="10" fill="#2B211C"/><rect x="120" y="110" width="40" height="10" fill="#D97757"/><rect x="40" y="120" width="50" height="10" fill="#D97757"/><rect x="90" y="120" width="20" height="10" fill="#2B211C"/><rect x="110" y="120" width="50" height="10" fill="#D97757"/><rect x="40" y="130" width="120" height="10" fill="#B9583A"/><rect x="50" y="140" width="20" height="10" fill="#B9583A"/><rect x="130" y="140" width="20" height="10" fill="#B9583A"/><rect x="60" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="60" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="70" y="80" width="10" height="10" fill="#2B211C"/><rect x="60" y="90" width="20" height="10" fill="#2B211C"/></g><rect x="120" y="80" width="20" height="20" fill="#D97757"/><g class="eye"><rect x="120" y="80" width="20" height="10" fill="#FFFFFF"/><rect class="pupil" x="130" y="80" width="10" height="10" fill="#2B211C"/><rect x="120" y="90" width="20" height="10" fill="#2B211C"/></g><rect class="tng" x="93" y="124" width="14" height="14" fill="#E8597A"/></g></svg>
     </div>
     <p>claude-jr, or Claude Junior, is a small alternative to Claude Code: it reads your code, edits
         files and runs commands, asking before anything changes. It is written in Rust with no
@@ -595,16 +614,23 @@
     });
   }
 
-  // Junior looks toward the pointer and hops when clicked.
+  // Junior looks toward the pointer, and does one of a few things when clicked.
   const jr = document.querySelector(".jr");
   addEventListener("pointermove", (e) => {
     const box = jr.getBoundingClientRect();
     jr.style.setProperty("--look", e.clientX < box.left + box.width / 2 ? "-10px" : "0px");
   }, { passive: true });
+  const tricks = ["hop", "tongue", "wink", "spin", "shake", "squash", "hatoff", "fly"];
+  let last = "", done = 0;
   jr.addEventListener("click", () => {
-    jr.classList.remove("hop");
+    let trick = last;
+    while (trick === last) trick = tricks[Math.floor(Math.random() * tricks.length)];
+    last = trick;
+    clearTimeout(done);
+    jr.classList.remove(...tricks);
     void jr.getBoundingClientRect();
-    jr.classList.add("hop");
+    jr.classList.add(trick);
+    done = setTimeout(() => jr.classList.remove(trick), 1000);
   });
 
   // The terminal plays once when it comes into view, and again on request.
