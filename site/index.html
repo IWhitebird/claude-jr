@@ -51,7 +51,7 @@
     color-scheme: light dark;
     --paper: #f4f1e9; --ink: #1b1915; --ink-2: #4d4842; --ink-3: #736d63;
     --rule: #ddd7cb; --clay: #bf5a37; --clay-text: #a8492a; --other: #b9b2a5;
-    --term: #121010; --term-edge: transparent; --key: #fbf9f4;
+    --term: #121010; --term-edge: transparent; --key: #fbf9f4; --card: #f9f7f1;
     --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
     --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -60,7 +60,7 @@
     :root {
       --paper: #161412; --ink: #ece6dc; --ink-2: #b9b1a6; --ink-3: #968e83;
       --rule: #322d28; --clay: #e0805c; --clay-text: #e8906e; --other: #5a534b;
-      --term: #0c0b0a; --term-edge: #322d28; --key: #201d1a;
+      --term: #0c0b0a; --term-edge: #322d28; --key: #201d1a; --card: #1d1a17;
     }
   }
   * { box-sizing: border-box; }
@@ -232,6 +232,7 @@
   .uses td:last-child { color: var(--ink-2); text-align: left; white-space: normal; padding-left: 8px; }
   .uses td:first-child { width: 1%; }
   table.tight th, table.tight td { padding-block: 7px; }
+  .figures + .note { margin-top: 24px; }
   .note { font-size: 14.5px; color: var(--ink-3); margin-top: 14px; }
 
   /* ---- 500 tasks, one square each ---- */
@@ -244,6 +245,40 @@
   .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; background: var(--clay); border-radius: 1px; }
   .legend i.n { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
 
+  /* ---- what's in it: a card each, headed by the thing you type ---- */
+  .cards { list-style: none; margin: 26px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .cards { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 18px 20px; background: var(--card); transition: border-color .15s, translate .15s; }
+  .card:hover { border-color: var(--ink-3); }
+  @media (prefers-reduced-motion: no-preference) { .card:hover { translate: 0 -2px; } }
+  .card .tag { font: 12.5px var(--mono); color: var(--clay-text); }
+  .card h3 { font: 500 1.2rem/1.25 var(--serif); margin: 10px 0 6px; }
+  .card p { margin: 0; font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+
+  /* ---- the commands, grouped, each one click from the clipboard ---- */
+  table.cmds { font-size: 15px; }
+  table.cmds th, table.cmds td { text-align: left; white-space: normal; padding: 10px 16px 10px 0; vertical-align: middle; }
+  table.cmds td:first-child { white-space: nowrap; }
+  table.cmds td:nth-child(2) { color: var(--ink-2); width: 100%; padding-left: 12px; }
+  table.cmds td:last-child, table.cmds th:last-child { padding-right: 0; text-align: right; }
+  table.cmds code { font: 13.5px var(--mono); background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 8px; display: inline-block; }
+  table.cmds .grp th { text-align: left; padding-top: 26px; font: 500 13px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); border-bottom-color: var(--ink); }
+  table.cmds tbody:first-of-type .grp th { padding-top: 14px; }
+  table.cmds thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.cmds tbody tr:not(.grp):hover { background: var(--card); }
+  table.cmds .copy { padding: 3px 10px; font-size: 13px; opacity: 0; }
+  table.cmds tr:hover .copy, table.cmds .copy:focus-visible { opacity: 1; }
+  @media (hover: none) { table.cmds .copy { opacity: 1; } }
+  @media (max-width: 700px) {
+    table.cmds, table.cmds tbody, table.cmds tr, table.cmds td, table.cmds th { display: block; }
+    table.cmds tr:not(.grp) { padding: 12px 0; border-bottom: 1px solid var(--rule); position: relative; }
+    table.cmds td, table.cmds td:nth-child(2) { border: 0; padding: 0; width: auto; white-space: normal !important; }
+    table.cmds td:first-child { padding-right: 64px; margin-bottom: 6px; }
+    table.cmds td:first-child code { white-space: normal; overflow-wrap: anywhere; }
+    table.cmds td:last-child { position: absolute; top: 12px; right: 0; }
+  }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   dl.list { margin: 26px 0 0; border-top: 1px solid var(--rule); }
   dl.list > div { display: grid; grid-template-columns: 11em 1fr; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
   dl.list dt { font-weight: 600; }
@@ -517,39 +552,60 @@
   </section>
 
   <section>
-    <div class="col">
+    <div class="col wide">
       <h2>What's in it</h2>
-      <dl class="list">
-        <div><dt>Any model</dt><dd>Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with <code>-m provider/model</code>.</dd></div>
-        <div><dt>Permission modes</dt><dd>From asking about everything to an auto mode where a small model reviews each command. <kbd>shift</kbd> <kbd>tab</kbd> switches.</dd></div>
-        <div><dt>A sandbox</dt><dd>With <code>--sandbox</code> on Linux it can only write to your project; keys, sockets and the rest of your home stay out of reach.</dd></div>
-        <div><dt>Tasks and fleets</dt><dd>Runs carry on in the background, each on its own branch, with a log of every step. <code>claudejr fleet</code> runs a whole list.</dd></div>
-        <div><dt>Workers for other agents</dt><dd>An MCP server through which Claude Code, Cursor or Codex start workers, then read, merge or drop what each one did.</dd></div>
-        <div><dt>Subagents</dt><dd>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</dd></div>
-        <div><dt>Rewind and resume</dt><dd>Go back to before any message with its file changes undone. Every session is saved as it goes.</dd></div>
-        <div><dt>Skills and MCP</dt><dd>Reads your <code>.claude/skills</code> and talks to MCP servers, local or remote.</dd></div>
-        <div><dt>Images and the web</dt><dd>Drag in a screenshot, and it can search and fetch pages when the task needs them.</dd></div>
-        <div><dt>Scripting</dt><dd><code>claudejr -p "…"</code> runs one prompt, with JSON output and a spending limit for CI.</dd></div>
-      </dl>
+      <ul class="cards">
+        <li class="card"><code class="tag">-m provider/model</code><h3>Any model</h3><p>Claude by default. OpenAI, Gemini, Groq, OpenRouter, or a local model in Ollama, LM Studio or llama.cpp.</p></li>
+        <li class="card"><code class="tag">shift+tab</code><h3>Permission modes</h3><p>From asking about everything to an auto mode where a small model reviews each command before it runs.</p></li>
+        <li class="card"><code class="tag">--sandbox</code><h3>A sandbox</h3><p>On Linux it can only write to your project. Keys, sockets and the rest of your home stay out of reach.</p></li>
+        <li class="card"><code class="tag">task · fleet</code><h3>Background tasks</h3><p>Runs that carry on without you, each on a branch of its own, with a shared budget and a log of every step.</p></li>
+        <li class="card"><code class="tag">install claude-code</code><h3>Workers for other agents</h3><p>Claude Code, Cursor or Codex start workers over MCP, then read, merge or drop what each one did.</p></li>
+        <li class="card"><code class="tag">agent</code><h3>Subagents</h3><p>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</p></li>
+        <li class="card"><code class="tag">/rewind · -c</code><h3>Rewind and resume</h3><p>Go back to before any message with its file changes undone. Every session is saved as it goes.</p></li>
+        <li class="card"><code class="tag">.claude/skills</code><h3>Skills and MCP</h3><p>Reads the skills you already have and talks to MCP servers, local or remote.</p></li>
+        <li class="card"><code class="tag">ctrl+v</code><h3>Images and the web</h3><p>Paste or drag in a screenshot. It searches and fetches pages when the task needs them.</p></li>
+        <li class="card"><code class="tag">ctrl+s</code><h3>A stash</h3><p>Put a half-written message aside, send another, and get the first one back afterwards.</p></li>
+        <li class="card"><code class="tag"># a note</code><h3>Notes that last</h3><p>Start a message with # and it is remembered for this project in every later session.</p></li>
+        <li class="card"><code class="tag">-p</code><h3>Scripting</h3><p>One prompt, then exit, with JSON output and a spending limit, for scripts and CI.</p></li>
+      </ul>
     </div>
   </section>
 
   <section>
-    <div class="col">
+    <div class="col wide">
       <h2>Using it</h2>
       <div class="scroll">
-        <table class="uses">
+        <table class="cmds">
+          <thead><tr><th scope="col">Command</th><th scope="col">What it does</th><th><span class="sr">Copy</span></th></tr></thead>
           <tbody>
-            <tr><td><code>claudejr</code></td><td>start in this folder</td></tr>
-            <tr><td><code>claudejr -c</code></td><td>continue the last conversation</td></tr>
-            <tr><td><code>claudejr -p "explain main.rs"</code></td><td>one prompt, then exit</td></tr>
-            <tr><td><code>claudejr --sandbox</code></td><td>only write inside this folder</td></tr>
-            <tr><td><code>claudejr -m ollama/qwen3</code></td><td>use another provider's model</td></tr>
-            <tr><td><code>claudejr task start -y "…"</code></td><td>run a task in the background, on its own branch</td></tr>
-            <tr><td><code>claudejr fleet -y "…" "…"</code></td><td>run a list of tasks side by side</td></tr>
-            <tr><td><code>claudejr install claude-code</code></td><td>let Claude Code hand tasks to workers</td></tr>
-            <tr><td><code>claudejr --update</code></td><td>get the newest release</td></tr>
-            <tr><td><code>/</code></td><td>every command, inside it</td></tr>
+            <tr class="grp"><th colspan="3" scope="rowgroup">Every day</th></tr>
+            <tr><td><code>claudejr</code></td><td>start in this folder</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr -c</code></td><td>continue the last conversation here</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr -r NAME</code></td><td>continue a conversation by name</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr -m ollama/qwen3</code></td><td>use another provider&#x27;s model</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr --sandbox</code></td><td>only allow writes inside this folder</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr --update</code></td><td>get the newest release</td><td><button class="copy" type="button">Copy</button></td></tr>
+          </tbody>
+          <tbody>
+            <tr class="grp"><th colspan="3" scope="rowgroup">Scripts and CI</th></tr>
+            <tr><td><code>claudejr -p &quot;explain main.rs&quot;</code></td><td>one prompt, print the answer, exit</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr -p &quot;fix the tests&quot; -y --max-cost 2</code></td><td>no questions asked, stopping at two dollars</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr -p &quot;…&quot; --output-format json</code></td><td>the result as one JSON object, for scripts</td><td><button class="copy" type="button">Copy</button></td></tr>
+          </tbody>
+          <tbody>
+            <tr class="grp"><th colspan="3" scope="rowgroup">Many at once</th></tr>
+            <tr><td><code>claudejr task start -y &quot;fix the flaky test&quot;</code></td><td>run a task in the background, on its own branch</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr fleet -y &quot;task one&quot; &quot;task two&quot;</code></td><td>run a list of tasks side by side</td><td><button class="copy" type="button">Copy</button></td></tr>
+            <tr><td><code>claudejr install claude-code</code></td><td>let Claude Code hand tasks to workers</td><td><button class="copy" type="button">Copy</button></td></tr>
+          </tbody>
+          <tbody>
+            <tr class="grp"><th colspan="3" scope="rowgroup">Inside a session</th></tr>
+            <tr><td><kbd>/</kbd></td><td>list every command</td><td></td></tr>
+            <tr><td><code>/model</code> <code>/effort</code></td><td>change the model, or how hard it thinks</td><td></td></tr>
+            <tr><td><code>/rewind</code> <code>/resume</code> <code>/compact</code></td><td>go back, switch conversation, free up context</td><td></td></tr>
+            <tr><td><kbd>shift</kbd> <kbd>tab</kbd></td><td>change the permission mode</td><td></td></tr>
+            <tr><td><kbd>esc</kbd></td><td>stop the current turn</td><td></td></tr>
+            <tr><td><kbd>ctrl</kbd> <kbd>s</kbd></td><td>stash what you&#x27;ve typed; it comes back after your next message</td><td></td></tr>
           </tbody>
         </table>
       </div>
@@ -608,7 +664,7 @@
   // Copy buttons: each copies the command beside it.
   for (const btn of document.querySelectorAll(".copy")) {
     btn.addEventListener("click", async () => {
-      const cmd = btn.parentElement.querySelector("code");
+      const cmd = btn.closest(".row, tr").querySelector("code");
       try {
         await navigator.clipboard.writeText(cmd.textContent);
         btn.textContent = "Copied";
