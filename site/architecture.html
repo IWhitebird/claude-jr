@@ -40,7 +40,11 @@
   header.top .frame { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   header.top img { width: 30px; height: 26px; image-rendering: pixelated; }
   header.top .name { font: 500 17px var(--sans); text-decoration: none; }
-  header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; color: var(--ink-2); flex-wrap: wrap; }
+  header.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--ink-2); }
+  @media (max-width: 560px) {
+    header.top .frame { row-gap: 10px; }
+    header.top nav { margin-left: 0; flex-basis: 100%; gap: 0; justify-content: space-between; }
+  }
   header.top nav a { text-decoration: none; }
   header.top nav a[aria-current] { color: var(--ink); font-weight: 600; }
   .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-block: 40px 80px; }
@@ -67,9 +71,10 @@
   th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); white-space: nowrap; }
   td { color: var(--ink-2); }
   td:first-child { color: var(--ink); }
-  footer { border-top: 1px solid var(--rule); padding-block: 24px 44px; font-size: 14.5px; color: var(--ink-3); }
+  footer { border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14.5px; color: var(--ink-3); }
   footer .frame { display: flex; flex-wrap: wrap; gap: 8px 22px; }
   footer a { color: var(--ink-2); text-decoration: none; }
+  footer .last { flex-basis: 100%; }
 </style>
 <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
 <script defer src="/_vercel/insights/script.js"></script>
@@ -83,210 +88,100 @@
   </div>
 </header>
 <div class="frame layout">
-  <aside><nav aria-label="On this page"><b>On this page</b><a href="#threads-and-processes">Threads and processes</a><a href="#one-turn">One turn</a><a href="#data-what-is-kept-where">Data: what is kept where</a><a href="#files">Files</a></nav></aside>
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#threads">Threads</a><a href="#one-turn">One turn</a><a href="#where-the-conversation-lives">Where the conversation lives</a><a href="#the-code">The code</a></nav></aside>
   <article>
 <h1 id="how-claude-jr-works">How claude-jr works</h1>
-<h2 id="threads-and-processes">Threads and processes</h2>
-<p>claude-jr is multi-threaded, with plain OS threads and blocking I/O. There is
-no async runtime and no io_uring. Each thread spends almost all its time
-blocked in the kernel, so an idle session uses no CPU.</p>
-<pre class="mermaid">flowchart TB
-  subgraph process[&quot;the claude-jr process&quot;]
-    keys[&quot;keys thread&lt;br/&gt;blocks on the terminal&quot;] -- &quot;key presses&quot; --&gt; ui[&quot;main thread&lt;br/&gt;the UI loop&quot;]
-    ui -- &quot;commands&quot; --&gt; agent[&quot;agent thread&lt;br/&gt;the turn loop&quot;]
-    agent -- &quot;events&quot; --&gt; ui
-    agent -- &quot;parallel tool calls&quot; --&gt; tools[&quot;tool threads&lt;br/&gt;one more per command, reading its output&quot;]
-    agent -- &quot;same loop, own context&quot; --&gt; sub[&quot;subagents&quot;]
-    signals[&quot;signals thread&lt;br/&gt;SIGINT, SIGTERM, SIGHUP: a clean exit&quot;]
-  end
-  ui -- &quot;draws&quot; --&gt; terminal([&quot;your terminal&quot;])
-  agent &lt;-- &quot;HTTPS: one kept-alive connection, streamed&quot; --&gt; api([&quot;the model's API&quot;])
-  tools -- &quot;started apart from us, in their own process group&quot; --&gt; commands([&quot;bash commands, background jobs, local MCP servers&quot;])
+<p>Plain threads, a conversation kept on disk, and nothing else running.</p>
+<h2 id="threads">Threads</h2>
+<p>Four threads when idle, all asleep in the kernel, which is why waiting costs no CPU.</p>
+<pre class="mermaid">flowchart LR
+  keys[&quot;keys thread&quot;] -- &quot;key presses&quot; --&gt; ui[&quot;UI thread&quot;]
+  ui -- &quot;commands&quot; --&gt; agent[&quot;agent thread&quot;]
+  agent -- &quot;events&quot; --&gt; ui
+  agent &lt;-- &quot;one streamed connection&quot; --&gt; api([&quot;the model's API&quot;])
+  agent -- &quot;tool calls&quot; --&gt; tools[&quot;tools, subagents,&lt;br/&gt;commands&quot;]
 </pre>
+<p>The fourth is a signals thread, for a clean exit. There is no async runtime.</p>
+<h2 id="one-turn">One turn</h2>
+<pre class="mermaid">flowchart LR
+  t_you([&quot;you type&quot;]) --&gt; t_agent[&quot;agent&quot;]
+  t_agent -- &quot;request&quot; --&gt; t_api([&quot;the model&quot;])
+  t_api -- &quot;streamed reply&quot; --&gt; t_more{&quot;tool calls?&quot;}
+  t_more -- &quot;yes: permit, run,&lt;br/&gt;append the results&quot; --&gt; t_agent
+  t_more -- &quot;no&quot; --&gt; t_done([&quot;done&quot;])
+</pre>
+<p>Reads, subagents, skills and MCP calls in one reply run in parallel; edits and
+commands run in order, each after the permission check.</p>
+<h2 id="where-the-conversation-lives">Where the conversation lives</h2>
+<pre class="mermaid">flowchart LR
+  d_memory[&quot;in memory&lt;br/&gt;where each message is,&lt;br/&gt;plus the newest one&quot;]
+  d_file[&quot;the session file, on disk&lt;br/&gt;every saved message, one per line&quot;]
+  d_memory -. &quot;points into&quot; .-&gt; d_file
+  d_file == &quot;read as the request is sent&quot; ==&gt; d_api([&quot;the request&quot;])
+  d_memory == &quot;the newest message&quot; ==&gt; d_api
+</pre>
+<ul>
+<li><strong>On disk, not in memory.</strong> A saved message is a line in the session file; memory keeps where it is. A long session uses the same memory as a short one.</li>
+<li><strong>Stored as it is sent.</strong> A message is the exact JSON the API gets, so a request is streamed straight from the file.</li>
+<li><strong>Append-only.</strong> Nothing already sent is edited, which keeps the provider's prompt cache valid.</li>
+</ul>
+<h2 id="the-code">The code</h2>
 <div class="scroll"><table>
 <thead>
 <tr>
-<th>Thread</th>
-<th>Blocks on</th>
-<th>Wakes when</th>
+<th>Folder</th>
+<th>What is in it</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>main (UI)</td>
-<td>the event channel</td>
-<td>a key, an agent event, or every 300 ms while working (status dot); at most ~30 draws/s while streaming</td>
+<td><code>src/cli</code></td>
+<td>the command line, one file per thing you can type</td>
 </tr>
 <tr>
-<td>keys</td>
-<td><code>read()</code> on the terminal</td>
-<td>you press a key</td>
+<td><code>src/ui</code></td>
+<td>the interactive terminal</td>
 </tr>
 <tr>
-<td>agent</td>
-<td>the command channel, then the socket</td>
-<td>you send something; each network packet while a reply streams</td>
+<td><code>src/agent</code></td>
+<td>the turn loop, permissions, subagents</td>
 </tr>
 <tr>
-<td>signals</td>
-<td>a signal pipe</td>
-<td>SIGINT, SIGTERM or SIGHUP</td>
+<td><code>src/tools</code></td>
+<td>what the model can do: files, commands, MCP, skills</td>
 </tr>
 <tr>
-<td>bash-out / job-out</td>
-<td>the command's output pipe</td>
-<td>the command prints</td>
+<td><code>src/api</code></td>
+<td>talking to models: each wire format and provider</td>
 </tr>
 <tr>
-<td>mcp-read</td>
-<td>the server's stdout</td>
-<td>the server replies</td>
+<td><code>src/work</code></td>
+<td>background tasks, worktrees, budgets, the run log</td>
+</tr>
+<tr>
+<td><code>src/store</code></td>
+<td>sessions, images and config on disk</td>
+</tr>
+<tr>
+<td><code>src/sys</code></td>
+<td>what differs between Linux, macOS and Windows</td>
 </tr>
 </tbody>
 </table></div>
-<p>Idle, that's 4 threads (main, keys, agent, signals), all blocked.</p>
-<h2 id="one-turn">One turn</h2>
-<pre class="mermaid">flowchart TD
-  t_you([&quot;you type&quot;]) --&gt; t_ui[&quot;UI&quot;]
-  t_ui -- &quot;Command::Send&quot; --&gt; t_agent[&quot;agent&quot;]
-  t_agent -- &quot;the request: stored messages, streamed, nothing copied&quot; --&gt; t_api([&quot;the model's API&quot;])
-  t_api -- &quot;the reply as a stream: text, thinking, tool calls&quot; --&gt; t_read[&quot;agent reads each event&lt;br/&gt;and passes it to the UI&quot;]
-  t_read --&gt; t_more{&quot;did it call tools?&quot;}
-  t_more -- &quot;no&quot; --&gt; t_done([&quot;the turn is done&quot;])
-  t_more -- &quot;yes&quot; --&gt; t_run[&quot;for each call: permit, then run&lt;br/&gt;reads, subagents, skills and MCP in parallel, the rest in order&quot;]
-  t_run -- &quot;the results, appended as one user message&quot; --&gt; t_agent
-</pre>
-<p>Approval (<code>agent/permit.rs</code>): mode → allow rules → (auto mode) the reviewer
-model → ask you. Plan mode refuses edits; skip-permissions allows everything.</p>
-<h2 id="data-what-is-kept-where">Data: what is kept where</h2>
-<pre class="mermaid">flowchart LR
-  subgraph d_memory[&quot;in memory: positions only&quot;]
-    m1[&quot;at byte 812, 96 long&quot;]
-    m2[&quot;at byte 909, 4,210 long&quot;]
-    m3[&quot;at byte 5,120, 38,400 long&quot;]
-    m4[&quot;the newest message itself,&lt;br/&gt;not saved yet&quot;]
-  end
-  subgraph d_file[&quot;the session file, on disk&quot;]
-    f1[&quot;a user message&quot;]
-    f2[&quot;an assistant message&quot;]
-    f3[&quot;tool results&quot;]
-  end
-  m1 -.-&gt; f1
-  m2 -.-&gt; f2
-  m3 -.-&gt; f3
-  f1 ==&gt; d_api([&quot;the request&lt;br/&gt;to the model's API&quot;])
-  f2 == &quot;read from the file as it is sent&quot; ==&gt; d_api
-  f3 ==&gt; d_api
-  m4 == &quot;the only part that comes from memory&quot; ==&gt; d_api
-</pre>
-<p>Data-oriented choices, and why:</p>
-<ul>
-<li><strong>Stored in the form it's used.</strong> A message is the exact JSON text the API
-gets, never a tree of parsed values. Sending, saving and resuming all use
-the same bytes.</li>
-<li><strong>On disk, not in memory.</strong> Once a message is saved, memory keeps only where
-its line is. A long session then takes no more memory than a short one.</li>
-<li><strong>Append-only.</strong> New messages are added; old ones are never edited. This
-keeps the API's prompt cache valid, keeps the model's earlier reasoning
-valid, and makes the session file a plain append.</li>
-<li><strong>No copies on the hot path.</strong> A request body is a list of pieces (bytes in
-memory, stretches of the session file, images encoded as they are read)
-streamed to the socket. Tool output is cut to 50 KB (start and end) as it's
-read, so a noisy command never sits in memory whole.</li>
-<li><strong>Translated once.</strong> For providers that speak Chat Completions, each saved
-message is translated once and the result kept in a scratch file, so later
-requests read it like any other saved message.</li>
-<li><strong>Unused code handed back.</strong> When the app goes quiet it gives the pages of
-its own program file back to the kernel, which is why it idles in less
-memory than its own size.</li>
-<li><strong>Batched UI work.</strong> Events are drained in batches and drawn once per frame;
-only changed lines are rewritten; finished rows go to scrollback once.</li>
-</ul>
-<p>Memory in practice: 0.7 MB idle, about 2 MB while working, and under 4 MB at
-its peak however long the session runs.</p>
-<h2 id="files">Files</h2>
-<pre><code>src/
-  main.rs            parse the command line, hand over to cli/
-  cli/               one file for each thing you can type
-    args.rs          the flags and the usage text
-    start.rs         claudejr and claudejr -p: start-up checks, then the UI or print
-    print.rs         -p: one prompt, the reply printed (text, JSON, or a stream of steps)
-    sessions.rs      --sessions
-    update.rs        --update
-    task.rs          claudejr task ...
-    fleet.rs         claudejr fleet ...
-    mcp.rs           claudejr mcp: tasks served to another agent
-    install.rs       claudejr install / uninstall
-  ui/                the interactive terminal
-    mod.rs           the event loop
-    app.rs           the state, the scrollback, the live area
-    events.rs        what the agent reports
-    keys.rs          key presses, prompts, settings
-    commands.rs      what is typed and sent, slash commands
-    term.rs          raw mode, scrollback, line-diff redraw
-    history.rs       what was drawn, kept to draw again at a new width
-    view.rs          tool blocks, diffs, boxes, status, footer, mascot
-    md.rs  table.rs  text.rs   Markdown, tables, styles and wrapping
-    input.rs  paste.rs         the line editor, pasted text
-    stats.rs         /stats
-  agent/             the loop
-    mod.rs           the agent thread: start-up, commands, sending a message
-    turn.rs          one turn: ask, run tools, repeat (shared with subagents)
-    permit.rs        modes, approval, auto mode's reviewer
-    sub.rs           subagents, in worktrees of their own when asked
-    compact.rs       /compact
-    history.rs       rewind, resume, the transcript
-  tools/             what the model can do
-    mod.rs           definitions, dispatch, shared state behind locks
-    fs.rs            read, write, edit
-    bash.rs          bash, background jobs, the jobs tool
-    mcp.rs           MCP servers over stdio, and the API's connector for remote ones
-    skill.rs  memory.rs  todo.rs  checkpoint.rs
-  api/               talking to models
-    mod.rs           the client: where a request goes, retries, cancelling
-    body.rs          the request body, streamed from memory, files and images
-    stream.rs        reading an event stream line by line
-    anthropic.rs     the Messages format
-    openai.rs        the Chat Completions format, translated both ways
-    provider.rs      which provider a model id names
-    cloud.rs         Claude through Amazon Bedrock or Google Vertex AI
-    bedrock.rs       Bedrock's address, login and request signing
-    vertex.rs        Vertex's address and access token
-    models.rs        prices, context sizes, what each Claude model supports
-  work/              running many
-    task.rs          background tasks: start, state, wait, cancel, merge, drop
-    budget.rs        a group's shared budget
-    worktree.rs      a git worktree and branch for a run
-    log.rs           the run log: every step as a JSON line
-  store/             what is kept on disk
-    session.rs       conversations as JSONL, read back in place
-    images.rs        pasted and attached images
-    config.rs        config files, the saved API key, trusted folders
-  sys/               what depends on the operating system
-    os.rs            files and processes, on Unix and on Windows
-    shell.rs         the shell commands run in (bash; on Windows Git's, or PowerShell)
-    sandbox.rs       re-exec inside bubblewrap (Linux)
-    mem.rs           handing unused program pages back (Linux)
-    signals.rs       clean exit on signals, or on Windows when the console closes
-  permission.rs      allow rules
-  prompt.rs          the system prompt, AGENTS.md, notes
-
-tests/
-  cli/               the real binary against the fake API, a file per area
-  ui/                the real binary in a pseudo-terminal
-
-bench/               measurements and checks; see bench/README.md
-</code></pre>
-<p>Files stay under about 500 lines of code. Where a file's tests are longer
-than the code, they sit beside it (<code>api/tests.rs</code>, <code>agent/tests.rs</code>).</p>
+<p>Every file opens with a comment saying what it is; <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/FILES.md">FILES.md</a> lists them all.</p>
 
   </article>
 </div>
 <footer>
   <div class="frame">
-    <a href="/">claude-jr</a>
-    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/ARCHITECTURE.md">This page on GitHub</a>
-    <span>MIT licensed; not made by or affiliated with Anthropic.</span>
+    <a href="/">Home</a>
+    <a href="/guide">Guide</a>
+    <a href="/benchmarks">Benchmarks</a>
+    <a href="/architecture">Architecture</a>
+    <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
+    <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/ARCHITECTURE.md">Edit this page</a>
+    <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
   </div>
 </footer>
 <script type="module">
@@ -306,9 +201,18 @@ than the code, they sit beside it (<code>api/tests.rs</code>, <code>agent/tests.
     },
   });
   // One at a time: drawn together, their parts can land in each other's frames.
+  // A diagram drawn left to right can be too wide for its place and shrink
+  // until it can't be read; then the same diagram drawn top to bottom is tried,
+  // and whichever comes out larger is kept.
+  const width = (svg) => +(svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+)/) || [0, 1])[1];
   let n = 0;
   for (const block of document.querySelectorAll("pre.mermaid")) {
-    const { svg } = await mermaid.render(`diagram-${n++}`, block.textContent);
+    const text = block.textContent, room = block.clientWidth;
+    let { svg } = await mermaid.render(`diagram-${n++}`, text);
+    if (width(svg) > room * 1.25 && /^\s*flowchart LR/.test(text)) {
+      const other = (await mermaid.render(`diagram-${n++}`, text.replace("flowchart LR", "flowchart TB"))).svg;
+      if (width(other) < width(svg)) svg = other;
+    }
     block.innerHTML = svg;
   }
 </script>

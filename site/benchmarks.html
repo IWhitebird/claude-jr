@@ -40,7 +40,11 @@
   header.top .frame { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   header.top img { width: 30px; height: 26px; image-rendering: pixelated; }
   header.top .name { font: 500 17px var(--sans); text-decoration: none; }
-  header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; color: var(--ink-2); flex-wrap: wrap; }
+  header.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--ink-2); }
+  @media (max-width: 560px) {
+    header.top .frame { row-gap: 10px; }
+    header.top nav { margin-left: 0; flex-basis: 100%; gap: 0; justify-content: space-between; }
+  }
   header.top nav a { text-decoration: none; }
   header.top nav a[aria-current] { color: var(--ink); font-weight: 600; }
   .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-block: 40px 80px; }
@@ -67,9 +71,10 @@
   th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); white-space: nowrap; }
   td { color: var(--ink-2); }
   td:first-child { color: var(--ink); }
-  footer { border-top: 1px solid var(--rule); padding-block: 24px 44px; font-size: 14.5px; color: var(--ink-3); }
+  footer { border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14.5px; color: var(--ink-3); }
   footer .frame { display: flex; flex-wrap: wrap; gap: 8px 22px; }
   footer a { color: var(--ink-2); text-decoration: none; }
+  footer .last { flex-basis: 100%; }
 </style>
 <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
 <script defer src="/_vercel/insights/script.js"></script>
@@ -497,9 +502,14 @@ a correct solution. <code>--budget</code> stops before a task that would likely 
 </div>
 <footer>
   <div class="frame">
-    <a href="/">claude-jr</a>
-    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">This page on GitHub</a>
-    <span>MIT licensed; not made by or affiliated with Anthropic.</span>
+    <a href="/">Home</a>
+    <a href="/guide">Guide</a>
+    <a href="/benchmarks">Benchmarks</a>
+    <a href="/architecture">Architecture</a>
+    <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
+    <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">Edit this page</a>
+    <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
   </div>
 </footer>
 </body>

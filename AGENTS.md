@@ -36,4 +36,4 @@ end-to-end suites in `tests/` are Unix-only.
 - Commits have no co-author trailers.
 - Stage files by path.
 - Files stay under about 500 lines of code; each opens with a comment saying
-  what it is. The full map is in docs/ARCHITECTURE.md.
+  what it is. The full map is in docs/FILES.md.
