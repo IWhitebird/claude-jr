@@ -16,7 +16,7 @@ import http.server, json, os, re, shutil, subprocess, sys, tempfile, threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [360, 390, 768, 1024, 1280, 1920]
-PAGES = ["index", "guide", "benchmarks", "architecture"]
+PAGES = ["index", "guide", "benchmarks", "architecture", "small"]
 CHROME = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
 
 # Loads a page in a frame of the width asked for and writes down what sticks out.

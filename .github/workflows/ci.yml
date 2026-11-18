@@ -80,6 +80,12 @@ jobs:
           cargo binstall --manifest-path . --strategies crate-meta-data --no-confirm --disable-telemetry \
             --root "$RUNNER_TEMP/binstall" claude-jr
           test "$("$RUNNER_TEMP/binstall/bin/claudejr" --version)" = "claude-jr $version"
+          # And the line the guide gives, which reads Cargo.toml from the repository itself.
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            cargo binstall --git "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --strategies crate-meta-data --no-confirm \
+              --disable-telemetry --root "$RUNNER_TEMP/binstall-git" claude-jr
+            "$RUNNER_TEMP/binstall-git/bin/claudejr" --version
+          fi
         # binstall asks GitHub's API whether the file is there; without a token a shared runner is turned away.
         env:
           GITHUB_TOKEN: ${{ github.token }}

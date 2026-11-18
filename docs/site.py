@@ -20,6 +20,11 @@ PAGES = {  # file: (address, name in the menu, one line for search engines)
     "BENCHMARKS.md": ("benchmarks", "Benchmarks", "Every number claude-jr publishes and how it was measured: size, memory, CPU, SWE-bench Verified, and the comparisons with other agents."),
     "ARCHITECTURE.md": ("architecture", "How it works", "How claude-jr works: its threads, what happens in one turn, and why the conversation is kept on disk."),
 }
+# Written but not announced yet: the page is made and can be opened at its
+# address, but it is not in the menu and search engines are asked to skip it.
+DRAFTS = {
+    "SMALL.md": ("small", "", "How a coding agent fits in a 2 MB file and 0.7 MB of memory: what the binary is made of, and the handful of decisions that keep it there."),
+}
 
 
 def slug(text):
@@ -35,15 +40,15 @@ def link(target):
     path, _, anchor = target.partition("#")
     anchor = "#" + anchor if anchor else ""
     name = os.path.basename(path)
-    if name in PAGES:
-        return "/" + PAGES[name][0] + anchor
+    if name in PAGES or name in DRAFTS:
+        return "/" + (PAGES.get(name) or DRAFTS[name])[0] + anchor
     if name == "README.md":
         return "/"
     return f"{REPO}/blob/main/{os.path.normpath(os.path.join('docs', path))}{anchor}"
 
 
 def page(source):
-    address, name, about = PAGES[source]
+    address, name, about = PAGES.get(source) or DRAFTS[source]
     text = open(os.path.join(ROOT, "docs", source)).read()
     # What only someone working on the code needs stays on GitHub.
     text = re.sub(r"<!-- repo only -->.*?<!-- /repo only -->\n?", "", text, flags=re.S)
@@ -67,6 +72,7 @@ def page(source):
     out = TEMPLATE
     for key, value in (("TITLE", re.sub(r"<[^>]+>", "", title)), ("ABOUT", html.escape(about, quote=True)), ("ADDRESS", address),
                        ("MENU", menu), ("CONTENTS", "".join(contents)), ("SOURCE", f"{REPO}/blob/main/docs/{source}"), ("BODY", body),
+                       ("ROBOTS", '<meta name="robots" content="noindex">\n' if source in DRAFTS else ""),
                        ("DIAGRAMS", MERMAID if diagrams else "")):
         out = out.replace("{{" + key + "}}", value)
     with open(os.path.join(ROOT, "site", address + ".html"), "w") as f:
@@ -83,7 +89,7 @@ TEMPLATE = """<!doctype html>
 <title>{{TITLE}} · claude-jr</title>
 <meta name="description" content="{{ABOUT}}">
 <link rel="canonical" href="https://claudejr.iwhitebird.com/{{ADDRESS}}">
-<link rel="icon" type="image/svg+xml" href="/logo.svg">
+{{ROBOTS}}<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <meta name="theme-color" content="#f4f1e9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="{{TITLE}} · claude-jr">
@@ -228,5 +234,6 @@ MERMAID = """<script type="module">
 """
 
 if __name__ == "__main__":
-    for source in PAGES:
-        page(source)
+    for source in [*PAGES, *DRAFTS]:
+        if os.path.exists(os.path.join(ROOT, "docs", source)):
+            page(source)

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>How a coding agent fits in 2 MB and 0.7 MB of memory · claude-jr</title>
+<meta name="description" content="How a coding agent fits in a 2 MB file and 0.7 MB of memory: what the binary is made of, and the handful of decisions that keep it there.">
+<link rel="canonical" href="https://claudejr.iwhitebird.com/small">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<meta name="theme-color" content="#f4f1e9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="How a coding agent fits in 2 MB and 0.7 MB of memory · claude-jr">
+<meta property="og:description" content="How a coding agent fits in a 2 MB file and 0.7 MB of memory: what the binary is made of, and the handful of decisions that keep it there.">
+<meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* The documents, set like the front page: paper, serif headings, rules. */
+  :root {
+    color-scheme: light dark;
+    --paper: #f4f1e9; --ink: #1b1915; --ink-2: #4d4842; --ink-3: #736d63;
+    --rule: #ddd7cb; --clay: #bf5a37; --clay-text: #a8492a; --code: #ebe6da;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #161412; --ink: #ece6dc; --ink-2: #b9b1a6; --ink-3: #968e83; --rule: #322d28; --clay: #e0805c; --clay-text: #e8906e; --code: #221f1b; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16.5px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { color: var(--clay-text); }
+  :focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+  .frame { max-width: 1040px; margin: 0 auto; padding-inline: max(22px, env(safe-area-inset-left)) max(22px, env(safe-area-inset-right)); }
+  header.top { padding-block: 22px; border-bottom: 1px solid var(--rule); }
+  header.top .frame { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header.top img { width: 30px; height: 26px; image-rendering: pixelated; }
+  header.top .name { font: 500 17px var(--sans); text-decoration: none; }
+  header.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--ink-2); }
+  @media (max-width: 560px) {
+    header.top .frame { row-gap: 10px; }
+    header.top nav { margin-left: 0; flex-basis: 100%; gap: 0; justify-content: space-between; }
+  }
+  header.top nav a { text-decoration: none; }
+  header.top nav a[aria-current] { color: var(--ink); font-weight: 600; }
+  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-block: 40px 80px; }
+  aside nav { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 7px; font-size: 14.5px; max-height: calc(100vh - 48px); overflow-y: auto; }
+  aside nav a { text-decoration: none; color: var(--ink-2); }
+  aside b { font-size: 13px; font-weight: 500; color: var(--ink-3); margin-bottom: 4px; }
+  @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; } aside { display: none; } }
+  article { min-width: 0; }
+  article h1 { font: 400 clamp(2.1rem, 5vw, 2.9rem)/1.1 var(--serif); letter-spacing: -0.02em; margin: 0 0 20px; }
+  article h2 { font: 400 1.75rem/1.2 var(--serif); letter-spacing: -0.01em; margin: 56px 0 12px; padding-top: 22px; border-top: 1px solid var(--rule); }
+  article h3 { font: 600 1.05rem var(--sans); margin: 32px 0 8px; }
+  article p, article li { color: var(--ink-2); }
+  article strong { color: var(--ink); font-weight: 600; }
+  article ul, article ol { padding-left: 1.3em; }
+  article li { margin: 4px 0; }
+  code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); }
+  pre code { background: none; padding: 0; font: inherit; }
+  pre.mermaid { background: none; padding: 6px 0; margin: 22px 0; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
+  pre.mermaid svg { max-width: 100%; height: auto; }
+  .scroll { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); white-space: nowrap; }
+  td { color: var(--ink-2); }
+  td:first-child { color: var(--ink); }
+  /* On a phone a table must fit the screen: smaller type, headings that wrap, long names that break. */
+  @media (max-width: 560px) {
+    table { font-size: 14px; }
+    th, td { padding-right: 10px; }
+    th { white-space: normal; }
+    td code, th code { overflow-wrap: anywhere; }
+  }
+  footer { border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14.5px; color: var(--ink-3); }
+  footer .frame { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  footer a { color: var(--ink-2); text-decoration: none; }
+  footer .last { flex-basis: 100%; }
+</style>
+<script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="frame">
+    <img src="/logo.svg" alt="" width="30" height="26">
+    <a class="name" href="/">claude-jr</a>
+    <nav><a href="/guide">Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture">How it works</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
+  </div>
+</header>
+<div class="frame layout">
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#what-the-2-mb-is">What the 2 MB is</a><a href="#nothing-to-load">Nothing to load</a><a href="#nine-dependencies">Nine dependencies</a><a href="#the-build">The build</a><a href="#the-conversation-is-on-disk">The conversation is on disk</a><a href="#idling-in-less-than-its-own-size">Idling in less than its own size</a><a href="#waiting-without-polling">Waiting without polling</a><a href="#what-it-costs">What it costs</a><a href="#check-it">Check it</a></nav></aside>
+  <article>
+<h1 id="how-a-coding-agent-fits-in-2-mb-and-07-mb-of-memory">How a coding agent fits in 2 MB and 0.7 MB of memory</h1>
+<p>Claude Code installs 354 MB and holds 148 MB while it waits for you to type.
+claude-jr does the same kind of work, and resolves 93.4% of SWE-bench
+Verified, as one 2 MB file that waits in 0.7 MB. Nothing in it is clever.
+This is where the bytes go, and the few decisions that keep them there.</p>
+<h2 id="what-the-2-mb-is">What the 2 MB is</h2>
+<p>The release binary is 2,034,464 bytes. Adding up everything in it that
+carries a name:</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align:right">KB</th>
+<th style="text-align:right">share</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TLS and cryptography (rustls, ring)</td>
+<td style="text-align:right">616</td>
+<td style="text-align:right">36%</td>
+</tr>
+<tr>
+<td>claude-jr itself</td>
+<td style="text-align:right">400</td>
+<td style="text-align:right">23%</td>
+</tr>
+<tr>
+<td>Rust's standard library</td>
+<td style="text-align:right">333</td>
+<td style="text-align:right">19%</td>
+</tr>
+<tr>
+<td>HTTP (ureq)</td>
+<td style="text-align:right">130</td>
+<td style="text-align:right">8%</td>
+</tr>
+<tr>
+<td>C library (musl)</td>
+<td style="text-align:right">92</td>
+<td style="text-align:right">5%</td>
+</tr>
+<tr>
+<td>stack unwinder</td>
+<td style="text-align:right">51</td>
+<td style="text-align:right">3%</td>
+</tr>
+<tr>
+<td>JSON (serde_json)</td>
+<td style="text-align:right">32</td>
+<td style="text-align:right">2%</td>
+</tr>
+<tr>
+<td>terminal and signals</td>
+<td style="text-align:right">28</td>
+<td style="text-align:right">2%</td>
+</tr>
+<tr>
+<td>the rest</td>
+<td style="text-align:right">28</td>
+<td style="text-align:right">2%</td>
+</tr>
+</tbody>
+</table></div>
+<p>That is 1,710 KB; the other 280 KB is text, tables and the file's own
+bookkeeping. More than a third of the file is the code that speaks HTTPS.
+The agent (the terminal UI, ten tools, an MCP client and server, two wire
+formats, sessions, background workers) is 400 KB.</p>
+<h2 id="nothing-to-load">Nothing to load</h2>
+<p>It is a static binary: no JavaScript engine to start, no modules to read, no
+garbage collector holding a heap in reserve. That is most of the difference
+on its own. It starts in 4 ms where Claude Code takes 157.</p>
+<p>There is no async runtime either. Four plain threads are enough: one reads
+keys, one draws, one runs the turn, one watches for signals. They pass
+messages over channels.</p>
+<h2 id="nine-dependencies">Nine dependencies</h2>
+<p><code>anyhow</code>, <code>base64</code>, <code>crossterm</code>, <code>ring</code>, <code>serde</code>, <code>serde_json</code>, <code>signal-hook</code>,
+<code>unicode-width</code>, <code>ureq</code>: 72 packages once theirs are counted, with the
+optional parts of the big ones switched off. What is usually a library is
+written by hand, to the size this program needs: arguments in about 130
+lines, Markdown in under 300, the reader for the model's event stream in 71.</p>
+<h2 id="the-build">The build</h2>
+<p>The same source, built four ways (static, x86-64):</p>
+<div class="scroll"><table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align:right">size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rust's default release build</td>
+<td style="text-align:right">12.2 MB</td>
+</tr>
+<tr>
+<td>the same, stripped of symbols</td>
+<td style="text-align:right">4.7 MB</td>
+</tr>
+<tr>
+<td>optimised for size as one unit, aborting on panic</td>
+<td style="text-align:right">2.7 MB</td>
+</tr>
+<tr>
+<td>with the standard library rebuilt for size as well</td>
+<td style="text-align:right">2.0 MB</td>
+</tr>
+</tbody>
+</table></div>
+<p>The third row is five lines in <code>Cargo.toml</code> (<code>opt-level = &quot;z&quot;</code>, <code>lto</code>,
+<code>codegen-units = 1</code>, <code>panic = &quot;abort&quot;</code>, <code>strip</code>). The fourth needs a nightly
+compiler: it rebuilds the standard library with the same settings and leaves
+out the tables used to unwind the stack, which a program that aborts never
+reads.</p>
+<h2 id="the-conversation-is-on-disk">The conversation is on disk</h2>
+<p>An agent's memory usually grows with the conversation, because the
+conversation is kept in memory and sent again with every request.</p>
+<p>Here a message is saved as soon as it is complete, as one line of the session
+file, in the exact JSON the API takes. Memory keeps only where each line is.
+To send a request, the lines are copied from the file to the socket.</p>
+<pre class="mermaid">flowchart LR
+  s_memory[&quot;in memory&lt;br/&gt;where each message is&quot;]
+  s_file[&quot;the session file&lt;br/&gt;every message, one per line&quot;]
+  s_memory -. &quot;points into&quot; .-&gt; s_file
+  s_file == &quot;copied as the request is sent&quot; ==&gt; s_api([&quot;the API&quot;])
+</pre>
+<p>So a long session costs what a short one does: 3.9 MB at its peak after 20
+tool calls or 200. Before this change, 200 calls peaked at 10.7 MB. Nothing
+already sent is ever rewritten, which also keeps the provider's prompt cache
+valid for the whole session.</p>
+<h2 id="idling-in-less-than-its-own-size">Idling in less than its own size</h2>
+<p>A 2 MB program waiting in 0.7 MB holds less than itself. The kernel maps a
+program's pages in as they are first touched and leaves them there, so
+whatever start-up or the last turn needed stays counted. Most of those pages
+were never changed: they are copies of the file on disk.</p>
+<p>Each time the UI is about to wait with nothing to do, it hands them back,
+one <code>madvise</code> call per region. They return from the page cache the moment
+they are needed. That took idle memory from 2.1 MB to 0.7 MB.</p>
+<h2 id="waiting-without-polling">Waiting without polling</h2>
+<p>When nothing is happening the four threads are blocked in the kernel: on a
+channel, on the keyboard, on a signal. There is no timer, so an idle session
+uses no CPU at all. Timers run only while there is work, and the screen is
+redrawn at most 30 times a second however fast text arrives.</p>
+<p>Polling crept in twice, and both times it cost time rather than CPU:</p>
+<ul>
+<li>Commands were noticed by checking on a timer whether they had finished.
+Waiting on their output instead took 60 tool calls from 0.81 s to 0.32 s.</li>
+<li>So that Esc could stop a request that had not answered yet, a watcher
+checked every 50 ms, and each request waited for the watcher to finish.
+60 tool calls went from 0.4 s to 3.2 s. Now the request wakes the watcher
+when it ends.</li>
+</ul>
+<h2 id="what-it-costs">What it costs</h2>
+<ul>
+<li><strong>A nightly compiler</strong> for the smallest build. Stable Rust builds it too, at 2.7 MB.</li>
+<li><strong>A panic ends the program</strong> where it stands. The session is on disk already, so <code>claudejr -c</code> carries on from it.</li>
+<li><strong>Threads, not thousands of connections.</strong> Many agents means many processes, at about half a megabyte each.</li>
+<li><strong>Less in the box.</strong> No plugins, hooks or IDE integration.</li>
+<li><strong>The memory figures are Linux's.</strong> The macOS and Windows builds don't hand pages back when idle.</li>
+</ul>
+<h2 id="check-it">Check it</h2>
+<pre><code class="language-sh">curl -fsSL https://claudejr.iwhitebird.com/install | sh
+claudejr        # then type /stats
+</code></pre>
+<p><code>/stats</code> prints what the process holds right now. The
+<a href="/benchmarks">benchmarks page</a> has every number and the script that
+measured it. The figures here are for the Linux x86-64 build of 19 November
+2026; the breakdown was made with <code>nm</code> on a build that keeps its symbol
+names.</p>
+
+  </article>
+</div>
+<footer>
+  <div class="frame">
+    <a href="/">Home</a>
+    <a href="/guide">Guide</a>
+    <a href="/benchmarks">Benchmarks</a>
+    <a href="/architecture">How it works</a>
+    <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
+    <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
+    <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/SMALL.md">Edit this page</a>
+    <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
+  </div>
+</footer>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const ink = dark ? "#ece6dc" : "#1b1915", soft = dark ? "#968e83" : "#736d63";
+  const paper = dark ? "#161412" : "#f4f1e9", card = dark ? "#1d1a17" : "#f9f7f1", rule = dark ? "#3a342e" : "#cfc8ba";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    fontFamily: "Inter, system-ui, sans-serif",
+    flowchart: { curve: "basis", htmlLabels: true, padding: 14 },
+    themeVariables: {
+      fontSize: "14px", background: paper, primaryColor: card, primaryTextColor: ink, primaryBorderColor: rule,
+      lineColor: soft, secondaryColor: paper, tertiaryColor: paper, clusterBkg: paper, clusterBorder: rule,
+      edgeLabelBackground: paper, titleColor: soft,
+    },
+  });
+  // One at a time: drawn together, their parts can land in each other's frames.
+  // A diagram drawn left to right can be too wide for its place and shrink
+  // until it can't be read; then the same diagram drawn top to bottom is tried,
+  // and whichever comes out larger is kept.
+  const width = (svg) => +(svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+)/) || [0, 1])[1];
+  let n = 0;
+  for (const block of document.querySelectorAll("pre.mermaid")) {
+    const text = block.textContent, room = block.clientWidth;
+    let { svg } = await mermaid.render(`diagram-${n++}`, text);
+    if (width(svg) > room * 1.25 && /^\s*flowchart LR/.test(text)) {
+      const other = (await mermaid.render(`diagram-${n++}`, text.replace("flowchart LR", "flowchart TB"))).svg;
+      if (width(other) < width(svg)) svg = other;
+    }
+    block.innerHTML = svg;
+  }
+</script>
+</body>
+</html>

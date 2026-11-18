@@ -79,7 +79,7 @@ From 0.3.0 there is a Docker image too, 3.5 MB in all:
 - **Made for many.** Background tasks, each in its own worktree and branch, with a shared budget and a log of every step. Workers run on Haiku unless you say otherwise, at well under a cent for a small task. `claudejr fleet` runs a list of them; `claudejr install claude-code` lets Claude Code (or Cursor, or Codex) start and collect them.
 - **Any model.** Claude by default; OpenAI, Gemini, Groq, OpenRouter, Ollama and other local servers with `-m provider/model`, at the same memory and CPU. Claude through Amazon Bedrock or Google Vertex AI with `-m bedrock/...` and `-m vertex/...` (in the next release; not yet tested against the real services).
 - **Complete.** Subagents, skills, MCP, images, web search, rewind, a sandbox and five permission modes.
-- **Tested.** 402 tests with 97% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
+- **Tested.** 404 tests with 97% line coverage, plus random-input, resize and chaos runs against the real app in a terminal.
 
 ## Benchmarks
 

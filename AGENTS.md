@@ -30,6 +30,11 @@ end-to-end suites in `tests/` are Unix-only.
 `CC_x86_64_unknown_linux_musl=gcc ./build.sh x86_64-unknown-linux-musl`
 (nightly, std rebuilt for size; plain `cargo build --release` works too, about 0.7 MB bigger)
 
+## Packaging
+- `Dockerfile`: the static binary on busybox; `bench/docker.sh` builds and checks it.
+- `Formula/claude-jr.rb` is written by `scripts/formula.sh` at each release (the release workflow commits it); don't edit it by hand.
+- The recording in the README and on the site is made by `scripts/demo.py` from a real session (it uses the API: ask first).
+
 ## Rules
 - Keep dependencies minimal; no new crates without a reason.
 - Conversation history is append-only (it keeps the prompt cache valid).
