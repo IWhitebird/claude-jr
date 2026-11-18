@@ -670,7 +670,14 @@ mod tests {
         assert_eq!(messages[0].json(), USER, "and its messages now read from its own file");
 
         // Once the first window is closed, the original can be continued again.
+        // (A program another test is just starting can hold a copy of the file for a moment.)
         drop(first);
-        assert!(!Session::load(&pick).unwrap().copy);
+        let freed = (0..100).any(|_| {
+            !Session::load(&pick).unwrap().copy || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(freed, "free once the first window closed it");
     }
 }
