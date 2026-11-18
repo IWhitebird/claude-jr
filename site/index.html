@@ -199,7 +199,22 @@
     }
   }
 
-  .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 22px; align-items: start; }
+  /* ---- the comparison: the multiple, large, beside the pair it comes from ---- */
+  .vs { border-top: 1px solid var(--ink); margin-top: 26px; }
+  .vs .m { display: grid; grid-template-columns: 10.5rem 1fr; column-gap: 28px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--rule); }
+  .vs .x b { display: block; font: 400 clamp(2.6rem, 6vw, 3.5rem)/1 var(--serif); letter-spacing: -0.03em; color: var(--clay-text); }
+  .vs .x b i { font-style: normal; font-size: .62em; margin-left: 1px; }
+  .vs .x span { display: block; margin-top: 4px; font-size: 14.5px; color: var(--ink-2); }
+  .vs .what { font-size: 14.5px; color: var(--ink-3); margin-bottom: 8px; }
+  .vs .bar i { height: 14px; }
+  @media (max-width: 620px) {
+    .vs .m { grid-template-columns: 1fr; row-gap: 12px; }
+    .vs .x { display: flex; align-items: baseline; gap: 10px; }
+  }
+  .others .bar { grid-template-columns: 7em 1fr 4.5em; }
+  .others .bar + .bar { margin-top: 9px; }
+  .others .m { border-bottom: 0; }
+  .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 44px; align-items: start; }
   .fit figure { margin: 0; }
   .fit .block { aspect-ratio: 2 / 1; background: var(--other); border-radius: 2px; }
   .fit .many { aspect-ratio: 2 / 1; display: grid; grid-template-columns: repeat(20, 1fr); grid-template-rows: repeat(10, 1fr); gap: 2px; }
@@ -225,7 +240,7 @@
   .dots i { aspect-ratio: 1; background: var(--clay); border-radius: 1px; }
   .dots i.n { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
   @media (max-width: 560px) { .dots { grid-template-columns: repeat(25, 1fr); } }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14.5px; color: var(--ink-2); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14.5px; color: var(--ink-2); margin-bottom: 22px; }
   .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; background: var(--clay); border-radius: 1px; }
   .legend i.n { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
 
@@ -336,51 +351,67 @@
         <div><b>5 ms</b><span>to start</span></div>
         <div><b>0 ms</b><span>CPU while it waits</span></div>
       </div>
+    </div>
+  </section>
 
-      <h3>Next to Claude Code, drawn to scale</h3>
-      <div class="scale">
+  <section>
+    <div class="col">
+      <h2>Next to Claude Code, drawn to scale</h2>
+      <p>Same laptop, same day, same fake API so the model's time isn't counted. The clay sliver
+        in each pair is claude-jr.</p>
+      <div class="vs">
         <div class="m">
-          <div class="what">Install size <span>177 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:.56%"></i><b>2.0 MB</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>354 MB</b></div>
+          <div class="x"><b>177<i>×</i></b><span>smaller on disk</span></div>
+          <div>
+            <div class="what">Install size</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:.56%"></i><b>2.0 MB</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>354 MB</b></div>
+          </div>
         </div>
         <div class="m">
-          <div class="what">Memory, sitting idle <span>200 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:.5%"></i><b>0.7 MB</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>148 MB</b></div>
+          <div class="x"><b>200<i>×</i></b><span>less memory at rest</span></div>
+          <div>
+            <div class="what">Memory, sitting idle</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:.5%"></i><b>0.7 MB</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>148 MB</b></div>
+          </div>
         </div>
         <div class="m">
-          <div class="what">Memory at its peak, 20 tool calls <span>130 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:.76%"></i><b>2.2 MB</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>289 MB</b></div>
+          <div class="x"><b>150<i>×</i></b><span>less memory at work</span></div>
+          <div>
+            <div class="what">Memory at its peak, 100 tool calls</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:.66%"></i><b>2.2 MB</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>335 MB</b></div>
+          </div>
         </div>
         <div class="m">
-          <div class="what">Memory at its peak, 100 tool calls <span>150 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:.66%"></i><b>2.2 MB</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>335 MB</b></div>
+          <div class="x"><b>40<i>×</i></b><span>faster to start</span></div>
+          <div>
+            <div class="what">Time until the screen is ready</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:2.5%"></i><b>4 ms</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>157 ms</b></div>
+          </div>
         </div>
         <div class="m">
-          <div class="what">Instructions and tools sent with every request <span>5 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:18.4%"></i><b>6.6 KB</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>35.8 KB</b></div>
+          <div class="x"><b>28<i>×</i></b><span>less CPU</span></div>
+          <div>
+            <div class="what">Its own CPU time, 20 tool calls</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:3.5%"></i><b>40 ms</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>1,140 ms</b></div>
+          </div>
         </div>
         <div class="m">
-          <div class="what">Its own CPU time, 20 tool calls <span>28 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:3.5%"></i><b>40 ms</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>1,140 ms</b></div>
-        </div>
-        <div class="m">
-          <div class="what">Time until the screen is ready <span>40 times less</span></div>
-          <div class="bar us"><span>claude-jr</span><i style="--w:2.5%"></i><b>4 ms</b></div>
-          <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>157 ms</b></div>
+          <div class="x"><b>5<i>×</i></b><span>less sent per request</span></div>
+          <div>
+            <div class="what">Instructions and tools sent with every request</div>
+            <div class="bar us"><span>claude-jr</span><i style="--w:18.4%"></i><b>6.6 KB</b></div>
+            <div class="bar"><span>Claude Code</span><i style="--w:100%"></i><b>35.8 KB</b></div>
+          </div>
         </div>
       </div>
-      <p class="note">Claude Code 2.1.326 and claude-jr on the same Linux laptop, 18 November 2026,
-        both against the same fake API so the model's time isn't counted. Claude Code does a good
-        deal more than claude-jr; this is what the difference costs.
-        <a href="/benchmarks">How it's measured</a>.</p>
+      <p class="note">Claude Code 2.1.326, 18 November 2026. Claude Code does a good deal more than
+        claude-jr; this is what the difference costs. <a href="/benchmarks">How it's measured</a>.</p>
 
-      <h3>What that means in practice</h3>
       <div class="fit">
         <figure>
           <div class="block" role="img" aria-label="One block: the memory of one idle Claude Code session"></div>
@@ -392,23 +423,20 @@
         </figure>
       </div>
 
-      <h3>On disk, next to other terminal agents</h3>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Agent</th><th>Version</th><th>Installed size</th></tr></thead>
-          <tbody>
-            <tr class="us"><td>claude-jr</td><td>today's build</td><td>2.0 MB</td></tr>
-            <tr><td>Gemini CLI</td><td>0.68.0</td><td>103 MB</td></tr>
-            <tr><td>pi</td><td>0.73.1</td><td>150 MB</td></tr>
-            <tr><td>Claude Code</td><td>2.1.326</td><td>354 MB</td></tr>
-            <tr><td>Codex CLI</td><td>0.169.0</td><td>423 MB</td></tr>
-            <tr><td>opencode</td><td>1.19.6</td><td>432 MB</td></tr>
-          </tbody>
-        </table>
+      <h3>And next to the rest: what each one installs</h3>
+      <div class="scale others">
+        <div class="m">
+          <div class="bar us"><span>claude-jr</span><i style="--w:.46%"></i><b>2 MB</b></div>
+          <div class="bar"><span>Gemini CLI</span><i style="--w:23.8%"></i><b>103 MB</b></div>
+          <div class="bar"><span>pi</span><i style="--w:34.7%"></i><b>150 MB</b></div>
+          <div class="bar"><span>Claude Code</span><i style="--w:81.9%"></i><b>354 MB</b></div>
+          <div class="bar"><span>Codex CLI</span><i style="--w:97.9%"></i><b>423 MB</b></div>
+          <div class="bar"><span>opencode</span><i style="--w:100%"></i><b>432 MB</b></div>
+        </div>
       </div>
-      <p class="note">What each one's own installer puts on disk on Linux x86-64 (for the npm ones, the
-        folder <code>npm install</code> fills; Node itself not counted). Size is the only thing compared
-        here: these are different tools with different features.</p>
+      <p class="note">Gemini CLI 0.68, pi 0.73, Claude Code 2.1, Codex CLI 0.169 and opencode 1.19 on Linux
+        x86-64, as their own installers leave them (Node itself not counted). Only size is compared
+        here; they are different tools with different features.</p>
     </div>
   </section>
 
@@ -420,29 +448,10 @@
         project's own hidden tests. claude-jr ran all of them with Claude Opus 5.5, one attempt each.</p>
       <div class="big">93.4%</div>
       <div class="dots" role="img" aria-label="500 squares, one per task: 467 filled for resolved, 33 hollow for not resolved"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="legend"><span><i></i>467 resolved</span><span><i class="n"></i>33 not resolved</span></div>
+      <div class="legend"><span><i></i>467 fixed</span><span><i class="n"></i>33 attempted and not fixed</span><span>all 500 were run</span></div>
 
-      <div class="scroll">
-        <table class="tight">
-          <thead><tr><th>Project</th><th>Resolved</th><th>Tasks</th></tr></thead>
-          <tbody>
-            <tr><td>django</td><td>218</td><td>231</td></tr>
-            <tr><td>sympy</td><td>69</td><td>75</td></tr>
-            <tr><td>sphinx</td><td>43</td><td>44</td></tr>
-            <tr><td>matplotlib</td><td>32</td><td>34</td></tr>
-            <tr><td>scikit-learn</td><td>32</td><td>32</td></tr>
-            <tr><td>astropy</td><td>21</td><td>22</td></tr>
-            <tr><td>xarray</td><td>20</td><td>22</td></tr>
-            <tr><td>pytest</td><td>17</td><td>19</td></tr>
-            <tr><td>pylint</td><td>8</td><td>10</td></tr>
-            <tr><td>requests</td><td>4</td><td>8</td></tr>
-            <tr><td>seaborn, flask</td><td>3</td><td>3</td></tr>
-          </tbody>
-        </table>
-      </div>
       <p class="note">A task took 34 seconds and six requests at the median, and 13 cents on average
-        ($67 for the whole set). The four requests tasks counted as failures fail on the test machine
-        with the reference fix too. With Claude Sonnet 5.5 it resolved 88 of a random 100 at about five
+        ($67 for the whole set). With Claude Sonnet 5.5 it resolved 88 of a random 100 at about five
         cents each. The score is mostly the model's: what this shows is that a small agent doesn't
         hold it back. It is not a leaderboard entry, and the tasks are old enough that the model may
         have seen them. <a href="/benchmarks#swe-bench-verified">Details</a>.</p>
