@@ -24,6 +24,12 @@
   </tr>
 </table>
 
+<p align="center">
+  <img src="assets/demo.svg" width="760" alt="A claude-jr session in a terminal. Asked to fix failing tests, it runs them, edits one line, runs them again and reports; then /stats shows it holding 1.6 MB of memory.">
+  <br>
+  <sub>A real session with Claude Opus 5.5, in real time (<a href="scripts/demo.py">how it was recorded</a>). <code>/stats</code> at the end: 1.6 MB of memory, 0.03 s of CPU.</sub>
+</p>
+
 ---
 
 claude-jr (Claude Junior) is a small, fast alternative to Claude Code, written
@@ -53,7 +59,7 @@ Or through a package manager:
 ```sh
 # Homebrew
 brew tap iwhitebird/claude-jr https://github.com/IWhitebird/claude-jr
-brew install claude-jr
+brew install iwhitebird/claude-jr/claude-jr
 
 # Cargo: download the release, or build it yourself
 cargo binstall --git https://github.com/IWhitebird/claude-jr claude-jr

@@ -90,6 +90,7 @@ build.sh             the release build
 install.sh           the installer for Linux and macOS; install.ps1 for Windows
 Dockerfile           the Docker image: the binary on busybox
 Formula/claude-jr.rb the Homebrew formula, written by scripts/formula.sh at each release
+scripts/demo.py      records the session shown in the README and on the site (assets/demo.svg, site/demo.svg)
 ```
 
 Files stay under about 500 lines of code. Where a file's tests are longer

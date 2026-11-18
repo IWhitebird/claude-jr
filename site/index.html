@@ -159,22 +159,12 @@
 
   /* ---- the terminal ---- */
   figure.shot { margin: 56px auto 0; }
-  .term { background: var(--term); color: #d8d0c7; border: 1px solid var(--term-edge); border-radius: 10px; padding: 22px 24px 24px; overflow-x: auto;
-          font: 13.5px/1.65 var(--mono); box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 24px 48px -30px rgba(40,25,10,.5); color-scheme: dark; }
-  .term pre { margin: 0; font: inherit; }
-  .term .hd { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
-  .term .hd img { width: 56px; height: 48px; image-rendering: pixelated; }
-  .term .hd > span { color: #9b9187; line-height: 1.55; }
-  .term .hd b { color: #e0805c; font-weight: 500; }
-  .o { color: #e0805c; } .g { color: #8a8077; } .a { color: #94c27f; } .b { color: #f3ede6; }
-  .box { display: block; border: 1px solid #3a332d; border-radius: 4px; padding: 6px 10px; margin-top: 16px; color: #9b9187; }
-  .ln { display: block; min-height: 1.65em; }
-  figcaption { display: flex; justify-content: flex-end; margin-top: 8px; }
-  @media (prefers-reduced-motion: no-preference) {
-    .play .ln { animation: line .22s both; animation-delay: calc(var(--i) * 420ms); }
-    @keyframes line { from { opacity: 0; translate: 0 4px; } }
-  }
-  @media (prefers-reduced-motion: reduce) { figcaption { display: none; } }
+  .term { border: 1px solid var(--term-edge); border-radius: 10px; overflow-x: auto; background: #100e0d;
+          box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 24px 48px -30px rgba(40,25,10,.5); }
+  .term img { display: block; width: 100%; min-width: 620px; height: auto; }
+  figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-top: 8px; font-size: 14.5px; color: var(--ink-3); }
+  figcaption code { font-family: var(--mono); font-size: 13.5px; color: var(--ink-2); }
+  figcaption .motion { flex: none; margin-top: 0; }
 
   section { padding-top: 84px; }
   h2 { font: 400 clamp(1.75rem, 3.6vw, 2.25rem)/1.15 var(--serif); letter-spacing: -0.01em; margin: 0 0 16px; text-wrap: balance; }
@@ -379,10 +369,10 @@
   </div>
 
   <figure class="shot col wide">
-    <div class="term" role="img" aria-label="A claude-jr session: it finds a struct, edits it, and builds the project">
-<pre><span class="hd"><img src="/logo.svg" alt="" width="56" height="48"><span><b>claude-jr</b> 0.2.0<br>claude-opus-5-5 · ~/proj/cli<br>/help for commands · shift+tab to change mode</span></span><span class="ln b" style="--i:1">&gt; add a --verbose flag to the cli</span><span class="ln" style="--i:1"></span><span class="ln" style="--i:3"><span class="o">●</span> Bash(grep -n "struct Args" -A12 src/cli.rs)</span><span class="ln g" style="--i:4">  ⎿ 9:pub struct Args {  … +11 lines</span><span class="ln" style="--i:4"></span><span class="ln" style="--i:6"><span class="o">●</span> Edit(src/cli.rs)</span><span class="ln a" style="--i:7">    13 + /// Print debug output</span><span class="ln a" style="--i:7">    14 + #[arg(short, long)]</span><span class="ln a" style="--i:7">    15 + pub verbose: bool,</span><span class="ln g" style="--i:8">  ⎿ Edited src/cli.rs (1 replacement)</span><span class="ln" style="--i:8"></span><span class="ln" style="--i:10"><span class="o">●</span> Bash(cargo build)</span><span class="ln g" style="--i:12">  ⎿ Finished `dev` profile in 2.1s</span><span class="ln" style="--i:12"></span><span class="ln" style="--i:14"><span class="o">●</span> Added <span class="b">--verbose</span> to Args. The build passes.</span><span class="box">&gt; ask anything, or /help</span></pre>
+    <div class="term">
+      <img src="/demo.svg" width="775" height="549" alt="A claude-jr session in a terminal. Asked to fix failing tests, it runs them, edits one line, runs them again and reports; then /stats shows it holding 1.6 MB of memory.">
     </div>
-    <figcaption><button class="motion replay" type="button">Replay</button></figcaption>
+    <figcaption><span>A real session with Claude Opus 5.5, in real time. <code>/stats</code> at the end: 1.6 MB of memory, 0.03 s of CPU.</span><button class="motion replay" type="button">Replay</button></figcaption>
   </figure>
 
   <section id="numbers">
@@ -716,12 +706,19 @@
     done = setTimeout(() => jr.classList.remove(trick), 1000);
   });
 
-  // The terminal plays once when it comes into view, and again on request.
-  const shot = document.querySelector(".shot");
-  const play = () => {
-    shot.classList.remove("play");
-    void shot.getBoundingClientRect();
-    shot.classList.add("play");
+  // The recording plays once when it comes into view, and again on request.
+  // An image's animation starts when the image loads, so playing it again
+  // means loading it again: from memory, under a new address each time.
+  const shot = document.querySelector(".shot"), film = shot.querySelector("img");
+  let reel, showing;
+  const play = async () => {
+    try {
+      reel ??= await (await fetch(film.getAttribute("src"))).blob();
+      const next = URL.createObjectURL(reel);
+      film.src = next;
+      if (showing) URL.revokeObjectURL(showing);
+      showing = next;
+    } catch {}
   };
   if ("IntersectionObserver" in window) {
     const seen = new IntersectionObserver((entries) => {
@@ -733,6 +730,8 @@
     seen.observe(shot);
   }
   shot.querySelector(".replay").addEventListener("click", play);
+  // For bench/site.py: the script got to its end.
+  document.documentElement.dataset.ran = "1";
 </script>
 </body>
 </html>

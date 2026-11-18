@@ -66,8 +66,8 @@ jobs:
         run: |
           if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi
           brew tap iwhitebird/claude-jr "$GITHUB_WORKSPACE"
-          brew install claude-jr
-          brew test claude-jr
+          brew install iwhitebird/claude-jr/claude-jr
+          brew test iwhitebird/claude-jr/claude-jr
           claudejr --version
       - uses: cargo-bins/cargo-binstall@main
       # Between a version bump and its release there is nothing to download yet.

@@ -1,7 +1,7 @@
 # Homebrew formula for claude-jr: installs the released binary.
 #
 #   brew tap iwhitebird/claude-jr https://github.com/IWhitebird/claude-jr
-#   brew install claude-jr
+#   brew install iwhitebird/claude-jr/claude-jr
 #
 # Written by scripts/formula.sh at each release; change that, not this.
 class ClaudeJr < Formula

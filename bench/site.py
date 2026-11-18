@@ -2,7 +2,8 @@
 # Checks the website's pages at several screen widths in a real browser
 # (headless Chrome): nothing may be wider than the screen or need sideways
 # scrolling that isn't a table or a code block, the top bar's links must sit
-# in one row, and a diagram must not be shrunk until it can't be read. It also
+# in one row, a diagram must not be shrunk until it can't be read, every image
+# must load and the front page's script must run to its end. It also
 # saves a screenshot of every page at every width (and two in the dark
 # colours), to be looked at.
 #
@@ -51,6 +52,10 @@ frame.onload = () => setTimeout(() => {
   // Text drawn in a picture must be large enough to read.
   const tiny = [...doc.querySelectorAll("svg text")].filter((t) => { const r = t.getBoundingClientRect(); return r.height > 0 && r.height < 11; });
   if (tiny.length) out.push({ what: "text in a drawing is too small to read (" + Math.round(tiny[0].getBoundingClientRect().height) + "px high): " + tiny[0].textContent.slice(0, 30) });
+  // The front page's script marks its own end: one mistake anywhere in it and nothing on the page works.
+  if (q.get("page") === "index" && !doc.documentElement.dataset.ran) out.push({ what: "the page's script stopped on an error" });
+  // An image that didn't load shows as a gap.
+  for (const img of doc.images) if (!img.complete || !img.naturalWidth) out.push({ what: "an image did not load: " + img.getAttribute("src") });
   // A diagram shrunk to fit must still be readable.
   for (const svg of doc.querySelectorAll("pre.mermaid svg")) {
     const box = svg.viewBox.baseVal, scale = box && box.width ? svg.getBoundingClientRect().width / box.width : 1;
