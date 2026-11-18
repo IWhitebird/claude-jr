@@ -42,6 +42,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: ./build.sh ${{ matrix.target }}
       - run: ./target/${{ matrix.target }}/release/claudejr --version
+      # The Docker image, built from this binary and run against the fake API.
+      - if: runner.os == 'Linux'
+        run: bench/docker.sh target/${{ matrix.target }}/release/claudejr
       # The unit tests on macOS too (the end-to-end ones need Linux tools).
       - if: runner.os != 'Linux'
         run: cargo test --release --bin claudejr
@@ -49,3 +52,31 @@ jobs:
       # API: tools in Git Bash and in PowerShell, sessions, background tasks.
       - if: runner.os == 'Windows'
         run: bash bench/windows.sh target/${{ matrix.target }}/release/claudejr.exe
+  # The other ways in, each used the way a user would: Homebrew (this checkout
+  # is the tap) and cargo binstall. Both download a released binary.
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: brew install
+        run: |
+          if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi
+          brew tap iwhitebird/claude-jr "$GITHUB_WORKSPACE"
+          brew install claude-jr
+          brew test claude-jr
+          claudejr --version
+      - uses: cargo-bins/cargo-binstall@main
+      # Between a version bump and its release there is nothing to download yet.
+      - name: cargo binstall
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if ! curl -fsIL --retry 3 -o /dev/null "https://github.com/IWhitebird/claude-jr/releases/download/v$version/version"; then
+            echo "no release of $version yet"; exit 0
+          fi
+          cargo binstall --manifest-path . --strategies crate-meta-data --no-confirm --disable-telemetry \
+            --root "$RUNNER_TEMP/binstall" claude-jr
+          test "$("$RUNNER_TEMP/binstall/bin/claudejr" --version)" = "claude-jr $version"

@@ -32,22 +32,20 @@ deciding it doesn't matter.
 - If you notice a case your change doesn't cover yet, cover it before you stop rather than only \
 mentioning it. Then say what you checked and what you could not.";
 
-/// Whether a program is installed.
-fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| {
-        std::env::split_paths(&p).any(|d| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)).is_file())
-    })
-}
-
 const INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const MAX_FILE: usize = 32 * 1024;
 const MAX_GIT_LINES: usize = 30;
 
-/// What the model has to know about the shell on Windows.
-fn windows_note(shell: &str) -> &'static str {
+/// What the model has to know about the shell where it isn't the bash it expects.
+fn shell_note(shell: &str, windows: bool) -> &'static str {
     if shell == "PowerShell" {
         "\n\nThis is Windows without Git Bash: the bash tool runs PowerShell, so write PowerShell commands \
          (Get-ChildItem, Select-String, Get-Content), not bash ones."
+    } else if shell == "sh" {
+        "\n\nThere is no bash on this system: the bash tool runs sh. Write POSIX shell \
+         (no arrays, no [[ ]], no <( ) process substitution)."
+    } else if !windows {
+        ""
     } else {
         "\n\nThis is Windows: the bash tool runs Git Bash. Unix commands work; write paths with forward \
          slashes (C:/Users/me/file.txt)."
@@ -59,12 +57,10 @@ pub fn system() -> String {
     let mut s = String::from(BASE);
     // Name a search tool that is there: without ripgrep the model's first
     // search would fail.
-    if !on_path("rg") {
+    if !crate::sys::shell::on_path("rg") {
         s = s.replace("(rg, find, ls)", "(grep -rn, find, ls)");
     }
-    if cfg!(windows) {
-        s.push_str(windows_note(crate::sys::shell::shell().name()));
-    }
+    s.push_str(shell_note(crate::sys::shell::shell().name(), cfg!(windows)));
     let _ = write!(
         s,
         "\n\n<env>\nWorking directory: {}\nPlatform: {}\nDate: {}\n",
@@ -249,7 +245,7 @@ mod tests {
         crate::tools::test_home();
         let s = system();
         // The search tool named is one that is installed here.
-        let search = if on_path("rg") { "(rg, find, ls)" } else { "(grep -rn, find, ls)" };
+        let search = if crate::sys::shell::on_path("rg") { "(rg, find, ls)" } else { "(grep -rn, find, ls)" };
         assert!(s.starts_with(&BASE.replace("(rg, find, ls)", search)));
         assert!(BASE.contains("(rg, find, ls)"));
         let cwd = std::env::current_dir().unwrap();
@@ -262,6 +258,15 @@ mod tests {
         assert!(s.contains("</env>"));
         // This project's own AGENTS.md is among the instructions.
         assert!(s.contains(&format!("<instructions file=\"{}\">", cwd.join("AGENTS.md").display())));
+    }
+
+    #[test]
+    fn the_model_is_told_when_the_shell_is_not_bash() {
+        // bash on Unix is what the model expects: nothing to add.
+        assert_eq!(shell_note("bash", false), "");
+        assert!(shell_note("sh", false).contains("the bash tool runs sh. Write POSIX shell"));
+        assert!(shell_note("bash", true).contains("the bash tool runs Git Bash"));
+        assert!(shell_note("PowerShell", true).contains("write PowerShell commands"));
     }
 
     #[test]

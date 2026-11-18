@@ -181,7 +181,7 @@ pub fn release(pid: u32) {
 /// Kills a process started with `apart` and everything it started.
 pub fn kill_tree(pid: u32) {
     #[cfg(unix)]
-    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+    signal(-i64::from(pid), 9);
     #[cfg(windows)]
     {
         if let Some(job) = win::take_job(pid) {
@@ -200,14 +200,29 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
-/// Whether a process with this id exists.
+/// Sends a signal to process `pid`, or, when `pid` is negative, to the whole
+/// group that process -`pid` leads. Never to 0 or -1: those mean "my own
+/// group" and "every process I may signal".
 #[cfg(unix)]
-pub fn alive(pid: u64) -> bool {
+fn signal(pid: i64, signal: i32) -> bool {
     unsafe extern "C" {
         fn kill(pid: i32, signal: i32) -> i32;
     }
-    // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
-    pid > 0 && unsafe { kill(pid as i32, 0) } == 0
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    // SAFETY: a system call that takes two numbers.
+    !(-1..=0).contains(&pid) && unsafe { kill(pid, signal) } == 0
+}
+
+/// Asks a process to stop (SIGTERM), leaving it time to tidy up.
+#[cfg(unix)]
+pub fn terminate(pid: u64) {
+    signal(i64::try_from(pid).unwrap_or(0), 15);
+}
+
+/// Whether a process with this id exists. Signal 0 sends nothing; it only asks.
+#[cfg(unix)]
+pub fn alive(pid: u64) -> bool {
+    signal(i64::try_from(pid).unwrap_or(0), 0)
 }
 
 #[cfg(windows)]
@@ -391,6 +406,14 @@ mod tests {
     fn a_process_is_found_while_it_runs_and_killed_with_what_it_started() {
         assert!(alive(std::process::id() as u64));
         assert!(!alive(0));
+        // 0 and -1 would reach this whole group, or everything: nothing is sent to them.
+        #[cfg(unix)]
+        {
+            assert!(!signal(0, 0) && !signal(-1, 0) && !signal(i64::MAX, 0));
+            terminate(0);
+            kill_tree(0);
+            kill_tree(1);
+        }
         let shell = crate::sys::shell::shell();
         let mut child = apart(&mut shell.command("sleep 30 & sleep 30"), false).spawn().unwrap();
         hold(&child);

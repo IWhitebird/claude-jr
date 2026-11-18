@@ -9,6 +9,14 @@ homepage = "https://claudejr.iwhitebird.com"
 readme = "README.md"
 keywords = ["claude", "coding-agent", "ai", "cli", "terminal"]
 categories = ["command-line-utilities", "development-tools"]
+# What a published crate carries: enough to build the binary.
+include = ["/src/**", "/assets/mascot.txt", "/README.md", "/LICENSE"]
+
+# `cargo binstall` downloads the release's binary instead of compiling:
+# claudejr-linux-x86_64, claudejr-macos-aarch64, claudejr-windows-x86_64.exe, ...
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/claudejr-{ os-name }-{ target-arch }{ binary-ext }"
+pkg-fmt = "bin"
 
 # The command is claudejr; the project is claude-jr.
 [[bin]]

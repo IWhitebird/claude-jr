@@ -48,6 +48,22 @@ then, inside WSL. Then run
 another provider's model (`claudejr -m ollama/qwen3`). `claudejr --update` gets
 the newest release.
 
+Or through a package manager:
+
+```sh
+# Homebrew
+brew tap iwhitebird/claude-jr https://github.com/IWhitebird/claude-jr
+brew install claude-jr
+
+# Cargo: download the release, or build it yourself
+cargo binstall --git https://github.com/IWhitebird/claude-jr claude-jr
+cargo install --git https://github.com/IWhitebird/claude-jr
+```
+
+From 0.3.0 there is a Docker image too, 3.5 MB in all:
+`docker run --rm -it -e ANTHROPIC_API_KEY -v "$PWD:/work" ghcr.io/iwhitebird/claude-jr`
+([more](docs/GUIDE.md#docker)).
+
 ## Why
 
 - **Tiny.** One static 2 MB file. No Node, no Python, nothing to install first.

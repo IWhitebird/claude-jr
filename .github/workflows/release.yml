@@ -1,9 +1,10 @@
 name: release
 # Pushing a tag like v0.1.0 builds one plain binary per platform and publishes
 # them with a `version` file and checksums. install.sh, install.ps1 and
-# `claudejr --update` download from the latest release.
+# `claudejr --update` download from the latest release. The two Linux binaries
+# also go out as a Docker image, ghcr.io/<owner>/claude-jr.
 # Started by hand (the "Run workflow" button, or `gh workflow run release`) it
-# builds every binary and publishes nothing: a rehearsal.
+# builds every binary and the image and publishes nothing: a rehearsal.
 on:
   push:
     tags: ["v*"]
@@ -59,5 +60,48 @@ jobs:
           if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
           gh release create "$GITHUB_REF_NAME" claudejr-* version checksums.txt \
             --repo "$GITHUB_REPOSITORY" --title "claude-jr ${GITHUB_REF_NAME#v}" "$@"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # The Homebrew formula follows the release: brew installs the version it names.
+      - run: |
+          git fetch -q origin main && git checkout -q -B main origin/main
+          scripts/formula.sh "${GITHUB_REF_NAME#v}" checksums.txt > Formula/claude-jr.rb
+          git add Formula/claude-jr.rb
+          git diff --cached --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Homebrew formula for ${GITHUB_REF_NAME#v}"
+          git push -q origin main
+  # The Docker image: the Linux binaries just built, on busybox (see Dockerfile).
+  # Checked against the fake API on every run; pushed only for a tag.
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: claudejr-linux-*
+          merge-multiple: true
+      - run: |
+          mkdir -p bin/amd64 bin/arm64
+          mv claudejr-linux-x86_64 bin/amd64/claudejr
+          mv claudejr-linux-aarch64 bin/arm64/claudejr
+          chmod +x bin/amd64/claudejr
+      - run: bench/docker.sh bin/amd64/claudejr
+      # Both architectures in one image. Nothing in the Dockerfile runs on the
+      # target architecture, so no emulator is needed.
+      - run: |
+          name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          set -- --build-context bin=bin --platform linux/amd64,linux/arm64 --provenance=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            set -- "$@" --push -t "$name:${GITHUB_REF_NAME#v}" -t "$name:latest" \
+              --label "org.opencontainers.image.version=${GITHUB_REF_NAME#v}"
+          fi
+          docker buildx create --use
+          docker buildx build "$@" .
         env:
           GH_TOKEN: ${{ github.token }}

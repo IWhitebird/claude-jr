@@ -85,6 +85,11 @@ tests/
   ui/                the real binary in a pseudo-terminal
 
 bench/               measurements and checks; see bench/README.md
+
+build.sh             the release build
+install.sh           the installer for Linux and macOS; install.ps1 for Windows
+Dockerfile           the Docker image: the binary on busybox
+Formula/claude-jr.rb the Homebrew formula, written by scripts/formula.sh at each release
 ```
 
 Files stay under about 500 lines of code. Where a file's tests are longer

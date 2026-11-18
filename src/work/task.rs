@@ -232,11 +232,10 @@ pub fn cancel(id: &str) -> Result<String, String> {
     let pid = task["pid"].as_u64().unwrap_or(0);
     // Asked first, so it can commit what it has: a signal, or on Windows
     // (which has none to send) a file it watches for.
-    if cfg!(unix) {
-        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
-    } else {
-        let _ = fs::write(dir.join("stop"), "");
-    }
+    #[cfg(unix)]
+    os::terminate(pid);
+    #[cfg(windows)]
+    let _ = fs::write(dir.join("stop"), "");
     let start = Instant::now();
     while alive(pid) && start.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(50));

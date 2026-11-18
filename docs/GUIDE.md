@@ -236,6 +236,48 @@ What is different there:
 - 64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
   too, with the Linux build.
 
+## Other ways to install
+
+```sh
+# Homebrew
+brew tap iwhitebird/claude-jr https://github.com/IWhitebird/claude-jr
+brew install claude-jr
+
+# Cargo: download the release, or build it yourself
+cargo binstall --git https://github.com/IWhitebird/claude-jr claude-jr
+cargo install --git https://github.com/IWhitebird/claude-jr
+```
+
+Each gives you the same `claudejr`. Homebrew's copy is updated with
+`brew upgrade claude-jr`; the others with `claudejr --update`.
+
+### Docker
+
+New in 0.3.0. The image is the binary on top of busybox, 3.5 MB in all:
+
+```sh
+docker run --rm -it -e ANTHROPIC_API_KEY -v "$PWD:/work" ghcr.io/iwhitebird/claude-jr
+```
+
+It works in `/work`, and whatever follows the image name goes to `claudejr`
+(`... ghcr.io/iwhitebird/claude-jr -y -p "fix the failing test"`).
+
+- **Your files stay yours** with `--user "$(id -u):$(id -g)"`; without it,
+  what it writes belongs to root.
+- **Sessions and a saved key** live in `/home/jr`. Mount a volume there to
+  keep them between runs: `-v claudejr:/home/jr`.
+- **busybox is all there is:** `sh`, `grep`, `find`, `sed`, `wget`, but no
+  bash, git or compiler. The model is told it has plain `sh`.
+
+For a project that needs its own tools, copy the binary into an image that
+has them. It is one static file, so any Linux image will do, Alpine included;
+where there is no bash, commands run in `sh`.
+
+```dockerfile
+FROM rust:1-slim
+COPY --from=ghcr.io/iwhitebird/claude-jr /usr/local/bin/claudejr /usr/local/bin/
+```
+
 ## Other models
 
 A model id with a provider's name in front goes to that provider; a plain id

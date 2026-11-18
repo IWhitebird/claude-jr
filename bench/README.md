@@ -15,6 +15,7 @@ against the fake API in `mock.py`.
 | `resize.py` | After any resize the screen matches a fresh run, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
 | `chaos.py` | Random keys, pastes, resizes and API failures never crash it or send a bad request (needs tmux) | `python3 bench/chaos.py target/release/claudejr` |
 | `sandbox.sh` | What the sandbox blocks | `bench/sandbox.sh` |
+| `docker.sh` | The Docker image: its size, a run with tools as an ordinary user, commands in busybox's `sh`, a session kept in a mounted home | `bench/docker.sh` |
 | `coverage.sh` | Line coverage of the tests | `bench/coverage.sh` |
 | `provider.sh` | A real model of another provider answers, calls tools and keeps its history (uses that provider) | `bench/provider.sh ollama/qwen2.5:3b` |
 | `site.py` | The website's pages at six screen widths in a real browser: nothing wider than the screen, the top bar in one row, diagrams readable; saves screenshots, light and dark | `python3 bench/site.py` |

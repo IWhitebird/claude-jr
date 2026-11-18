@@ -4,9 +4,10 @@
 # come back, finishes with a short markdown answer. Every round runs a bash
 # command printing MOCK_OUTPUT_KB of output, so the history grows like a real
 # long session. The first round also writes and edits a file. MOCK_CMD
-# replaces the bash command and MOCK_LOG records every request body (and the
-# request's headers in MOCK_LOG.headers). POST .../chat/completions gets the
-# same service in the Chat Completions format.
+# replaces the bash command (MOCK_TIMEOUT gives it that many seconds) and
+# MOCK_LOG records every request body (and the request's headers in
+# MOCK_LOG.headers). POST .../chat/completions gets the same service in the
+# Chat Completions format.
 #
 #   python3 bench/mock.py PORT      (0: any free port; the port is printed)
 
@@ -62,7 +63,8 @@ def tool_round(n, usage):
     blocks = [({"type": "thinking", "thinking": ""},
                [{"type": "thinking_delta", "thinking": note}, {"type": "signature_delta", "signature": "sig"}])]
     cmd = CMD or f"head -c {OUTPUT_KB * 1024} /dev/zero | tr '\\0' x | fold -w 99"
-    blocks.append(tool(f"b{n}", "bash", {"command": cmd}))
+    timeout = {"timeout": int(os.environ["MOCK_TIMEOUT"])} if os.environ.get("MOCK_TIMEOUT") else {}
+    blocks.append(tool(f"b{n}", "bash", {"command": cmd, **timeout}))
     if n == 0:
         blocks.append(tool("w0", "write", {"path": "demo.txt", "content": "one\ntwo\nthree\n"}))
         blocks.append(tool("r0", "read", {"path": "demo.txt"}))

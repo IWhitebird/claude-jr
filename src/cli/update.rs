@@ -74,6 +74,13 @@ pub fn run() -> Result<String, String> {
     }
 
     let exe = std::env::current_exe().and_then(|p| p.canonicalize()).map_err(|e| e.to_string())?;
+    // Homebrew keeps its own record of what it installed: the update is its to do.
+    if brewed(&exe) {
+        return Ok(format!(
+            "claude-jr {latest} is out (this is {current}). It was installed with Homebrew, so update it with:\n  \
+             brew upgrade claude-jr"
+        ));
+    }
     // (Windows only runs a file whose name ends in .exe.)
     let new = exe.with_extension(format!("update{}", std::env::consts::EXE_SUFFIX));
     let result = download(&format!("{base}/{asset}"), &new)
@@ -83,6 +90,11 @@ pub fn run() -> Result<String, String> {
         let _ = std::fs::remove_file(&new);
     }
     result.map(|()| format!("Updated claude-jr {current} to {latest}. Start it again to use the new version."))
+}
+
+/// Whether `exe` (links followed) is in Homebrew's store, .../Cellar/claude-jr/VERSION/bin.
+fn brewed(exe: &Path) -> bool {
+    exe.components().any(|part| part.as_os_str() == "Cellar")
 }
 
 /// Puts `new` where the running program `exe` is.
@@ -148,6 +160,14 @@ mod tests {
         assert!(parts("v0.2.0") > parts("0.1.9"));
         assert!(parts("0.1.0") <= parts("0.1.0"));
         assert!(parts("0.1") < parts("0.1.1"));
+    }
+
+    #[test]
+    fn a_homebrew_install_is_left_to_homebrew() {
+        assert!(brewed(Path::new("/opt/homebrew/Cellar/claude-jr/0.2.0/bin/claudejr")));
+        assert!(brewed(Path::new("/home/linuxbrew/.linuxbrew/Cellar/claude-jr/0.2.0/bin/claudejr")));
+        assert!(!brewed(Path::new("/home/me/.local/bin/claudejr")));
+        assert!(!brewed(Path::new("/home/me/Cellar-door/claudejr")));
     }
 
     #[test]

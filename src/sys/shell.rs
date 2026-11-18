@@ -1,7 +1,8 @@
 // The shell commands run in: bash everywhere it exists. On Windows that is
-// the bash that comes with Git; without it, PowerShell.
+// the bash that comes with Git; without it, PowerShell. On a Unix system with
+// no bash (a small container: Alpine, busybox) it is sh.
 //
-// CLAUDE_JR_SHELL names another one (a path to bash, or to powershell or pwsh).
+// CLAUDE_JR_SHELL names another one (a path to bash or sh, or to powershell or pwsh).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,6 +11,8 @@ use std::sync::OnceLock;
 pub struct Shell {
     program: PathBuf,
     powershell: bool,
+    /// sh, with none of what bash adds to it.
+    plain: bool,
 }
 
 /// The shell on this machine, looked for once.
@@ -18,18 +21,24 @@ pub fn shell() -> &'static Shell {
     SHELL.get_or_init(|| {
         let program = std::env::var_os("CLAUDE_JR_SHELL").filter(|s| !s.is_empty()).map(PathBuf::from);
         let program = program.unwrap_or_else(find);
-        Shell { powershell: is_powershell(&program), program }
+        Shell::of(program)
     })
 }
 
-fn is_powershell(program: &Path) -> bool {
-    let name = program.file_stem().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    matches!(name.as_str(), "powershell" | "pwsh")
+/// Whether a program is installed.
+pub fn on_path(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| {
+        std::env::split_paths(&p).any(|d| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)).is_file())
+    })
+}
+
+fn stem(program: &Path) -> String {
+    program.file_stem().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
 #[cfg(unix)]
 fn find() -> PathBuf {
-    "bash".into()
+    if on_path("bash") || !on_path("sh") { "bash" } else { "sh" }.into()
 }
 
 /// Git's bash, from where Git is usually installed or from beside the git on
@@ -55,6 +64,15 @@ fn find() -> PathBuf {
 }
 
 impl Shell {
+    fn of(program: PathBuf) -> Shell {
+        let name = stem(&program);
+        Shell {
+            powershell: matches!(name.as_str(), "powershell" | "pwsh"),
+            plain: matches!(name.as_str(), "sh" | "ash" | "dash"),
+            program,
+        }
+    }
+
     /// The program, for starting it some other way.
     #[cfg(test)]
     pub fn program(&self) -> String {
@@ -63,7 +81,13 @@ impl Shell {
 
     /// What to call it when talking to the model.
     pub fn name(&self) -> &'static str {
-        if self.powershell { "PowerShell" } else { "bash" }
+        if self.powershell {
+            "PowerShell"
+        } else if self.plain {
+            "sh"
+        } else {
+            "bash"
+        }
     }
 
     /// The shell, about to run `script`.
@@ -104,7 +128,7 @@ mod tests {
 
     #[test]
     fn each_shell_gets_its_own_wrapping() {
-        let bash = Shell { program: "bash".into(), powershell: false };
+        let bash = Shell::of("bash".into());
         assert_eq!(bash.name(), "bash");
         assert_eq!(bash.merged("ls"), "exec 2>&1\nls");
         let script = bash.reporting("cd sub", Path::new("/tmp/x.cwd"));
@@ -114,10 +138,15 @@ mod tests {
         assert_eq!(args, ["-c", "ls"]);
 
         for program in ["powershell", "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "PWSH"] {
-            assert!(is_powershell(Path::new(program)) || cfg!(unix) && program.contains('\\'), "{program}");
+            assert!(Shell::of(program.into()).powershell || cfg!(unix) && program.contains('\\'), "{program}");
         }
-        assert!(!is_powershell(Path::new("/usr/bin/bash")));
-        let ps = Shell { program: "powershell".into(), powershell: true };
+        assert_eq!(Shell::of("/usr/bin/bash".into()).name(), "bash");
+        // A plain sh is wrapped the way bash is, and called what it is.
+        for program in ["sh", "/bin/sh", "/bin/ash", "dash"] {
+            let sh = Shell::of(program.into());
+            assert_eq!((sh.name(), sh.merged("ls")), ("sh", bash.merged("ls")), "{program}");
+        }
+        let ps = Shell::of("powershell".into());
         assert_eq!(ps.name(), "PowerShell");
         assert_eq!(ps.merged("dir"), "& {\ndir\n} 2>&1");
         let script = ps.reporting("cd sub", Path::new("C:\\t\\x.cwd"));

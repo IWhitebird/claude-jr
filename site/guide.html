@@ -95,7 +95,7 @@
   </div>
 </header>
 <div class="frame layout">
-  <aside><nav aria-label="On this page"><b>On this page</b><a href="#start-here">Start here</a><a href="#use">Use</a><a href="#modes">Modes</a><a href="#tools">Tools</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sandbox">Sandbox</a><a href="#windows">Windows</a><a href="#other-models">Other models</a><a href="#claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</a><a href="#running-many-at-once">Running many at once</a><a href="#working-for-another-agent">Working for another agent</a><a href="#sessions-notes-and-rewind">Sessions, notes and rewind</a><a href="#config">Config</a><a href="#not-included">Not included</a></nav></aside>
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#start-here">Start here</a><a href="#use">Use</a><a href="#modes">Modes</a><a href="#tools">Tools</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sandbox">Sandbox</a><a href="#windows">Windows</a><a href="#other-ways-to-install">Other ways to install</a><a href="#other-models">Other models</a><a href="#claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</a><a href="#running-many-at-once">Running many at once</a><a href="#working-for-another-agent">Working for another agent</a><a href="#sessions-notes-and-rewind">Sessions, notes and rewind</a><a href="#config">Config</a><a href="#not-included">Not included</a></nav></aside>
   <article>
 <h1 id="using-claude-jr">Using claude-jr</h1>
 <p>Everything the command does, in one place.</p>
@@ -458,6 +458,37 @@ console window has not been tried.</li>
 <li>64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
 too, with the Linux build.</li>
 </ul>
+<h2 id="other-ways-to-install">Other ways to install</h2>
+<pre><code class="language-sh"># Homebrew
+brew tap iwhitebird/claude-jr https://github.com/IWhitebird/claude-jr
+brew install claude-jr
+
+# Cargo: download the release, or build it yourself
+cargo binstall --git https://github.com/IWhitebird/claude-jr claude-jr
+cargo install --git https://github.com/IWhitebird/claude-jr
+</code></pre>
+<p>Each gives you the same <code>claudejr</code>. Homebrew's copy is updated with
+<code>brew upgrade claude-jr</code>; the others with <code>claudejr --update</code>.</p>
+<h3 id="docker">Docker</h3>
+<p>New in 0.3.0. The image is the binary on top of busybox, 3.5 MB in all:</p>
+<pre><code class="language-sh">docker run --rm -it -e ANTHROPIC_API_KEY -v &quot;$PWD:/work&quot; ghcr.io/iwhitebird/claude-jr
+</code></pre>
+<p>It works in <code>/work</code>, and whatever follows the image name goes to <code>claudejr</code>
+(<code>... ghcr.io/iwhitebird/claude-jr -y -p &quot;fix the failing test&quot;</code>).</p>
+<ul>
+<li><strong>Your files stay yours</strong> with <code>--user &quot;$(id -u):$(id -g)&quot;</code>; without it,
+what it writes belongs to root.</li>
+<li><strong>Sessions and a saved key</strong> live in <code>/home/jr</code>. Mount a volume there to
+keep them between runs: <code>-v claudejr:/home/jr</code>.</li>
+<li><strong>busybox is all there is:</strong> <code>sh</code>, <code>grep</code>, <code>find</code>, <code>sed</code>, <code>wget</code>, but no
+bash, git or compiler. The model is told it has plain <code>sh</code>.</li>
+</ul>
+<p>For a project that needs its own tools, copy the binary into an image that
+has them. It is one static file, so any Linux image will do, Alpine included;
+where there is no bash, commands run in <code>sh</code>.</p>
+<pre><code class="language-dockerfile">FROM rust:1-slim
+COPY --from=ghcr.io/iwhitebird/claude-jr /usr/local/bin/claudejr /usr/local/bin/
+</code></pre>
 <h2 id="other-models">Other models</h2>
 <p>A model id with a provider's name in front goes to that provider; a plain id
 is Anthropic's, as before. (Claude through a cloud account is the next section.)</p>
