@@ -59,6 +59,8 @@
   code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; }
   pre { background: var(--code); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); }
   pre code { background: none; padding: 0; font: inherit; }
+  pre.mermaid { background: none; padding: 6px 0; margin: 22px 0; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
+  pre.mermaid svg { max-width: 100%; height: auto; }
   .scroll { overflow-x: auto; margin: 18px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
   th, td { padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
@@ -88,37 +90,19 @@
 <p>claude-jr is multi-threaded, with plain OS threads and blocking I/O. There is
 no async runtime and no io_uring. Each thread spends almost all its time
 blocked in the kernel, so an idle session uses no CPU.</p>
-<pre><code>                         claude-jr process
- ┌───────────────────────────────────────────────────────────────────────┐
- │                                                                       │
- │  keys thread ──── key presses ────┐                                   │
- │  (blocks on stdin)                │                                   │
- │                                   ▼                                   │
- │                        ┌──────────────────┐                           │
- │                        │   main thread    │──── draws ───▶ terminal   │
- │                        │   (UI loop)      │                           │
- │                        └──────────────────┘                           │
- │                           ▲           │                               │
- │                     events│           │commands                       │
- │                           │           ▼                               │
- │                        ┌──────────────────┐   HTTPS (one kept-alive   │
- │                        │  agent thread    │◀─────────────────────────▶│── api.anthropic.com
- │                        │  (the turn loop) │    connection, streamed)  │
- │                        └──────────────────┘                           │
- │                           │     │      │                              │
- │       parallel tool calls │     │      │ subagents: same loop,        │
- │       (scoped threads)    ▼     │      ▼ own context, own threads     │
- │                        ┌─────┐  │   ┌──────┐                          │
- │                        │tools│  │   │ sub  │                          │
- │                        └─────┘  │   └──────┘                          │
- │                                 │                                     │
- │  signals thread                 │  per command: one thread reading    │
- │  (SIGINT/TERM/HUP → clean exit) │  its output (bash-out / job-out)    │
- └─────────────────────────────────┼─────────────────────────────────────┘
-                                   │ fork/exec, own process group
-                                   ▼
-              bash commands · background jobs · local MCP servers
-</code></pre>
+<pre class="mermaid">flowchart TB
+  subgraph process[&quot;the claude-jr process&quot;]
+    keys[&quot;keys thread&lt;br/&gt;blocks on the terminal&quot;] -- &quot;key presses&quot; --&gt; ui[&quot;main thread&lt;br/&gt;the UI loop&quot;]
+    ui -- &quot;commands&quot; --&gt; agent[&quot;agent thread&lt;br/&gt;the turn loop&quot;]
+    agent -- &quot;events&quot; --&gt; ui
+    agent -- &quot;parallel tool calls&quot; --&gt; tools[&quot;tool threads&lt;br/&gt;one more per command, reading its output&quot;]
+    agent -- &quot;same loop, own context&quot; --&gt; sub[&quot;subagents&quot;]
+    signals[&quot;signals thread&lt;br/&gt;SIGINT, SIGTERM, SIGHUP: a clean exit&quot;]
+  end
+  ui -- &quot;draws&quot; --&gt; terminal([&quot;your terminal&quot;])
+  agent &lt;-- &quot;HTTPS: one kept-alive connection, streamed&quot; --&gt; api([&quot;the model's API&quot;])
+  tools -- &quot;started apart from us, in their own process group&quot; --&gt; commands([&quot;bash commands, background jobs, local MCP servers&quot;])
+</pre>
 <div class="scroll"><table>
 <thead>
 <tr>
@@ -162,42 +146,39 @@ blocked in the kernel, so an idle session uses no CPU.</p>
 </table></div>
 <p>Idle, that's 4 threads (main, keys, agent, signals), all blocked.</p>
 <h2 id="one-turn">One turn</h2>
-<pre><code> you type ──▶ UI ──Command::Send──▶ agent
-                                      │
-                                      │ request body = slices over stored messages
-                                      ▼   (nothing copied), streamed to the API
-                                   Claude API
-                                      │ SSE: text, thinking, tool_use deltas
-                                      ▼
-                    agent parses each event, sends Event::Text … to the UI
-                                      │
-                         stop_reason = tool_use?
-                          │yes                    │no
-                          ▼                       ▼
-            for each call: permit → run      Event::Done
-            (reads, subagents, skills,
-             MCP in parallel; the rest
-             in order)
-                          │
-            tool results appended as one user message
-                          │
-                          └────────── next request ──▶ (loop)
-</code></pre>
+<pre class="mermaid">flowchart TD
+  t_you([&quot;you type&quot;]) --&gt; t_ui[&quot;UI&quot;]
+  t_ui -- &quot;Command::Send&quot; --&gt; t_agent[&quot;agent&quot;]
+  t_agent -- &quot;the request: stored messages, streamed, nothing copied&quot; --&gt; t_api([&quot;the model's API&quot;])
+  t_api -- &quot;the reply as a stream: text, thinking, tool calls&quot; --&gt; t_read[&quot;agent reads each event&lt;br/&gt;and passes it to the UI&quot;]
+  t_read --&gt; t_more{&quot;did it call tools?&quot;}
+  t_more -- &quot;no&quot; --&gt; t_done([&quot;the turn is done&quot;])
+  t_more -- &quot;yes&quot; --&gt; t_run[&quot;for each call: permit, then run&lt;br/&gt;reads, subagents, skills and MCP in parallel, the rest in order&quot;]
+  t_run -- &quot;the results, appended as one user message&quot; --&gt; t_agent
+</pre>
 <p>Approval (<code>agent/permit.rs</code>): mode → allow rules → (auto mode) the reviewer
 model → ask you. Plan mode refuses edits; skip-permissions allows everything.</p>
 <h2 id="data-what-is-kept-where">Data: what is kept where</h2>
-<pre><code> the session file (JSONL)                  in memory: Vec&lt;Msg&gt;
- ┌───────────────────────────────────┐     ┌──────────────────────────────┐
- │ {&quot;system&quot;: &quot;...&quot;}                 │     │                              │
- │ {&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:[...]}   │◀────│ user · at byte 812, 96 long  │
- │ {&quot;role&quot;:&quot;assistant&quot;,...}          │◀────│ asst · at byte 909, 4,210    │
- │ {&quot;role&quot;:&quot;user&quot;,...tool_result...} │◀────│ user · at byte 5,120, 38,400 │
- └───────────────────────────────────┘     │ user · the text itself       │ ◀ not saved yet
-        ▲                                  └──────────────────────────────┘
-        │ request body: {&quot;messages&quot;:[ m1 , m2 , m3 , m4 ], ...rest}
-        └─ saved messages are read from the file as the body is sent;
-           only the newest, unsaved ones come from memory
-</code></pre>
+<pre class="mermaid">flowchart LR
+  subgraph d_memory[&quot;in memory: positions only&quot;]
+    m1[&quot;at byte 812, 96 long&quot;]
+    m2[&quot;at byte 909, 4,210 long&quot;]
+    m3[&quot;at byte 5,120, 38,400 long&quot;]
+    m4[&quot;the newest message itself,&lt;br/&gt;not saved yet&quot;]
+  end
+  subgraph d_file[&quot;the session file, on disk&quot;]
+    f1[&quot;a user message&quot;]
+    f2[&quot;an assistant message&quot;]
+    f3[&quot;tool results&quot;]
+  end
+  m1 -.-&gt; f1
+  m2 -.-&gt; f2
+  m3 -.-&gt; f3
+  f1 ==&gt; d_api([&quot;the request&lt;br/&gt;to the model's API&quot;])
+  f2 == &quot;read from the file as it is sent&quot; ==&gt; d_api
+  f3 ==&gt; d_api
+  m4 == &quot;the only part that comes from memory&quot; ==&gt; d_api
+</pre>
 <p>Data-oriented choices, and why:</p>
 <ul>
 <li><strong>Stored in the form it's used.</strong> A message is the exact JSON text the API
@@ -308,5 +289,28 @@ than the code, they sit beside it (<code>api/tests.rs</code>, <code>agent/tests.
     <span>MIT licensed; not made by or affiliated with Anthropic.</span>
   </div>
 </footer>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const ink = dark ? "#ece6dc" : "#1b1915", soft = dark ? "#968e83" : "#736d63";
+  const paper = dark ? "#161412" : "#f4f1e9", card = dark ? "#1d1a17" : "#f9f7f1", rule = dark ? "#3a342e" : "#cfc8ba";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    fontFamily: "Inter, system-ui, sans-serif",
+    flowchart: { curve: "basis", htmlLabels: true, padding: 14 },
+    themeVariables: {
+      fontSize: "14px", background: paper, primaryColor: card, primaryTextColor: ink, primaryBorderColor: rule,
+      lineColor: soft, secondaryColor: paper, tertiaryColor: paper, clusterBkg: paper, clusterBorder: rule,
+      edgeLabelBackground: paper, titleColor: soft,
+    },
+  });
+  // One at a time: drawn together, their parts can land in each other's frames.
+  let n = 0;
+  for (const block of document.querySelectorAll("pre.mermaid")) {
+    const { svg } = await mermaid.render(`diagram-${n++}`, block.textContent);
+    block.innerHTML = svg;
+  }
+</script>
 </body>
 </html>

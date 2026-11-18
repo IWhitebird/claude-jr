@@ -54,11 +54,14 @@ def page(source):
 
     body = re.sub(r"<h([1-3])>(.*?)</h\1>", heading, body, flags=re.S)
     body = body.replace("<table>", '<div class="scroll"><table>').replace("</table>", "</table></div>")
+    # Diagrams are written in Mermaid, which GitHub draws by itself; here the page loads the library for them.
+    body, diagrams = re.subn(r'<pre><code class="language-mermaid">(.*?)</code></pre>', r'<pre class="mermaid">\1</pre>', body, flags=re.S)
     title = re.search(r"<h1[^>]*>(.*?)</h1>", body, re.S).group(1)
     menu = "".join(f'<a href="/{a}"{" aria-current=page" if a == address else ""}>{n}</a>' for a, n, _ in PAGES.values())
     out = TEMPLATE
     for key, value in (("TITLE", re.sub(r"<[^>]+>", "", title)), ("ABOUT", html.escape(about, quote=True)), ("ADDRESS", address),
-                       ("MENU", menu), ("CONTENTS", "".join(contents)), ("SOURCE", f"{REPO}/blob/main/docs/{source}"), ("BODY", body)):
+                       ("MENU", menu), ("CONTENTS", "".join(contents)), ("SOURCE", f"{REPO}/blob/main/docs/{source}"), ("BODY", body),
+                       ("DIAGRAMS", MERMAID if diagrams else "")):
         out = out.replace("{{" + key + "}}", value)
     with open(os.path.join(ROOT, "site", address + ".html"), "w") as f:
         f.write(out)
@@ -126,6 +129,8 @@ TEMPLATE = """<!doctype html>
   code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; }
   pre { background: var(--code); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); }
   pre code { background: none; padding: 0; font: inherit; }
+  pre.mermaid { background: none; padding: 6px 0; margin: 22px 0; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
+  pre.mermaid svg { max-width: 100%; height: auto; }
   .scroll { overflow-x: auto; margin: 18px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
   th, td { padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
@@ -160,8 +165,34 @@ TEMPLATE = """<!doctype html>
     <span>MIT licensed; not made by or affiliated with Anthropic.</span>
   </div>
 </footer>
-</body>
+{{DIAGRAMS}}</body>
 </html>
+"""
+
+# Draws the diagrams in the page's own colours, light or dark.
+MERMAID = """<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const ink = dark ? "#ece6dc" : "#1b1915", soft = dark ? "#968e83" : "#736d63";
+  const paper = dark ? "#161412" : "#f4f1e9", card = dark ? "#1d1a17" : "#f9f7f1", rule = dark ? "#3a342e" : "#cfc8ba";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    fontFamily: "Inter, system-ui, sans-serif",
+    flowchart: { curve: "basis", htmlLabels: true, padding: 14 },
+    themeVariables: {
+      fontSize: "14px", background: paper, primaryColor: card, primaryTextColor: ink, primaryBorderColor: rule,
+      lineColor: soft, secondaryColor: paper, tertiaryColor: paper, clusterBkg: paper, clusterBorder: rule,
+      edgeLabelBackground: paper, titleColor: soft,
+    },
+  });
+  // One at a time: drawn together, their parts can land in each other's frames.
+  let n = 0;
+  for (const block of document.querySelectorAll("pre.mermaid")) {
+    const { svg } = await mermaid.render(`diagram-${n++}`, block.textContent);
+    block.innerHTML = svg;
+  }
+</script>
 """
 
 if __name__ == "__main__":

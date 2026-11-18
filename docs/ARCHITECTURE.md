@@ -6,37 +6,19 @@ claude-jr is multi-threaded, with plain OS threads and blocking I/O. There is
 no async runtime and no io_uring. Each thread spends almost all its time
 blocked in the kernel, so an idle session uses no CPU.
 
-```
-                         claude-jr process
- ┌───────────────────────────────────────────────────────────────────────┐
- │                                                                       │
- │  keys thread ──── key presses ────┐                                   │
- │  (blocks on stdin)                │                                   │
- │                                   ▼                                   │
- │                        ┌──────────────────┐                           │
- │                        │   main thread    │──── draws ───▶ terminal   │
- │                        │   (UI loop)      │                           │
- │                        └──────────────────┘                           │
- │                           ▲           │                               │
- │                     events│           │commands                       │
- │                           │           ▼                               │
- │                        ┌──────────────────┐   HTTPS (one kept-alive   │
- │                        │  agent thread    │◀─────────────────────────▶│── api.anthropic.com
- │                        │  (the turn loop) │    connection, streamed)  │
- │                        └──────────────────┘                           │
- │                           │     │      │                              │
- │       parallel tool calls │     │      │ subagents: same loop,        │
- │       (scoped threads)    ▼     │      ▼ own context, own threads     │
- │                        ┌─────┐  │   ┌──────┐                          │
- │                        │tools│  │   │ sub  │                          │
- │                        └─────┘  │   └──────┘                          │
- │                                 │                                     │
- │  signals thread                 │  per command: one thread reading    │
- │  (SIGINT/TERM/HUP → clean exit) │  its output (bash-out / job-out)    │
- └─────────────────────────────────┼─────────────────────────────────────┘
-                                   │ fork/exec, own process group
-                                   ▼
-              bash commands · background jobs · local MCP servers
+```mermaid
+flowchart TB
+  subgraph process["the claude-jr process"]
+    keys["keys thread<br/>blocks on the terminal"] -- "key presses" --> ui["main thread<br/>the UI loop"]
+    ui -- "commands" --> agent["agent thread<br/>the turn loop"]
+    agent -- "events" --> ui
+    agent -- "parallel tool calls" --> tools["tool threads<br/>one more per command, reading its output"]
+    agent -- "same loop, own context" --> sub["subagents"]
+    signals["signals thread<br/>SIGINT, SIGTERM, SIGHUP: a clean exit"]
+  end
+  ui -- "draws" --> terminal(["your terminal"])
+  agent <-- "HTTPS: one kept-alive connection, streamed" --> api(["the model's API"])
+  tools -- "started apart from us, in their own process group" --> commands(["bash commands, background jobs, local MCP servers"])
 ```
 
 | Thread | Blocks on | Wakes when |
@@ -52,27 +34,16 @@ Idle, that's 4 threads (main, keys, agent, signals), all blocked.
 
 ## One turn
 
-```
- you type ──▶ UI ──Command::Send──▶ agent
-                                      │
-                                      │ request body = slices over stored messages
-                                      ▼   (nothing copied), streamed to the API
-                                   Claude API
-                                      │ SSE: text, thinking, tool_use deltas
-                                      ▼
-                    agent parses each event, sends Event::Text … to the UI
-                                      │
-                         stop_reason = tool_use?
-                          │yes                    │no
-                          ▼                       ▼
-            for each call: permit → run      Event::Done
-            (reads, subagents, skills,
-             MCP in parallel; the rest
-             in order)
-                          │
-            tool results appended as one user message
-                          │
-                          └────────── next request ──▶ (loop)
+```mermaid
+flowchart TD
+  t_you(["you type"]) --> t_ui["UI"]
+  t_ui -- "Command::Send" --> t_agent["agent"]
+  t_agent -- "the request: stored messages, streamed, nothing copied" --> t_api(["the model's API"])
+  t_api -- "the reply as a stream: text, thinking, tool calls" --> t_read["agent reads each event<br/>and passes it to the UI"]
+  t_read --> t_more{"did it call tools?"}
+  t_more -- "no" --> t_done(["the turn is done"])
+  t_more -- "yes" --> t_run["for each call: permit, then run<br/>reads, subagents, skills and MCP in parallel, the rest in order"]
+  t_run -- "the results, appended as one user message" --> t_agent
 ```
 
 Approval (`agent/permit.rs`): mode → allow rules → (auto mode) the reviewer
@@ -80,18 +51,26 @@ model → ask you. Plan mode refuses edits; skip-permissions allows everything.
 
 ## Data: what is kept where
 
-```
- the session file (JSONL)                  in memory: Vec<Msg>
- ┌───────────────────────────────────┐     ┌──────────────────────────────┐
- │ {"system": "..."}                 │     │                              │
- │ {"role":"user","content":[...]}   │◀────│ user · at byte 812, 96 long  │
- │ {"role":"assistant",...}          │◀────│ asst · at byte 909, 4,210    │
- │ {"role":"user",...tool_result...} │◀────│ user · at byte 5,120, 38,400 │
- └───────────────────────────────────┘     │ user · the text itself       │ ◀ not saved yet
-        ▲                                  └──────────────────────────────┘
-        │ request body: {"messages":[ m1 , m2 , m3 , m4 ], ...rest}
-        └─ saved messages are read from the file as the body is sent;
-           only the newest, unsaved ones come from memory
+```mermaid
+flowchart LR
+  subgraph d_memory["in memory: positions only"]
+    m1["at byte 812, 96 long"]
+    m2["at byte 909, 4,210 long"]
+    m3["at byte 5,120, 38,400 long"]
+    m4["the newest message itself,<br/>not saved yet"]
+  end
+  subgraph d_file["the session file, on disk"]
+    f1["a user message"]
+    f2["an assistant message"]
+    f3["tool results"]
+  end
+  m1 -.-> f1
+  m2 -.-> f2
+  m3 -.-> f3
+  f1 ==> d_api(["the request<br/>to the model's API"])
+  f2 == "read from the file as it is sent" ==> d_api
+  f3 ==> d_api
+  m4 == "the only part that comes from memory" ==> d_api
 ```
 
 Data-oriented choices, and why:

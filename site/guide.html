@@ -59,6 +59,8 @@
   code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; }
   pre { background: var(--code); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 var(--mono); }
   pre code { background: none; padding: 0; font: inherit; }
+  pre.mermaid { background: none; padding: 6px 0; margin: 22px 0; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--ink-3); }
+  pre.mermaid svg { max-width: 100%; height: auto; }
   .scroll { overflow-x: auto; margin: 18px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
   th, td { padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
@@ -712,11 +714,12 @@ with <code>;</code>, <code>&amp;&amp;</code>, <code>|</code>, <code>$(...)</code
 out exactly, so <code>cargo *</code> can't approve <code>cargo test; rm -rf ~</code>.</p>
 <h2 id="how-it-works">How it works</h2>
 <p>The full picture, with diagrams, is in <a href="/architecture">ARCHITECTURE.md</a>.</p>
-<pre><code> key reader ─┐
-             ├─&gt; UI thread ── commands ──&gt; agent thread ──&gt; Claude API
- agent ──────┘   (draws)    &lt;── events ───  (runs tools; subagents and
-                                             parallel calls on more threads)
-</code></pre>
+<pre class="mermaid">flowchart LR
+  keys[&quot;key reader&quot;] --&gt; ui[&quot;UI thread&lt;br/&gt;draws&quot;]
+  ui -- &quot;commands&quot; --&gt; agent[&quot;agent thread&lt;br/&gt;runs tools; subagents and parallel calls on more threads&quot;]
+  agent -- &quot;events&quot; --&gt; ui
+  agent &lt;--&gt; api([&quot;the model's API&quot;])
+</pre>
 <ul>
 <li><strong>No async runtime.</strong> Plain threads and channels. The UI blocks on one
 channel, so it uses no CPU while you think. While text streams in it draws
@@ -765,5 +768,28 @@ bench/
     <span>MIT licensed; not made by or affiliated with Anthropic.</span>
   </div>
 </footer>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const ink = dark ? "#ece6dc" : "#1b1915", soft = dark ? "#968e83" : "#736d63";
+  const paper = dark ? "#161412" : "#f4f1e9", card = dark ? "#1d1a17" : "#f9f7f1", rule = dark ? "#3a342e" : "#cfc8ba";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    fontFamily: "Inter, system-ui, sans-serif",
+    flowchart: { curve: "basis", htmlLabels: true, padding: 14 },
+    themeVariables: {
+      fontSize: "14px", background: paper, primaryColor: card, primaryTextColor: ink, primaryBorderColor: rule,
+      lineColor: soft, secondaryColor: paper, tertiaryColor: paper, clusterBkg: paper, clusterBorder: rule,
+      edgeLabelBackground: paper, titleColor: soft,
+    },
+  });
+  // One at a time: drawn together, their parts can land in each other's frames.
+  let n = 0;
+  for (const block of document.querySelectorAll("pre.mermaid")) {
+    const { svg } = await mermaid.render(`diagram-${n++}`, block.textContent);
+    block.innerHTML = svg;
+  }
+</script>
 </body>
 </html>

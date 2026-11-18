@@ -470,11 +470,12 @@ out exactly, so `cargo *` can't approve `cargo test; rm -rf ~`.
 
 The full picture, with diagrams, is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-```
- key reader ─┐
-             ├─> UI thread ── commands ──> agent thread ──> Claude API
- agent ──────┘   (draws)    <── events ───  (runs tools; subagents and
-                                             parallel calls on more threads)
+```mermaid
+flowchart LR
+  keys["key reader"] --> ui["UI thread<br/>draws"]
+  ui -- "commands" --> agent["agent thread<br/>runs tools; subagents and parallel calls on more threads"]
+  agent -- "events" --> ui
+  agent <--> api(["the model's API"])
 ```
 
 - **No async runtime.** Plain threads and channels. The UI blocks on one
