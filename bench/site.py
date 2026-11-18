@@ -44,6 +44,10 @@ frame.onload = () => setTimeout(() => {
   if (tops.size > 1) out.push({ what: "the top bar's links wrap onto more than one row" });
   if (links.length !== 4) out.push({ what: "the top bar should have 4 links, has " + links.length });
   if (!doc.querySelector("footer a[href='/guide']")) out.push({ what: "the footer has no links" });
+  // On a phone a table should fit: columns cut off at the edge are easy to miss.
+  if (width <= 400) for (const box of doc.querySelectorAll(".scroll")) {
+    if (box.scrollWidth > box.clientWidth + 1) out.push({ what: "a table has to be scrolled sideways on a phone: " + (box.querySelector("th, td") || box).textContent.trim().slice(0, 30), by: box.scrollWidth - box.clientWidth });
+  }
   // Text drawn in a picture must be large enough to read.
   const tiny = [...doc.querySelectorAll("svg text")].filter((t) => { const r = t.getBoundingClientRect(); return r.height > 0 && r.height < 11; });
   if (tiny.length) out.push({ what: "text in a drawing is too small to read (" + Math.round(tiny[0].getBoundingClientRect().height) + "px high): " + tiny[0].textContent.slice(0, 30) });

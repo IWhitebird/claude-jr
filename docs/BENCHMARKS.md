@@ -81,10 +81,12 @@ More of claude-jr's own numbers:
 All 500 tasks of [SWE-bench Verified](https://www.swebench.com/) with Opus, and a fixed random sample of
 100 with Sonnet, scored with the official harness ([`bench/swe/run.py`](../bench/swe/run.py)):
 
-| model | tasks | resolved | cost | median time per task |
-|---|---|---|---|---|
-| claude-opus-5-5 | all 500 | 467 (93.4%) | $67.32 (13 cents a task) | 34 s |
-| claude-sonnet-5-5 | 100 | 88 (88%) | $5.06 (5 cents a task) | 14 s |
+| model | resolved | cost | a task |
+|---|---|---|---|
+| Opus 5.5 | 467 of 500 (93.4%) | $67.32 | 13 cents, 34 s |
+| Sonnet 5.5 | 88 of 100 (88%) | $5.06 | 5 cents, 14 s |
+
+(Time is the median.)
 
 Of the 33 tasks Opus did not resolve, four (`psf__requests-1724`, `-1766`, `-1921`, `-2317`) fail on this
 machine with the reference fix as well, so they could not have been scored as resolved here; they are
@@ -94,31 +96,34 @@ made in two sittings with builds a few days apart, same prompt and tools. This i
 The tasks are public and old enough that the models may have seen them. Each task ran once,
 in the task's own container, with no retries and no hints.
 
-<!-- repo only -->
+No agent resolves all 500. For scale, the best score on [Vals.ai's independent leaderboard](https://www.vals.ai/benchmarks/swebench)
+was 97.0% when it was last updated (1 September 2026), with a different agent and other models. All 33
+of our misses produced a patch and finished normally; apart from the four above, they are fixes that
+did not satisfy the hidden tests.
+
 ## Handing work out: when it pays
 
-The same main agent (Opus 5.5) was given ten independent pieces of work in one repository three ways:
-do it all itself; give each piece to a subagent; give each to a claude-jr worker over MCP, as Claude Code
-would. Subagents and workers ran on Haiku 5.5, each in its own worktree. Two sizes: ten one-line fixes,
-and ten packages of six fixes each. One run of each ([`bench/workers/run.py`](../bench/workers/run.py)):
+The same main agent (Opus 5.5) was given ten independent pieces of work three ways: do it all itself,
+give each piece to a subagent, or give each to a claude-jr worker over MCP, as Claude Code would.
+Subagents and workers ran on Haiku 5.5, each in its own worktree. Every arrangement fixed everything.
+One run of each ([`bench/workers/run.py`](../bench/workers/run.py)):
 
-| | ten small fixes | | | ten packages (60 fixes) | | |
-|---|---|---|---|---|---|---|
-| | fixed | time | cost | fixed | time | cost |
-| alone | 10/10 | 22 s | $0.12 | 60/60 | 39 s | $0.22 |
-| with subagents | 10/10 | 42 s | $0.19 | 60/60 | 76 s | $0.32 |
-| with workers | 10/10 | 39 s | $0.18 | 60/60 | 77 s | $0.34 |
+| Ten small fixes | time | cost |
+|---|---|---|
+| alone | 22 s | $0.12 |
+| with subagents | 42 s | $0.19 |
+| with workers | 39 s | $0.18 |
 
-On work of this size, doing it alone wins on both counts. Opus reads and edits many files in one reply, so
-sixty small fixes take it a handful of requests; handing them out means writing ten briefs, waiting, and
-merging ten branches, and that organising is what costs. The ten workers together cost 4 cents of the
-$0.34 (0.4 cents each) and held 12.7 MB between them, the 22 processes of the run included.
+| Sixty fixes, in ten packages | time | cost |
+|---|---|---|
+| alone | 39 s | $0.22 |
+| with subagents | 76 s | $0.32 |
+| with workers | 77 s | $0.34 |
 
-So this does not show handing work out to be cheaper, and the numbers above should not be read that way.
-What it does show is that the workers themselves are nearly free; whether delegation pays depends on the
-pieces being long enough (many steps each, where one agent's context would grow with every step) to be
-worth a brief and a merge. That case has not been measured here yet.
-<!-- /repo only -->
+On jobs this small, one agent doing everything is faster and cheaper. Opus edits many files in one
+reply, while handing the work out means writing ten briefs, waiting, and merging ten branches. The
+workers themselves cost 0.4 cents each and held 12.7 MB between them. Whether it pays on long tasks,
+where one agent's context would keep growing, has not been measured yet.
 
 ## Windows
 

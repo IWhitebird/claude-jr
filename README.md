@@ -104,8 +104,8 @@ model's; what it shows is that a small agent doesn't hold the model back.
 - **A short, fixed prompt** and a history that only grows, so the prompt cache stays valid for the whole session.
 - **Unused pages go back** to the system when it goes quiet (Linux), which is how it settles at 0.7 MB.
 
-How everything is measured, and the rest of the numbers:
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+How everything is measured, and the rest of the numbers, including the ones
+that didn't go our way: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Use
 

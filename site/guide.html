@@ -71,6 +71,13 @@
   th { font-weight: 500; color: var(--ink-3); font-size: 14px; border-bottom-color: var(--ink); white-space: nowrap; }
   td { color: var(--ink-2); }
   td:first-child { color: var(--ink); }
+  /* On a phone a table must fit the screen: smaller type, headings that wrap, long names that break. */
+  @media (max-width: 560px) {
+    table { font-size: 14px; }
+    th, td { padding-right: 10px; }
+    th { white-space: normal; }
+    td code, th code { overflow-wrap: anywhere; }
+  }
   footer { border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14.5px; color: var(--ink-3); }
   footer .frame { display: flex; flex-wrap: wrap; gap: 8px 22px; }
   footer a { color: var(--ink-2); text-decoration: none; }

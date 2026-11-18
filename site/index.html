@@ -551,7 +551,8 @@
         <div><b>1.2 MB</b><span>MCP server, idle</span></div>
       </div>
       <p class="note"><code>claudejr install claude-code</code> (or cursor, or codex) lets your main agent start
-        these workers itself.</p>
+        these workers itself. Whether handing work out pays depends on the work: on small jobs, one
+        agent doing everything was faster and cheaper in <a href="/benchmarks#handing-work-out-when-it-pays">our own test</a>.</p>
     </div>
   </section>
 
@@ -642,12 +643,20 @@
           Beyond that it contacts only MCP servers you set up yourself, and GitHub when you ask it to <code>--update</code>.</p>
       </details>
       <details>
+        <summary>Why 93.4% on SWE-bench, and not 100%?</summary>
+        <p>Nobody is at 100%. The best score on
+          <a href="https://www.vals.ai/benchmarks/swebench">an independent leaderboard</a> was 97% when it
+          was last updated, in September 2026. Each task gets one attempt here, with no retries. Of our
+          33 misses, four fail on our test machine even with the benchmark's own reference fix; the
+          other 29 are fixes that did not satisfy the hidden tests.</p>
+      </details>
+      <details>
         <summary>Can I check the numbers?</summary>
         <p>Yes. Every figure on this page comes from a script in the repository's
           <a href="https://github.com/IWhitebird/claude-jr/tree/main/bench">bench folder</a>, most of them
           runnable without an API key, and
           <a href="/benchmarks">the benchmarks page</a>
-          says how each was measured.</p>
+          says how each was measured, including the ones that didn't go our way.</p>
       </details>
     </div>
   </section>
