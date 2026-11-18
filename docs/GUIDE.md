@@ -1,6 +1,6 @@
 # Using claude-jr
 
-Everything the command does, in one place. The short version is in the [README](../README.md).
+Everything the command does, in one place.
 
 ## Start here
 
@@ -34,7 +34,7 @@ claudejr -c                      # continue the last conversation here
 claudejr -r "auth refactor"      # continue a named conversation
 claudejr -p "explain main.rs"    # one prompt, print the answer, exit
 claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
-claudejr -p "fix the tests" -y --output-format json --max-cost 2   # for scripts: JSON result, stop at $2
+claudejr -p "fix the tests" -y --max-cost 2    # no questions; stop at $2
 ```
 
 | Key | |
@@ -74,14 +74,12 @@ tab to complete, enter to run.
 
 Images: drag a file into the terminal (its path is pasted and the image is
 attached) or press ctrl+v with a screenshot in the clipboard. The agent can
-also `read` image files, like a design or a screenshot of your app. Images are
-copied once into `~/.local/share/claude-jr/images/` and encoded from disk while
-a request is sent, so they don't sit in memory.
+also `read` image files, like a design or a screenshot of your app. Copies are
+kept in `~/.local/share/claude-jr/images/`.
 
 The input stays on the bottom rows of the screen and the conversation scrolls
 above it; running subagents and background jobs are listed under the input.
-Resizing the terminal redraws what's on screen at the new width. Tables are
-drawn with boxes and a line between rows.
+Resizing the terminal redraws what's on screen at the new width.
 `"layout": "inline"` in the config (or `/settings`) puts the input right after
 the conversation instead.
 
@@ -155,9 +153,8 @@ task matches it, or you run it with `/release`.
 }
 ```
 
-- **Local servers** (`command`) run as their own processes and talk JSON-RPC
-  over stdin/stdout. claude-jr adds one small thread per server; the server's
-  own memory is separate, and `/stats` shows it.
+- **Local servers** (`command`) run as their own processes on your machine;
+  `/stats` shows what each one uses.
 - **Remote servers** (`url`) are handed to the API's MCP connector, so
   Anthropic calls them and they cost nothing locally. The URL must be
   reachable from the internet.
@@ -199,7 +196,7 @@ What it doesn't cover:
 - **Pasting a screenshot** with ctrl+v doesn't work inside it, since the desktop's clipboard
   socket is hidden. Dragging an image file in still does.
 
-`bench/sandbox.sh` checks all of this: a fake model tries to delete a file outside the
+`bench/sandbox.sh` in the repository checks all of this: a stand-in model tries to delete a file outside the
 project, write to `$HOME`, plant a git hook, change the git config, and reach the Docker
 socket and the session bus. All must fail, while a write and a commit in the project
 must work. To try the agent on a repo without risking anything, use a throwaway worktree:
@@ -212,8 +209,9 @@ Linux only for now.
 
 ## Windows
 
-New, and so far checked only on GitHub's Windows machines and not by a person
-at a Windows desk; please report what you find. Install from PowerShell:
+New in 0.3.0. It is built and tested by machine on Windows, but has had
+little use by a person at a Windows desk yet: please report what you find.
+Install from PowerShell:
 
 ```powershell
 irm https://claudejr.iwhitebird.com/install.ps1 | iex
@@ -230,9 +228,9 @@ What is different there:
   and `XDG_DATA_HOME` move them, as elsewhere.
 - **No sandbox** (`--sandbox` is Linux's bubblewrap) and no idle memory trim,
   so memory at rest is higher than the Linux figures.
-- Esc while a reply has not yet begun stops as soon as the server reacts to
-  the closed connection, which the real ones do at once; a server that
-  ignores it can keep the wait going for up to a minute.
+- Esc before a reply has begun takes effect when the server notices the
+  closed connection, which can take longer than on Linux and macOS: up to a
+  minute with a server that ignores it.
 - Windows Terminal, or the terminal in VS Code, is the one to use; the old
   console window has not been tried.
 - 64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
@@ -277,12 +275,11 @@ Things to know:
 
 ## Claude through Amazon Bedrock or Google Vertex AI
 
-The same Claude models, billed by your cloud account. **Not yet tested
-against the real services**: there was no AWS or Google Cloud account to test
-with, so this is built from the documentation and checked against a stand-in
-that refuses what each cloud documents it refuses (and checks every AWS
-signature). `bench/provider.sh bedrock/claude-haiku-5-5` is the real test; if
-you run it, please say how it went.
+New in 0.3.0. The same Claude models, billed by your cloud account. **Not yet
+tested against the real services**: it is built from their documentation and
+checked against a stand-in. If you have an account,
+`bench/provider.sh bedrock/claude-haiku-5-5` in the repository is the real
+test; please say how it went.
 
 ```sh
 claudejr -m bedrock/claude-opus-5-5
@@ -305,9 +302,6 @@ Things to know:
 - Bedrock is spoken to at its Messages address (`bedrock-mantle`). Models it
   serves only at the older address (Fable 5.2 today) are not available, and
   neither are `~/.aws` profiles, SSO or instance roles: export the keys.
-- With access keys every request is signed, which means reading the
-  conversation through once more to hash it: about 2 ms for a 4 MB history. A
-  Bedrock API key avoids that.
 - Costs shown are Anthropic's list prices; a single-region endpoint costs a
   tenth more than that.
 - On Vertex, a service-account key file is not read: use `gcloud`, or pass a token.
@@ -365,17 +359,17 @@ set by your API rate limits, not by memory.
 with a table at the end of what each did and the branch it left.
 
 ```sh
-claudejr fleet -y --max 4 --budget 5 "fix lint in api" "fix lint in ui" "fix lint in tools"
-claudejr fleet -y --merge --file tasks.txt     # one task per line; merge each branch when done
+claudejr fleet -y --max 4 --budget 5 "fix lint in api" "fix lint in ui"
+claudejr fleet -y --merge --file tasks.txt     # one task per line
 ```
 
 **Subagents in worktrees.** Inside a session the agent can do the same with
-its own subagents: one started with `worktree: true` works in its own copy of
-the repository, its work is committed when it finishes, and its report ends
-with the branch for the main agent to merge. A subagent can start subagents of
-its own, one level down and no further, and at most 16 run at once.
+its own subagents: one can be given its own copy of the repository, its work
+is committed when it finishes, and the main agent merges the branch. A
+subagent can start subagents of its own, one level down and no further, and at
+most 16 run at once.
 
-**The worker model.** Work that is handed off (a task, a fleet's tasks, a
+**The worker model** (new in 0.3.0). Work that is handed off (a task, a fleet's tasks, a
 task another agent starts over MCP, a subagent) is done by the worker model,
 not the one you talk to. Beside a Claude model that is `claude-haiku-5-5`,
 which does a well-described job at a fortieth of Opus's price; beside any
@@ -420,15 +414,15 @@ when you install, with the server's options.
 Any other MCP client can use it too: the command is `claudejr mcp` plus those
 options, over stdio.
 
-## Memory and sessions
+## Sessions, notes and rewind
 
-- **In RAM**: only the current conversation, kept as the exact JSON text sent
-  to the API. Requests are streamed straight from it, so it's never copied.
-  Tool output is cut to 50 KB (start and end) before it's stored.
+- **Sessions** are saved as you go in `~/.local/share/claude-jr/sessions/<directory>/`,
+  one message per line. `--sessions` lists them; `-c` and `/resume` continue one.
 - **Context**: the footer shows `used/window` tokens. Near the limit the API
-  compacts older turns on its side.
-- **On disk**: `~/.local/share/claude-jr/sessions/<directory>/`, one message
-  per line, only ever appended to. `--sessions` lists them.
+  compacts older turns on its side; `/compact` does it when you ask, replacing
+  the conversation with a detailed summary.
+- **Long output**: a command's output over 50 KB is cut to its start and end
+  before the model sees it.
 - **Instructions**: `AGENTS.md` or `CLAUDE.md` in the current directory, its
   parents, and `~/.config/claude-jr/`. `#note` appends to `./AGENTS.md`.
 - **The agent's own notes**: `~/.local/share/claude-jr/memory/<project>/MEMORY.md`,
@@ -436,8 +430,6 @@ options, over stdio.
 - **Rewind**: before the agent first changes a file in a turn, the original is
   copied next to the session. `/rewind` puts files back; shell commands' changes
   aren't tracked.
-- **Compaction**: `/compact` replaces the conversation with a detailed summary.
-  Near the limit, the API also compacts on its side.
 
 When claude-jr exits, by quitting, a signal or closing the terminal, it stops
 every command, background job and MCP server it started.
@@ -465,55 +457,6 @@ every command, background job and MCP server it started.
 `*` matches anything; `mcp__server` covers all of a server's tools. A command
 with `;`, `&&`, `|`, `$(...)` or redirects only matches a rule that spells it
 out exactly, so `cargo *` can't approve `cargo test; rm -rf ~`.
-
-## How it works
-
-The full picture, with diagrams, is in [ARCHITECTURE.md](ARCHITECTURE.md).
-
-```mermaid
-flowchart LR
-  keys["key reader"] --> ui["UI thread<br/>draws"]
-  ui -- "commands" --> agent["agent thread<br/>runs tools; subagents and parallel calls on more threads"]
-  agent -- "events" --> ui
-  agent <--> api(["the model's API"])
-```
-
-- **No async runtime.** Plain threads and channels. The UI blocks on one
-  channel, so it uses no CPU while you think. While text streams in it draws
-  at most ~30 frames a second and rewrites only the lines that changed;
-  finished rows of a long paragraph go to scrollback as soon as they can't
-  change.
-- **Messages are stored as the JSON text that goes over the wire.** A request
-  is streamed straight from them and the session file is the same text.
-- **The history only grows.** That keeps the prompt cache warm and the model's
-  earlier reasoning valid. The system prompt and tool list are fixed per
-  session; mode changes, notes and job notices go into the next user message.
-- **The UI writes finished lines once** into normal terminal scrollback and
-  redraws only the few lines at the bottom.
-
-```
-src/
-  main.rs         args, config, start
-  agent/          conversation, tool loop, subagents, modes and approval
-  tools/          read/write/edit, bash and jobs, todo, skills, MCP client
-  api.rs          requests, streaming, retries, per-model features, prices
-  prompt.rs       system prompt, AGENTS.md, notes
-  session.rs      saved conversations
-  sandbox.rs      bubblewrap
-  signals.rs      clean exit on signals
-  permission.rs   allow rules
-  config.rs       config files
-  print.rs        -p output
-  ui/             terminal UI: loop, drawing, input, markdown, /stats
-bench/
-  mock.py         fake API for tests and benchmarks
-  mem.sh          long session; fails above 16 MB
-  cpu.sh          idle and busy CPU
-  ui.py           the UI while a reply streams in
-  compare.py      side by side with Claude Code, pi and Codex
-  box.sh          run in a small container (CPUS=0.05 MEMORY=16m bench/box.sh)
-  sandbox.sh      check the sandbox
-```
 
 ## Not included
 

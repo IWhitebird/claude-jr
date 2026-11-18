@@ -15,7 +15,7 @@ flowchart LR
   agent -- "tool calls" --> tools["tools, subagents,<br/>commands"]
 ```
 
-The fourth is a signals thread, for a clean exit. There is no async runtime.
+There is no async runtime and nothing polls: an idle session uses no CPU.
 
 ## One turn
 
@@ -45,18 +45,3 @@ flowchart LR
 - **On disk, not in memory.** A saved message is a line in the session file; memory keeps where it is. A long session uses the same memory as a short one.
 - **Stored as it is sent.** A message is the exact JSON the API gets, so a request is streamed straight from the file.
 - **Append-only.** Nothing already sent is edited, which keeps the provider's prompt cache valid.
-
-## The code
-
-| Folder | What is in it |
-|---|---|
-| `src/cli` | the command line, one file per thing you can type |
-| `src/ui` | the interactive terminal |
-| `src/agent` | the turn loop, permissions, subagents |
-| `src/tools` | what the model can do: files, commands, MCP, skills |
-| `src/api` | talking to models: each wire format and provider |
-| `src/work` | background tasks, worktrees, budgets, the run log |
-| `src/store` | sessions, images and config on disk |
-| `src/sys` | what differs between Linux, macOS and Windows |
-
-Every file opens with a comment saying what it is; [FILES.md](FILES.md) lists them all.

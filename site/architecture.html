@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>How claude-jr works · claude-jr</title>
-<meta name="description" content="How claude-jr is built: where the conversation lives, how requests are streamed, and what every source file does.">
+<meta name="description" content="How claude-jr works: its threads, what happens in one turn, and why the conversation is kept on disk.">
 <link rel="canonical" href="https://claudejr.iwhitebird.com/architecture">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <meta name="theme-color" content="#f4f1e9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="How claude-jr works · claude-jr">
-<meta property="og:description" content="How claude-jr is built: where the conversation lives, how requests are streamed, and what every source file does.">
+<meta property="og:description" content="How claude-jr works: its threads, what happens in one turn, and why the conversation is kept on disk.">
 <meta property="og:image" content="https://claudejr.iwhitebird.com/og.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,11 +84,11 @@
   <div class="frame">
     <img src="/logo.svg" alt="" width="30" height="26">
     <a class="name" href="/">claude-jr</a>
-    <nav><a href="/guide">Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture" aria-current=page>Architecture</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
+    <nav><a href="/guide">Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture" aria-current=page>How it works</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
   </div>
 </header>
 <div class="frame layout">
-  <aside><nav aria-label="On this page"><b>On this page</b><a href="#threads">Threads</a><a href="#one-turn">One turn</a><a href="#where-the-conversation-lives">Where the conversation lives</a><a href="#the-code">The code</a></nav></aside>
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#threads">Threads</a><a href="#one-turn">One turn</a><a href="#where-the-conversation-lives">Where the conversation lives</a></nav></aside>
   <article>
 <h1 id="how-claude-jr-works">How claude-jr works</h1>
 <p>Plain threads, a conversation kept on disk, and nothing else running.</p>
@@ -101,7 +101,7 @@
   agent &lt;-- &quot;one streamed connection&quot; --&gt; api([&quot;the model's API&quot;])
   agent -- &quot;tool calls&quot; --&gt; tools[&quot;tools, subagents,&lt;br/&gt;commands&quot;]
 </pre>
-<p>The fourth is a signals thread, for a clean exit. There is no async runtime.</p>
+<p>There is no async runtime and nothing polls: an idle session uses no CPU.</p>
 <h2 id="one-turn">One turn</h2>
 <pre class="mermaid">flowchart LR
   t_you([&quot;you type&quot;]) --&gt; t_agent[&quot;agent&quot;]
@@ -125,50 +125,6 @@ commands run in order, each after the permission check.</p>
 <li><strong>Stored as it is sent.</strong> A message is the exact JSON the API gets, so a request is streamed straight from the file.</li>
 <li><strong>Append-only.</strong> Nothing already sent is edited, which keeps the provider's prompt cache valid.</li>
 </ul>
-<h2 id="the-code">The code</h2>
-<div class="scroll"><table>
-<thead>
-<tr>
-<th>Folder</th>
-<th>What is in it</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>src/cli</code></td>
-<td>the command line, one file per thing you can type</td>
-</tr>
-<tr>
-<td><code>src/ui</code></td>
-<td>the interactive terminal</td>
-</tr>
-<tr>
-<td><code>src/agent</code></td>
-<td>the turn loop, permissions, subagents</td>
-</tr>
-<tr>
-<td><code>src/tools</code></td>
-<td>what the model can do: files, commands, MCP, skills</td>
-</tr>
-<tr>
-<td><code>src/api</code></td>
-<td>talking to models: each wire format and provider</td>
-</tr>
-<tr>
-<td><code>src/work</code></td>
-<td>background tasks, worktrees, budgets, the run log</td>
-</tr>
-<tr>
-<td><code>src/store</code></td>
-<td>sessions, images and config on disk</td>
-</tr>
-<tr>
-<td><code>src/sys</code></td>
-<td>what differs between Linux, macOS and Windows</td>
-</tr>
-</tbody>
-</table></div>
-<p>Every file opens with a comment saying what it is; <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/FILES.md">FILES.md</a> lists them all.</p>
 
   </article>
 </div>
@@ -177,7 +133,7 @@ commands run in order, each after the permission check.</p>
     <a href="/">Home</a>
     <a href="/guide">Guide</a>
     <a href="/benchmarks">Benchmarks</a>
-    <a href="/architecture">Architecture</a>
+    <a href="/architecture">How it works</a>
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/ARCHITECTURE.md">Edit this page</a>

@@ -1,6 +1,10 @@
 #!/usr/bin/python3
 # Turns the Markdown documents into pages of the website: docs/GUIDE.md becomes
-# site/guide.html (served as /guide), and so on. Run it after changing one:
+# site/guide.html (served as /guide), and so on. The site is for people who
+# use claude-jr, not for people who work on it: anything between
+# <!-- repo only --> and <!-- /repo only --> is left out of the page (GitHub
+# shows it; the comments themselves are invisible there). Run it after
+# changing a document:
 #
 #   python3 docs/site.py
 #
@@ -14,7 +18,7 @@ REPO = "https://github.com/IWhitebird/claude-jr"
 PAGES = {  # file: (address, name in the menu, one line for search engines)
     "GUIDE.md": ("guide", "Guide", "How to use claude-jr: commands, keys, permission modes, tools, skills, MCP, the sandbox, other models, background tasks and config."),
     "BENCHMARKS.md": ("benchmarks", "Benchmarks", "Every number claude-jr publishes and how it was measured: size, memory, CPU, SWE-bench Verified, and the comparisons with other agents."),
-    "ARCHITECTURE.md": ("architecture", "Architecture", "How claude-jr is built: where the conversation lives, how requests are streamed, and what every source file does."),
+    "ARCHITECTURE.md": ("architecture", "How it works", "How claude-jr works: its threads, what happens in one turn, and why the conversation is kept on disk."),
 }
 
 
@@ -41,6 +45,8 @@ def link(target):
 def page(source):
     address, name, about = PAGES[source]
     text = open(os.path.join(ROOT, "docs", source)).read()
+    # What only someone working on the code needs stays on GitHub.
+    text = re.sub(r"<!-- repo only -->.*?<!-- /repo only -->\n?", "", text, flags=re.S)
     body = MarkdownIt("commonmark").enable("table").render(text)
     body = re.sub(r'href="([^"]+)"', lambda m: f'href="{html.escape(link(html.unescape(m.group(1))))}"', body)
     contents = []
@@ -168,7 +174,7 @@ TEMPLATE = """<!doctype html>
     <a href="/">Home</a>
     <a href="/guide">Guide</a>
     <a href="/benchmarks">Benchmarks</a>
-    <a href="/architecture">Architecture</a>
+    <a href="/architecture">How it works</a>
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <a href="{{SOURCE}}">Edit this page</a>

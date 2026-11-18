@@ -104,8 +104,8 @@ model's; what it shows is that a small agent doesn't hold the model back.
 - **A short, fixed prompt** and a history that only grows, so the prompt cache stays valid for the whole session.
 - **Unused pages go back** to the system when it goes quiet (Linux), which is how it settles at 0.7 MB.
 
-How everything is measured, and the rest of the numbers, including the ones
-that didn't go our way: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+How everything is measured, and the rest of the numbers:
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Use
 
@@ -137,7 +137,7 @@ that didn't go our way: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 - [Guide](docs/GUIDE.md): commands, keys, modes, tools, skills, MCP, the sandbox, other models, tasks and fleets, working for another agent, config.
 - [Benchmarks](docs/BENCHMARKS.md): every number and how to reproduce it.
-- [Architecture](docs/ARCHITECTURE.md): how it is built, and where everything is.
+- [How it works](docs/ARCHITECTURE.md), and for working on the code, [where everything is](docs/FILES.md).
 - [Website](https://claudejr.iwhitebird.com)
 
 MIT licence.

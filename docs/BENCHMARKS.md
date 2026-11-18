@@ -1,6 +1,6 @@
 # Benchmarks
 
-How claude-jr is measured, and every number. The headline figures are in the [README](../README.md).
+Every number claude-jr publishes, and how it was measured.
 
 ## Numbers
 
@@ -51,20 +51,22 @@ What each one's installer leaves on disk on Linux x86-64, 18 November 2026. For 
 | Codex CLI (`@openai/codex`) | 0.169.0 | 423 MB |
 | opencode (`opencode-ai`) | 1.19.6 | 432 MB |
 
+<!-- repo only -->
 The release binary is built by [`build.sh`](../build.sh): optimised for size, with Rust's standard
 library rebuilt the same way. On Linux, whenever claude-jr goes quiet it hands the pages of its own
-program file back to the kernel ([`src/sys/mem.rs`](../src/sys/mem.rs)), which is why it idles in less
+program file back to the kernel, which is why it idles in less
 memory than its own size; they come back from the page cache as they're needed. The conversation
 is kept in the session file rather than in memory: each request reads the saved messages straight
-from it ([`src/store/session.rs`](../src/store/session.rs)), so a long session needs no more memory than a short one.
+from it, so a long session needs no more memory than a short one.
+<!-- /repo only -->
 
-More of claude-jr's own numbers (`bench/`):
+More of claude-jr's own numbers:
 
 | | |
 |---|---|
 | 20, 60, 100 or 200 tool calls in one run (up to 8 MB of history) | 3.9 MB peak, the same for each |
 | resuming a session with 1.3 MB of history and working on | 1.6 MB peak |
-| 1,000 agents working at once, each in its own folder (`bench/density.py`) | 488 MB between them, 0.5 MB each |
+| 1,000 agents working at once, each in its own folder | 492 MB between them, 0.5 MB each |
 | 40 background tasks started in one repository | 0.1 s to start them all; 20 MB between them |
 | the same long session through another provider (Chat Completions) | the same 4.0 MB peak; 0.50 s of CPU against 0.42 s |
 | the same long session through Vertex, or Bedrock with an API key | the same peak and the same CPU |
@@ -92,6 +94,7 @@ made in two sittings with builds a few days apart, same prompt and tools. This i
 The tasks are public and old enough that the models may have seen them. Each task ran once,
 in the task's own container, with no retries and no hints.
 
+<!-- repo only -->
 ## Handing work out: when it pays
 
 The same main agent (Opus 5.5) was given ten independent pieces of work in one repository three ways:
@@ -115,14 +118,14 @@ So this does not show handing work out to be cheaper, and the numbers above shou
 What it does show is that the workers themselves are nearly free; whether delegation pays depends on the
 pieces being long enough (many steps each, where one agent's context would grow with every step) to be
 worth a brief and a merge. That case has not been measured here yet.
+<!-- /repo only -->
 
 ## Windows
 
-The Windows build is 2.03 MB (`claudejr-windows-x86_64.exe`). CI builds it on a Windows machine, runs the
-283 unit tests that apply there, and puts the binary through [`bench/windows.sh`](../bench/windows.sh)
-against the fake API: a run with tools in Git Bash and in PowerShell, a session that continues, and
-background tasks started, merged and cancelled, the installer (which must refuse a download that fails
-its checksum) and `--update` replacing the program while it runs.
+New in 0.3.0. The Windows build is 2.03 MB (`claudejr-windows-x86_64.exe`). Every change is built and
+tested on a Windows machine ([`bench/windows.sh`](../bench/windows.sh)): a run with tools in Git Bash and
+in PowerShell, a session that continues, background tasks started, merged and cancelled, the installer
+(which must refuse a download that fails its checksum) and `--update` replacing the program while it runs.
 
 On that machine a run of 20 commands peaked at 8.2 MB, and the MCP server waiting for calls held 5.8 MB
 (1.2 MB of it its own; the rest is Windows' shared libraries, which every program is charged for). Those
@@ -137,19 +140,29 @@ Windows, and the interactive UI has not been measured there.
 | Inside the app | `/stats` |
 | Idle and busy CPU, memory | `bench/cpu.sh` |
 | The UI while a reply streams | `python3 bench/ui.py target/release/claudejr` |
-| Resizing leaves nothing twice or missing, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
-| Random keys, pastes and resizes never crash it or send a bad request | `python3 bench/chaos.py target/release/claudejr` |
-| The MCP server, checked by the official MCP SDK's own client | `python bench/mcp_client.py target/release/claudejr` (needs `pip install mcp`) |
-| A real model of another provider answers, calls tools and keeps its history | `bench/provider.sh ollama/qwen2.5:3b` (or any `PROVIDER/MODEL`, with its key set) |
-| Line coverage of the tests (98%) | `bench/coverage.sh` |
 | SWE-bench Verified, one task at a time in Docker | `bench/swe/run.py --dry-run` (setup at the top of the file) |
 | Memory budget over a long session | `bench/mem.sh` |
 | In a small container | `CPUS=0.05 MEMORY=16m bench/box.sh` |
 | A running session | `ps -o rss,pcpu,nlwp -p $(pgrep -x claude-jr)` |
 | One prompt | `/usr/bin/time -v claudejr -p "..."` |
 
-None of the scripts need an API key; they run against `bench/mock.py`.
+None of the scripts need an API key; they run against a stand-in for the API.
 
+<!-- repo only -->
+Checks, for people working on the code:
+
+| What | How |
+|---|---|
+| Resizing leaves nothing twice or missing, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
+| Random keys, pastes and resizes never crash it or send a bad request | `python3 bench/chaos.py target/release/claudejr` |
+| The MCP server, checked by the official MCP SDK's own client | `python bench/mcp_client.py target/release/claudejr` (needs `pip install mcp`) |
+| A real model of another provider answers, calls tools and keeps its history | `bench/provider.sh ollama/qwen2.5:3b` (or any `PROVIDER/MODEL`, with its key set) |
+| The website's pages at six widths | `python3 bench/site.py` |
+| Windows, on a Windows machine | `bash bench/windows.sh claudejr.exe` |
+| Line coverage of the tests (97%) | `bench/coverage.sh` |
+<!-- /repo only -->
+
+<!-- repo only -->
 ## Evals
 
 ```sh
@@ -165,4 +178,4 @@ dark mode, a cart bug, relative dates, form validation, debounce, safe HTML
 rendering, and a pricing page built from a design image. JS tasks are graded by
 hidden tests; every check was verified to fail on the starting files and pass on
 a correct solution. `--budget` stops before a task that would likely go over.
-
+<!-- /repo only -->

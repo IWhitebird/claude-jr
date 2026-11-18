@@ -44,6 +44,9 @@ frame.onload = () => setTimeout(() => {
   if (tops.size > 1) out.push({ what: "the top bar's links wrap onto more than one row" });
   if (links.length !== 4) out.push({ what: "the top bar should have 4 links, has " + links.length });
   if (!doc.querySelector("footer a[href='/guide']")) out.push({ what: "the footer has no links" });
+  // Text drawn in a picture must be large enough to read.
+  const tiny = [...doc.querySelectorAll("svg text")].filter((t) => { const r = t.getBoundingClientRect(); return r.height > 0 && r.height < 11; });
+  if (tiny.length) out.push({ what: "text in a drawing is too small to read (" + Math.round(tiny[0].getBoundingClientRect().height) + "px high): " + tiny[0].textContent.slice(0, 30) });
   // A diagram shrunk to fit must still be readable.
   for (const svg of doc.querySelectorAll("pre.mermaid svg")) {
     const box = svg.viewBox.baseVal, scale = box && box.width ? svg.getBoundingClientRect().width / box.width : 1;

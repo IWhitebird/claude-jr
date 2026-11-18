@@ -84,14 +84,14 @@
   <div class="frame">
     <img src="/logo.svg" alt="" width="30" height="26">
     <a class="name" href="/">claude-jr</a>
-    <nav><a href="/guide" aria-current=page>Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture">Architecture</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
+    <nav><a href="/guide" aria-current=page>Guide</a><a href="/benchmarks">Benchmarks</a><a href="/architecture">How it works</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
   </div>
 </header>
 <div class="frame layout">
-  <aside><nav aria-label="On this page"><b>On this page</b><a href="#start-here">Start here</a><a href="#use">Use</a><a href="#modes">Modes</a><a href="#tools">Tools</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sandbox">Sandbox</a><a href="#windows">Windows</a><a href="#other-models">Other models</a><a href="#claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</a><a href="#running-many-at-once">Running many at once</a><a href="#working-for-another-agent">Working for another agent</a><a href="#memory-and-sessions">Memory and sessions</a><a href="#config">Config</a><a href="#how-it-works">How it works</a><a href="#not-included">Not included</a></nav></aside>
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#start-here">Start here</a><a href="#use">Use</a><a href="#modes">Modes</a><a href="#tools">Tools</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sandbox">Sandbox</a><a href="#windows">Windows</a><a href="#other-models">Other models</a><a href="#claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</a><a href="#running-many-at-once">Running many at once</a><a href="#working-for-another-agent">Working for another agent</a><a href="#sessions-notes-and-rewind">Sessions, notes and rewind</a><a href="#config">Config</a><a href="#not-included">Not included</a></nav></aside>
   <article>
 <h1 id="using-claude-jr">Using claude-jr</h1>
-<p>Everything the command does, in one place. The short version is in the <a href="/">README</a>.</p>
+<p>Everything the command does, in one place.</p>
 <h2 id="start-here">Start here</h2>
 <pre><code class="language-sh">curl -fsSL https://claudejr.iwhitebird.com/install | sh    # Linux, macOS
 cd your-project
@@ -133,7 +133,7 @@ claudejr -c                      # continue the last conversation here
 claudejr -r &quot;auth refactor&quot;      # continue a named conversation
 claudejr -p &quot;explain main.rs&quot;    # one prompt, print the answer, exit
 claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
-claudejr -p &quot;fix the tests&quot; -y --output-format json --max-cost 2   # for scripts: JSON result, stop at $2
+claudejr -p &quot;fix the tests&quot; -y --max-cost 2    # no questions; stop at $2
 </code></pre>
 <div class="scroll"><table>
 <thead>
@@ -253,13 +253,11 @@ tab to complete, enter to run.</p>
 </table></div>
 <p>Images: drag a file into the terminal (its path is pasted and the image is
 attached) or press ctrl+v with a screenshot in the clipboard. The agent can
-also <code>read</code> image files, like a design or a screenshot of your app. Images are
-copied once into <code>~/.local/share/claude-jr/images/</code> and encoded from disk while
-a request is sent, so they don't sit in memory.</p>
+also <code>read</code> image files, like a design or a screenshot of your app. Copies are
+kept in <code>~/.local/share/claude-jr/images/</code>.</p>
 <p>The input stays on the bottom rows of the screen and the conversation scrolls
 above it; running subagents and background jobs are listed under the input.
-Resizing the terminal redraws what's on screen at the new width. Tables are
-drawn with boxes and a line between rows.
+Resizing the terminal redraws what's on screen at the new width.
 <code>&quot;layout&quot;: &quot;inline&quot;</code> in the config (or <code>/settings</code>) puts the input right after
 the conversation instead.</p>
 <p>Your key is saved to <code>~/.config/claude-jr/credentials</code>, readable only by you.
@@ -382,9 +380,8 @@ task matches it, or you run it with <code>/release</code>.</p>
 }
 </code></pre>
 <ul>
-<li><strong>Local servers</strong> (<code>command</code>) run as their own processes and talk JSON-RPC
-over stdin/stdout. claude-jr adds one small thread per server; the server's
-own memory is separate, and <code>/stats</code> shows it.</li>
+<li><strong>Local servers</strong> (<code>command</code>) run as their own processes on your machine;
+<code>/stats</code> shows what each one uses.</li>
 <li><strong>Remote servers</strong> (<code>url</code>) are handed to the API's MCP connector, so
 Anthropic calls them and they cost nothing locally. The URL must be
 reachable from the internet.</li>
@@ -422,7 +419,7 @@ a command could change downloaded source there that a later build outside the sa
 <li><strong>Pasting a screenshot</strong> with ctrl+v doesn't work inside it, since the desktop's clipboard
 socket is hidden. Dragging an image file in still does.</li>
 </ul>
-<p><code>bench/sandbox.sh</code> checks all of this: a fake model tries to delete a file outside the
+<p><code>bench/sandbox.sh</code> in the repository checks all of this: a stand-in model tries to delete a file outside the
 project, write to <code>$HOME</code>, plant a git hook, change the git config, and reach the Docker
 socket and the session bus. All must fail, while a write and a commit in the project
 must work. To try the agent on a repo without risking anything, use a throwaway worktree:</p>
@@ -430,8 +427,9 @@ must work. To try the agent on a repo without risking anything, use a throwaway 
 </code></pre>
 <p>Linux only for now.</p>
 <h2 id="windows">Windows</h2>
-<p>New, and so far checked only on GitHub's Windows machines and not by a person
-at a Windows desk; please report what you find. Install from PowerShell:</p>
+<p>New in 0.3.0. It is built and tested by machine on Windows, but has had
+little use by a person at a Windows desk yet: please report what you find.
+Install from PowerShell:</p>
 <pre><code class="language-powershell">irm https://claudejr.iwhitebird.com/install.ps1 | iex
 </code></pre>
 <p>What is different there:</p>
@@ -445,9 +443,9 @@ model is told to write PowerShell. <code>CLAUDE_JR_SHELL</code> names another sh
 and <code>XDG_DATA_HOME</code> move them, as elsewhere.</li>
 <li><strong>No sandbox</strong> (<code>--sandbox</code> is Linux's bubblewrap) and no idle memory trim,
 so memory at rest is higher than the Linux figures.</li>
-<li>Esc while a reply has not yet begun stops as soon as the server reacts to
-the closed connection, which the real ones do at once; a server that
-ignores it can keep the wait going for up to a minute.</li>
+<li>Esc before a reply has begun takes effect when the server notices the
+closed connection, which can take longer than on Linux and macOS: up to a
+minute with a server that ignores it.</li>
 <li>Windows Terminal, or the terminal in VS Code, is the one to use; the old
 console window has not been tried.</li>
 <li>64-bit Intel/AMD builds; on ARM Windows they run emulated. WSL still works
@@ -497,12 +495,11 @@ Anthropic's; with other models <code>/compact</code> still works when you run it
 history is kept in one format and translated for whoever is asked.</li>
 </ul>
 <h2 id="claude-through-amazon-bedrock-or-google-vertex-ai">Claude through Amazon Bedrock or Google Vertex AI</h2>
-<p>The same Claude models, billed by your cloud account. <strong>Not yet tested
-against the real services</strong>: there was no AWS or Google Cloud account to test
-with, so this is built from the documentation and checked against a stand-in
-that refuses what each cloud documents it refuses (and checks every AWS
-signature). <code>bench/provider.sh bedrock/claude-haiku-5-5</code> is the real test; if
-you run it, please say how it went.</p>
+<p>New in 0.3.0. The same Claude models, billed by your cloud account. <strong>Not yet
+tested against the real services</strong>: it is built from their documentation and
+checked against a stand-in. If you have an account,
+<code>bench/provider.sh bedrock/claude-haiku-5-5</code> in the repository is the real
+test; please say how it went.</p>
 <pre><code class="language-sh">claudejr -m bedrock/claude-opus-5-5
 claudejr -m vertex/claude-opus-5-5
 </code></pre>
@@ -546,9 +543,6 @@ fallback, or remote MCP servers, so those are left out. Local MCP servers work.<
 <li>Bedrock is spoken to at its Messages address (<code>bedrock-mantle</code>). Models it
 serves only at the older address (Fable 5.2 today) are not available, and
 neither are <code>~/.aws</code> profiles, SSO or instance roles: export the keys.</li>
-<li>With access keys every request is signed, which means reading the
-conversation through once more to hash it: about 2 ms for a 4 MB history. A
-Bedrock API key avoids that.</li>
 <li>Costs shown are Anthropic's list prices; a single-region endpoint costs a
 tenth more than that.</li>
 <li>On Vertex, a service-account key file is not read: use <code>gcloud</code>, or pass a token.</li>
@@ -591,15 +585,15 @@ claudejr task wait
 set by your API rate limits, not by memory.</p>
 <p><strong>A fleet.</strong> The same in one command: a list of tasks, run a few at a time,
 with a table at the end of what each did and the branch it left.</p>
-<pre><code class="language-sh">claudejr fleet -y --max 4 --budget 5 &quot;fix lint in api&quot; &quot;fix lint in ui&quot; &quot;fix lint in tools&quot;
-claudejr fleet -y --merge --file tasks.txt     # one task per line; merge each branch when done
+<pre><code class="language-sh">claudejr fleet -y --max 4 --budget 5 &quot;fix lint in api&quot; &quot;fix lint in ui&quot;
+claudejr fleet -y --merge --file tasks.txt     # one task per line
 </code></pre>
 <p><strong>Subagents in worktrees.</strong> Inside a session the agent can do the same with
-its own subagents: one started with <code>worktree: true</code> works in its own copy of
-the repository, its work is committed when it finishes, and its report ends
-with the branch for the main agent to merge. A subagent can start subagents of
-its own, one level down and no further, and at most 16 run at once.</p>
-<p><strong>The worker model.</strong> Work that is handed off (a task, a fleet's tasks, a
+its own subagents: one can be given its own copy of the repository, its work
+is committed when it finishes, and the main agent merges the branch. A
+subagent can start subagents of its own, one level down and no further, and at
+most 16 run at once.</p>
+<p><strong>The worker model</strong> (new in 0.3.0). Work that is handed off (a task, a fleet's tasks, a
 task another agent starts over MCP, a subagent) is done by the worker model,
 not the one you talk to. Beside a Claude model that is <code>claude-haiku-5-5</code>,
 which does a well-described job at a fortieth of Opus's price; beside any
@@ -677,15 +671,15 @@ when you install, with the server's options.</p>
 </table></div>
 <p>Any other MCP client can use it too: the command is <code>claudejr mcp</code> plus those
 options, over stdio.</p>
-<h2 id="memory-and-sessions">Memory and sessions</h2>
+<h2 id="sessions-notes-and-rewind">Sessions, notes and rewind</h2>
 <ul>
-<li><strong>In RAM</strong>: only the current conversation, kept as the exact JSON text sent
-to the API. Requests are streamed straight from it, so it's never copied.
-Tool output is cut to 50 KB (start and end) before it's stored.</li>
+<li><strong>Sessions</strong> are saved as you go in <code>~/.local/share/claude-jr/sessions/&lt;directory&gt;/</code>,
+one message per line. <code>--sessions</code> lists them; <code>-c</code> and <code>/resume</code> continue one.</li>
 <li><strong>Context</strong>: the footer shows <code>used/window</code> tokens. Near the limit the API
-compacts older turns on its side.</li>
-<li><strong>On disk</strong>: <code>~/.local/share/claude-jr/sessions/&lt;directory&gt;/</code>, one message
-per line, only ever appended to. <code>--sessions</code> lists them.</li>
+compacts older turns on its side; <code>/compact</code> does it when you ask, replacing
+the conversation with a detailed summary.</li>
+<li><strong>Long output</strong>: a command's output over 50 KB is cut to its start and end
+before the model sees it.</li>
 <li><strong>Instructions</strong>: <code>AGENTS.md</code> or <code>CLAUDE.md</code> in the current directory, its
 parents, and <code>~/.config/claude-jr/</code>. <code>#note</code> appends to <code>./AGENTS.md</code>.</li>
 <li><strong>The agent's own notes</strong>: <code>~/.local/share/claude-jr/memory/&lt;project&gt;/MEMORY.md</code>,
@@ -693,8 +687,6 @@ kept with the <code>memory</code> tool (8 KB cap) and loaded at the start of eac
 <li><strong>Rewind</strong>: before the agent first changes a file in a turn, the original is
 copied next to the session. <code>/rewind</code> puts files back; shell commands' changes
 aren't tracked.</li>
-<li><strong>Compaction</strong>: <code>/compact</code> replaces the conversation with a detailed summary.
-Near the limit, the API also compacts on its side.</li>
 </ul>
 <p>When claude-jr exits, by quitting, a signal or closing the terminal, it stops
 every command, background job and MCP server it started.</p>
@@ -717,50 +709,6 @@ every command, background job and MCP server it started.</p>
 <code>*</code> matches anything; <code>mcp__server</code> covers all of a server's tools. A command
 with <code>;</code>, <code>&amp;&amp;</code>, <code>|</code>, <code>$(...)</code> or redirects only matches a rule that spells it
 out exactly, so <code>cargo *</code> can't approve <code>cargo test; rm -rf ~</code>.</p>
-<h2 id="how-it-works">How it works</h2>
-<p>The full picture, with diagrams, is in <a href="/architecture">ARCHITECTURE.md</a>.</p>
-<pre class="mermaid">flowchart LR
-  keys[&quot;key reader&quot;] --&gt; ui[&quot;UI thread&lt;br/&gt;draws&quot;]
-  ui -- &quot;commands&quot; --&gt; agent[&quot;agent thread&lt;br/&gt;runs tools; subagents and parallel calls on more threads&quot;]
-  agent -- &quot;events&quot; --&gt; ui
-  agent &lt;--&gt; api([&quot;the model's API&quot;])
-</pre>
-<ul>
-<li><strong>No async runtime.</strong> Plain threads and channels. The UI blocks on one
-channel, so it uses no CPU while you think. While text streams in it draws
-at most ~30 frames a second and rewrites only the lines that changed;
-finished rows of a long paragraph go to scrollback as soon as they can't
-change.</li>
-<li><strong>Messages are stored as the JSON text that goes over the wire.</strong> A request
-is streamed straight from them and the session file is the same text.</li>
-<li><strong>The history only grows.</strong> That keeps the prompt cache warm and the model's
-earlier reasoning valid. The system prompt and tool list are fixed per
-session; mode changes, notes and job notices go into the next user message.</li>
-<li><strong>The UI writes finished lines once</strong> into normal terminal scrollback and
-redraws only the few lines at the bottom.</li>
-</ul>
-<pre><code>src/
-  main.rs         args, config, start
-  agent/          conversation, tool loop, subagents, modes and approval
-  tools/          read/write/edit, bash and jobs, todo, skills, MCP client
-  api.rs          requests, streaming, retries, per-model features, prices
-  prompt.rs       system prompt, AGENTS.md, notes
-  session.rs      saved conversations
-  sandbox.rs      bubblewrap
-  signals.rs      clean exit on signals
-  permission.rs   allow rules
-  config.rs       config files
-  print.rs        -p output
-  ui/             terminal UI: loop, drawing, input, markdown, /stats
-bench/
-  mock.py         fake API for tests and benchmarks
-  mem.sh          long session; fails above 16 MB
-  cpu.sh          idle and busy CPU
-  ui.py           the UI while a reply streams in
-  compare.py      side by side with Claude Code, pi and Codex
-  box.sh          run in a small container (CPUS=0.05 MEMORY=16m bench/box.sh)
-  sandbox.sh      check the sandbox
-</code></pre>
 <h2 id="not-included">Not included</h2>
 <p>Plugins, hooks, IDE integration.</p>
 
@@ -771,44 +719,12 @@ bench/
     <a href="/">Home</a>
     <a href="/guide">Guide</a>
     <a href="/benchmarks">Benchmarks</a>
-    <a href="/architecture">Architecture</a>
+    <a href="/architecture">How it works</a>
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/GUIDE.md">Edit this page</a>
     <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
   </div>
 </footer>
-<script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  const ink = dark ? "#ece6dc" : "#1b1915", soft = dark ? "#968e83" : "#736d63";
-  const paper = dark ? "#161412" : "#f4f1e9", card = dark ? "#1d1a17" : "#f9f7f1", rule = dark ? "#3a342e" : "#cfc8ba";
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: "base",
-    fontFamily: "Inter, system-ui, sans-serif",
-    flowchart: { curve: "basis", htmlLabels: true, padding: 14 },
-    themeVariables: {
-      fontSize: "14px", background: paper, primaryColor: card, primaryTextColor: ink, primaryBorderColor: rule,
-      lineColor: soft, secondaryColor: paper, tertiaryColor: paper, clusterBkg: paper, clusterBorder: rule,
-      edgeLabelBackground: paper, titleColor: soft,
-    },
-  });
-  // One at a time: drawn together, their parts can land in each other's frames.
-  // A diagram drawn left to right can be too wide for its place and shrink
-  // until it can't be read; then the same diagram drawn top to bottom is tried,
-  // and whichever comes out larger is kept.
-  const width = (svg) => +(svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+)/) || [0, 1])[1];
-  let n = 0;
-  for (const block of document.querySelectorAll("pre.mermaid")) {
-    const text = block.textContent, room = block.clientWidth;
-    let { svg } = await mermaid.render(`diagram-${n++}`, text);
-    if (width(svg) > room * 1.25 && /^\s*flowchart LR/.test(text)) {
-      const other = (await mermaid.render(`diagram-${n++}`, text.replace("flowchart LR", "flowchart TB"))).svg;
-      if (width(other) < width(svg)) svg = other;
-    }
-    block.innerHTML = svg;
-  }
-</script>
 </body>
 </html>

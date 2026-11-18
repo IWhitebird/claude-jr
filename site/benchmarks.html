@@ -84,14 +84,14 @@
   <div class="frame">
     <img src="/logo.svg" alt="" width="30" height="26">
     <a class="name" href="/">claude-jr</a>
-    <nav><a href="/guide">Guide</a><a href="/benchmarks" aria-current=page>Benchmarks</a><a href="/architecture">Architecture</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
+    <nav><a href="/guide">Guide</a><a href="/benchmarks" aria-current=page>Benchmarks</a><a href="/architecture">How it works</a><a href="https://github.com/IWhitebird/claude-jr">GitHub</a></nav>
   </div>
 </header>
 <div class="frame layout">
-  <aside><nav aria-label="On this page"><b>On this page</b><a href="#numbers">Numbers</a><a href="#swe-bench-verified">SWE-bench Verified</a><a href="#handing-work-out-when-it-pays">Handing work out: when it pays</a><a href="#windows">Windows</a><a href="#measuring-it-yourself">Measuring it yourself</a><a href="#evals">Evals</a></nav></aside>
+  <aside><nav aria-label="On this page"><b>On this page</b><a href="#numbers">Numbers</a><a href="#swe-bench-verified">SWE-bench Verified</a><a href="#windows">Windows</a><a href="#measuring-it-yourself">Measuring it yourself</a></nav></aside>
   <article>
 <h1 id="benchmarks">Benchmarks</h1>
-<p>How claude-jr is measured, and every number. The headline figures are in the <a href="/">README</a>.</p>
+<p>Every number claude-jr publishes, and how it was measured.</p>
 <h2 id="numbers">Numbers</h2>
 <p>Measured with <a href="https://github.com/IWhitebird/claude-jr/blob/main/bench/compare.py"><code>bench/compare.py</code></a>: every agent runs against
 the same fake API (no model time counted), with a fresh empty home folder.
@@ -245,13 +245,7 @@ speaks OpenAI's API): 150 MB, 37 threads, 322 ms to start.</p>
 </tr>
 </tbody>
 </table></div>
-<p>The release binary is built by <a href="https://github.com/IWhitebird/claude-jr/blob/main/build.sh"><code>build.sh</code></a>: optimised for size, with Rust's standard
-library rebuilt the same way. On Linux, whenever claude-jr goes quiet it hands the pages of its own
-program file back to the kernel (<a href="https://github.com/IWhitebird/claude-jr/blob/main/src/sys/mem.rs"><code>src/sys/mem.rs</code></a>), which is why it idles in less
-memory than its own size; they come back from the page cache as they're needed. The conversation
-is kept in the session file rather than in memory: each request reads the saved messages straight
-from it (<a href="https://github.com/IWhitebird/claude-jr/blob/main/src/store/session.rs"><code>src/store/session.rs</code></a>), so a long session needs no more memory than a short one.</p>
-<p>More of claude-jr's own numbers (<code>bench/</code>):</p>
+<p>More of claude-jr's own numbers:</p>
 <div class="scroll"><table>
 <thead>
 <tr>
@@ -269,8 +263,8 @@ from it (<a href="https://github.com/IWhitebird/claude-jr/blob/main/src/store/se
 <td>1.6 MB peak</td>
 </tr>
 <tr>
-<td>1,000 agents working at once, each in its own folder (<code>bench/density.py</code>)</td>
-<td>488 MB between them, 0.5 MB each</td>
+<td>1,000 agents working at once, each in its own folder</td>
+<td>492 MB between them, 0.5 MB each</td>
 </tr>
 <tr>
 <td>40 background tasks started in one repository</td>
@@ -343,76 +337,11 @@ limit; its patch passed and it counts as resolved, but its cost is missing from 
 made in two sittings with builds a few days apart, same prompt and tools. This is not a leaderboard entry.
 The tasks are public and old enough that the models may have seen them. Each task ran once,
 in the task's own container, with no retries and no hints.</p>
-<h2 id="handing-work-out-when-it-pays">Handing work out: when it pays</h2>
-<p>The same main agent (Opus 5.5) was given ten independent pieces of work in one repository three ways:
-do it all itself; give each piece to a subagent; give each to a claude-jr worker over MCP, as Claude Code
-would. Subagents and workers ran on Haiku 5.5, each in its own worktree. Two sizes: ten one-line fixes,
-and ten packages of six fixes each. One run of each (<a href="https://github.com/IWhitebird/claude-jr/blob/main/bench/workers/run.py"><code>bench/workers/run.py</code></a>):</p>
-<div class="scroll"><table>
-<thead>
-<tr>
-<th></th>
-<th>ten small fixes</th>
-<th></th>
-<th></th>
-<th>ten packages (60 fixes)</th>
-<th></th>
-<th></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td></td>
-<td>fixed</td>
-<td>time</td>
-<td>cost</td>
-<td>fixed</td>
-<td>time</td>
-<td>cost</td>
-</tr>
-<tr>
-<td>alone</td>
-<td>10/10</td>
-<td>22 s</td>
-<td>$0.12</td>
-<td>60/60</td>
-<td>39 s</td>
-<td>$0.22</td>
-</tr>
-<tr>
-<td>with subagents</td>
-<td>10/10</td>
-<td>42 s</td>
-<td>$0.19</td>
-<td>60/60</td>
-<td>76 s</td>
-<td>$0.32</td>
-</tr>
-<tr>
-<td>with workers</td>
-<td>10/10</td>
-<td>39 s</td>
-<td>$0.18</td>
-<td>60/60</td>
-<td>77 s</td>
-<td>$0.34</td>
-</tr>
-</tbody>
-</table></div>
-<p>On work of this size, doing it alone wins on both counts. Opus reads and edits many files in one reply, so
-sixty small fixes take it a handful of requests; handing them out means writing ten briefs, waiting, and
-merging ten branches, and that organising is what costs. The ten workers together cost 4 cents of the
-$0.34 (0.4 cents each) and held 12.7 MB between them, the 22 processes of the run included.</p>
-<p>So this does not show handing work out to be cheaper, and the numbers above should not be read that way.
-What it does show is that the workers themselves are nearly free; whether delegation pays depends on the
-pieces being long enough (many steps each, where one agent's context would grow with every step) to be
-worth a brief and a merge. That case has not been measured here yet.</p>
 <h2 id="windows">Windows</h2>
-<p>The Windows build is 2.03 MB (<code>claudejr-windows-x86_64.exe</code>). CI builds it on a Windows machine, runs the
-283 unit tests that apply there, and puts the binary through <a href="https://github.com/IWhitebird/claude-jr/blob/main/bench/windows.sh"><code>bench/windows.sh</code></a>
-against the fake API: a run with tools in Git Bash and in PowerShell, a session that continues, and
-background tasks started, merged and cancelled, the installer (which must refuse a download that fails
-its checksum) and <code>--update</code> replacing the program while it runs.</p>
+<p>New in 0.3.0. The Windows build is 2.03 MB (<code>claudejr-windows-x86_64.exe</code>). Every change is built and
+tested on a Windows machine (<a href="https://github.com/IWhitebird/claude-jr/blob/main/bench/windows.sh"><code>bench/windows.sh</code></a>): a run with tools in Git Bash and
+in PowerShell, a session that continues, background tasks started, merged and cancelled, the installer
+(which must refuse a download that fails its checksum) and <code>--update</code> replacing the program while it runs.</p>
 <p>On that machine a run of 20 commands peaked at 8.2 MB, and the MCP server waiting for calls held 5.8 MB
 (1.2 MB of it its own; the rest is Windows' shared libraries, which every program is charged for). Those
 are working-set figures, Windows' counterpart of the Linux numbers above; there is no idle trim on
@@ -443,26 +372,6 @@ Windows, and the interactive UI has not been measured there.</p>
 <td><code>python3 bench/ui.py target/release/claudejr</code></td>
 </tr>
 <tr>
-<td>Resizing leaves nothing twice or missing, in 13 situations (needs tmux)</td>
-<td><code>python3 bench/resize.py target/release/claudejr</code></td>
-</tr>
-<tr>
-<td>Random keys, pastes and resizes never crash it or send a bad request</td>
-<td><code>python3 bench/chaos.py target/release/claudejr</code></td>
-</tr>
-<tr>
-<td>The MCP server, checked by the official MCP SDK's own client</td>
-<td><code>python bench/mcp_client.py target/release/claudejr</code> (needs <code>pip install mcp</code>)</td>
-</tr>
-<tr>
-<td>A real model of another provider answers, calls tools and keeps its history</td>
-<td><code>bench/provider.sh ollama/qwen2.5:3b</code> (or any <code>PROVIDER/MODEL</code>, with its key set)</td>
-</tr>
-<tr>
-<td>Line coverage of the tests (98%)</td>
-<td><code>bench/coverage.sh</code></td>
-</tr>
-<tr>
 <td>SWE-bench Verified, one task at a time in Docker</td>
 <td><code>bench/swe/run.py --dry-run</code> (setup at the top of the file)</td>
 </tr>
@@ -484,19 +393,7 @@ Windows, and the interactive UI has not been measured there.</p>
 </tr>
 </tbody>
 </table></div>
-<p>None of the scripts need an API key; they run against <code>bench/mock.py</code>.</p>
-<h2 id="evals">Evals</h2>
-<pre><code class="language-sh">python3 bench/evals/run.py frontend --budget 2          # 10 frontend tasks
-python3 bench/evals/run.py frontend --model claude-sonnet-5-5
-python3 bench/evals/run.py polyglot-python --limit 10   # Aider's polyglot benchmark
-python3 bench/evals/run.py frontend --agent claude-code # the same tasks with Claude Code
-python3 bench/evals/run.py frontend --dry-run           # check the runner, free
-</code></pre>
-<p><code>frontend/</code> has 10 tasks: semantic HTML, form accessibility, a responsive grid,
-dark mode, a cart bug, relative dates, form validation, debounce, safe HTML
-rendering, and a pricing page built from a design image. JS tasks are graded by
-hidden tests; every check was verified to fail on the starting files and pass on
-a correct solution. <code>--budget</code> stops before a task that would likely go over.</p>
+<p>None of the scripts need an API key; they run against a stand-in for the API.</p>
 
   </article>
 </div>
@@ -505,7 +402,7 @@ a correct solution. <code>--budget</code> stops before a task that would likely 
     <a href="/">Home</a>
     <a href="/guide">Guide</a>
     <a href="/benchmarks">Benchmarks</a>
-    <a href="/architecture">Architecture</a>
+    <a href="/architecture">How it works</a>
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <a href="https://github.com/IWhitebird/claude-jr/blob/main/docs/BENCHMARKS.md">Edit this page</a>

@@ -1,6 +1,17 @@
 # Where everything is
 
-Every source file and what it holds. The short version is in [ARCHITECTURE.md](ARCHITECTURE.md).
+Every source file and what it holds, for people working on the code. How it works, in pictures, is in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+| Folder | What is in it |
+|---|---|
+| `src/cli` | the command line, one file per thing you can type |
+| `src/ui` | the interactive terminal |
+| `src/agent` | the turn loop, permissions, subagents |
+| `src/tools` | what the model can do: files, commands, MCP, skills |
+| `src/api` | talking to models: each wire format and provider |
+| `src/work` | background tasks, worktrees, budgets, the run log |
+| `src/store` | sessions, images and config on disk |
+| `src/sys` | what differs between Linux, macOS and Windows |
 
 ```
 src/

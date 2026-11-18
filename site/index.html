@@ -69,8 +69,10 @@
   a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
   a:hover { color: var(--clay-text); }
   :focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
-  .col { max-width: 720px; margin: 0 auto; padding-left: max(22px, env(safe-area-inset-left)); padding-right: max(22px, env(safe-area-inset-right)); }
-  .wide { max-width: 1040px; }
+  /* One frame for every section, so everything starts at the same left edge.
+     Sections of text keep a readable line length inside it. */
+  .col { max-width: 1040px; margin: 0 auto; padding-left: max(22px, env(safe-area-inset-left)); padding-right: max(22px, env(safe-area-inset-right)); }
+  .col:not(.wide) > * { max-width: 720px; }
   button { font: inherit; color: inherit; }
 
   header.top { padding-block: 22px; }
@@ -302,12 +304,14 @@
   .disk .line { fill: none; stroke: var(--ink-3); stroke-width: 1; opacity: .6; }
   .disk .flow { fill: none; stroke: var(--clay); stroke-width: 2; }
   .disk .head { fill: var(--clay); }
-  @media (max-width: 560px) { .disk svg { font-size: 17px; } .disk .cap { font-size: 17px; } }
+  /* Too small to read on a phone; the list under it says the same. */
+  @media (max-width: 620px) { figure.disk { display: none; } }
   ol.how { list-style: none; counter-reset: how; margin: 26px 0 0; padding: 0; border-top: 1px solid var(--rule); }
   ol.how li { counter-increment: how; display: grid; grid-template-columns: 2.6em 1fr; padding: 18px 0; border-bottom: 1px solid var(--rule); }
   ol.how li::before { content: counter(how); font: 400 1.7rem/1.1 var(--serif); color: var(--clay-text); }
   ol.how b { display: block; font-weight: 600; margin-bottom: 2px; }
   ol.how span { color: var(--ink-2); }
+  ol.how + .note { margin-top: 18px; }
 
   details { border-bottom: 1px solid var(--rule); }
   details:first-of-type { border-top: 1px solid var(--rule); margin-top: 26px; }
@@ -334,7 +338,7 @@
     <nav>
       <a href="/guide">Guide</a>
       <a href="/benchmarks">Benchmarks</a>
-      <a href="/architecture">Architecture</a>
+      <a href="/architecture">How it works</a>
       <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     </nav>
   </div>
@@ -488,11 +492,10 @@
       <div class="dots" role="img" aria-label="500 squares, one per task: 467 filled for resolved, 33 hollow for not resolved"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i class=n></i><i></i><i></i><i></i><i class=n></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <div class="legend"><span><i></i>467 fixed</span><span><i class="n"></i>33 attempted and not fixed</span><span>all 500 were run</span></div>
 
-      <p class="note">A task took 34 seconds and six requests at the median, and 13 cents on average
-        ($67 for the whole set). With Claude Sonnet 5.5 it resolved 88 of a random 100 at about five
-        cents each. The score is mostly the model's: what this shows is that a small agent doesn't
-        hold it back. It is not a leaderboard entry, and the tasks are old enough that the model may
-        have seen them. <a href="/benchmarks#swe-bench-verified">Details</a>.</p>
+      <p class="note">One attempt per task, official scoring. A task took 34 seconds at the median and
+        13 cents on average; with Claude Sonnet 5.5 it resolved 88 of a random 100 at about five
+        cents each. The score is the model's as much as the agent's, and this is not a leaderboard
+        entry. <a href="/benchmarks#swe-bench-verified">Details</a>.</p>
     </div>
   </section>
 
@@ -526,12 +529,12 @@
         </svg>
       </figure>
       <ol class="how">
-        <li><div><b>The conversation lives on disk.</b><span>Every message is appended to the session file as it happens. Memory keeps only where each one is, and a request is streamed to the API straight from that file. A session with 8 MB of history uses the same 4 MB as a short one.</span></div></li>
-        <li><div><b>No runtime underneath.</b><span>One static binary, with nothing to start before it. There is no JavaScript engine to load and no garbage collector holding on to memory.</span></div></li>
-        <li><div><b>Threads instead of an async framework.</b><span>It talks to one model at a time, so a few plain threads and channels do the job, and they sleep in the kernel while waiting: zero CPU when idle.</span></div></li>
-        <li><div><b>A short, fixed prompt.</b><span>About 3,000 tokens with its tools, and the history only ever grows, so the provider's prompt cache stays valid from the first request to the last.</span></div></li>
-        <li><div><b>Unused pages go back.</b><span>When it goes quiet on Linux it hands the program pages it isn't using back to the system, which is how a working agent settles at 0.7 MB.</span></div></li>
+        <li><div><b>The conversation lives on disk.</b><span>Every message is appended to the session file as it happens. Memory keeps only where each one is, and a request is streamed straight from the file, so a session with 8 MB of history uses the same 4 MB as a short one.</span></div></li>
+        <li><div><b>No runtime underneath.</b><span>One static binary, with nothing to start before it: no JavaScript engine to load and no garbage collector holding on to memory.</span></div></li>
+        <li><div><b>Nothing runs while it waits.</b><span>A few plain threads that sleep until you press a key or the model answers: zero CPU when idle.</span></div></li>
+        <li><div><b>Unused memory goes back.</b><span>When it goes quiet on Linux it hands back the parts of the program it isn't using, which is how a working agent settles at 0.7 MB.</span></div></li>
       </ol>
+      <p class="note"><a href="/architecture">How it works, in three pictures</a>.</p>
     </div>
   </section>
 
@@ -548,9 +551,7 @@
         <div><b>1.2 MB</b><span>MCP server, idle</span></div>
       </div>
       <p class="note"><code>claudejr install claude-code</code> (or cursor, or codex) lets your main agent start
-        these workers itself. Whether handing work out pays depends on the work: on small jobs one
-        agent doing everything was faster in our own test, and
-        <a href="/benchmarks#handing-work-out-when-it-pays">we say so</a>.</p>
+        these workers itself.</p>
     </div>
   </section>
 
@@ -563,7 +564,7 @@
         <li class="card"><code class="tag">--sandbox</code><h3>A sandbox</h3><p>On Linux it can only write to your project. Keys, sockets and the rest of your home stay out of reach.</p></li>
         <li class="card"><code class="tag">task · fleet</code><h3>Background tasks</h3><p>Runs that carry on without you, each on a branch of its own, with a shared budget and a log of every step.</p></li>
         <li class="card"><code class="tag">install claude-code</code><h3>Workers for other agents</h3><p>Claude Code, Cursor or Codex start workers over MCP, then read, merge or drop what each one did.</p></li>
-        <li class="card"><code class="tag">agent</code><h3>Subagents</h3><p>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</p></li>
+        <li class="card"><code class="tag">in parallel</code><h3>Subagents</h3><p>Side tasks go to agents that work in parallel and report back, in worktrees of their own when they change files.</p></li>
         <li class="card"><code class="tag">/rewind · -c</code><h3>Rewind and resume</h3><p>Go back to before any message with its file changes undone. Every session is saved as it goes.</p></li>
         <li class="card"><code class="tag">.claude/skills</code><h3>Skills and MCP</h3><p>Reads the skills you already have and talks to MCP servers, local or remote.</p></li>
         <li class="card"><code class="tag">ctrl+v</code><h3>Images and the web</h3><p>Paste or drag in a screenshot. It searches and fetches pages when the task needs them.</p></li>
@@ -646,7 +647,7 @@
           <a href="https://github.com/IWhitebird/claude-jr/tree/main/bench">bench folder</a>, most of them
           runnable without an API key, and
           <a href="/benchmarks">the benchmarks page</a>
-          says how each was measured, including the ones that didn't go our way.</p>
+          says how each was measured.</p>
       </details>
     </div>
   </section>
@@ -656,7 +657,7 @@
   <div class="col wide">
     <a href="/guide">Guide</a>
     <a href="/benchmarks">Benchmarks</a>
-    <a href="/architecture">Architecture</a>
+    <a href="/architecture">How it works</a>
     <a href="https://github.com/IWhitebird/claude-jr">GitHub</a>
     <a href="https://github.com/IWhitebird/claude-jr/releases/latest">Releases</a>
     <span class="last">claude-jr is MIT licensed and independent; it isn't made by or affiliated with Anthropic.</span>
