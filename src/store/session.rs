@@ -30,7 +30,16 @@ enum Body {
 
 impl Msg {
     pub fn new(role: &str, content: Value) -> Msg {
-        let json = serde_json::to_string(&json!({ "role": role, "content": content })).expect("message serializes");
+        // Written straight from `content`, in the order a JSON object would
+        // have (content, then role), and with no room to spare: a pasted
+        // megabyte would otherwise be copied once more and held at double size.
+        #[derive(Serialize)]
+        struct Line<'a> {
+            content: &'a Value,
+            role: &'a str,
+        }
+        let mut json = serde_json::to_string(&Line { content: &content, role }).expect("message serializes");
+        json.shrink_to_fit();
         Msg { user: role == "user", body: Body::Memory(json) }
     }
 

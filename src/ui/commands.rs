@@ -85,7 +85,7 @@ impl App {
     /// Puts pasted text into the input. A big paste goes in as a short label
     /// that is swapped for the text when the message is sent.
     pub(super) fn paste(&mut self, text: &str) {
-        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let text = if text.contains('\r') { text.replace("\r\n", "\n").replace('\r', "\n") } else { text.to_string() };
         if self.prompts.is_empty() && paste::is_big(&text) {
             let label = self.pastes.add(text);
             self.input.insert(&label);

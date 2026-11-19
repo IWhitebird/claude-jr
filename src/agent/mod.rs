@@ -361,7 +361,8 @@ impl Agent {
 
     fn send(&mut self, text: String) {
         self.core.cancel.store(false, Ordering::Relaxed);
-        *self.core.request.lock().unwrap() = text.clone();
+        // What the reviewer of auto mode is shown; no more is kept.
+        *self.core.request.lock().unwrap() = text.chars().take(2000).collect();
         // This turn starts at the message about to be added (or merged into).
         let turn = self.messages.len() - usize::from(self.mergeable());
         self.tools.checkpoints.begin_turn(turn);
@@ -377,7 +378,11 @@ impl Agent {
                 Err(e) => (self.core.emit)(Event::Notice(e)),
             }
         }
-        self.push_user(json!({ "type": "text", "text": text }));
+        let mut block = serde_json::Map::new();
+        block.insert("type".into(), "text".into());
+        // Moved in, not copied as json! would: a pasted megabyte is big enough to matter.
+        block.insert("text".into(), Value::String(text));
+        self.push_user(Value::Object(block));
 
         // Mode changes and finished jobs go into this message, not the system
         // prompt, so the history before it stays exactly as it was.

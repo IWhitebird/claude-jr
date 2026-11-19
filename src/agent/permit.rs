@@ -147,7 +147,7 @@ impl Core {
 
     /// Asks a small model whether an action fits the user's request.
     fn review(&self, ctx: &Ctx, name: &str, subject: &str) -> Verdict {
-        let request: String = self.request.lock().unwrap().chars().take(2000).collect();
+        let request = self.request.lock().unwrap().clone();
         let subject: String = subject.chars().take(4000).collect();
         let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
         let prompt = format!(
