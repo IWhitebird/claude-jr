@@ -22,7 +22,7 @@ Three things worth trying first:
 | | |
 |---|---|
 | `explain how this project is laid out` | it reads its way around and tells you |
-| `claudejr --sandbox` | let it work without asking, unable to write outside the project (Linux) |
+| `claudejr --sandbox -y` | let it work without asking, unable to write outside the project (Linux) |
 | `claudejr -p "fix the failing test" -y` | one task, no conversation, for scripts and CI |
 
 ## Use
