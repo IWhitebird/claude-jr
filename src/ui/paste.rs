@@ -8,8 +8,10 @@ use std::collections::VecDeque;
 /// A paste longer than either of these is shown as a label.
 const MAX_LINES: usize = 4;
 const MAX_CHARS: usize = 400;
-/// How many pastes are remembered; older labels are sent as they read.
+/// How many pastes are remembered, and how much of them at most besides the
+/// newest; older labels are sent as they read.
 const KEEP: usize = 16;
+const KEEP_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct Pastes {
@@ -33,7 +35,8 @@ impl Pastes {
             format!("[Pasted #{}: {chars} chars]", self.count)
         };
         self.kept.push_back((label.clone(), text));
-        if self.kept.len() > KEEP {
+        let size = |kept: &VecDeque<(String, String)>| kept.iter().map(|(_, t)| t.len()).sum::<usize>();
+        while self.kept.len() > KEEP || (self.kept.len() > 1 && size(&self.kept) > KEEP_BYTES) {
             self.kept.pop_front();
         }
         label
@@ -101,6 +104,22 @@ mod tests {
         }
         assert_eq!(p.expand(&first), first, "too old: sent as it reads");
         assert_eq!(p.kept.len(), KEEP);
+    }
+
+    #[test]
+    fn big_pastes_are_remembered_up_to_a_size() {
+        let mut p = Pastes::default();
+        let big = "x\n".repeat(KEEP_BYTES / 4);
+        let first = p.add(big.clone());
+        let second = p.add(big.clone());
+        let third = p.add(big.clone());
+        assert_eq!(p.kept.len(), 2, "two halves fit, a third doesn't");
+        assert_eq!(p.expand(&first), first, "the oldest went");
+        assert_eq!(p.expand(&format!("{second} {third}")), format!("{big} {big}"));
+        // The newest is kept whatever its size.
+        let huge = p.add("y\n".repeat(KEEP_BYTES));
+        assert_eq!(p.kept.len(), 1);
+        assert!(p.expand(&huge).starts_with("y\ny\n"));
     }
 
     #[test]

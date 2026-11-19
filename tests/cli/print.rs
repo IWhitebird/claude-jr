@@ -253,9 +253,10 @@ fn a_failure_that_persists_is_reported_with_its_cause() {
 #[test]
 fn api_failure_is_an_error() {
     let e = Env::new();
-    let dead = free_port();
+    // Port 1: nothing listens there, and no test can take it (a port that
+    // was merely free a moment ago could be another test's fake API by now).
     let mut cmd = e.command(&["-p", "hi", "-y"]);
-    cmd.env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{dead}"));
+    cmd.env("ANTHROPIC_BASE_URL", "http://127.0.0.1:1");
     let report = e.root.join("report.json");
     cmd.env("CLAUDE_JR_REPORT", &report);
     let o = exec(cmd);

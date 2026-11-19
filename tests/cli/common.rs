@@ -47,11 +47,6 @@ impl Drop for Env {
     }
 }
 
-pub fn free_port() -> u16 {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    l.local_addr().unwrap().port()
-}
-
 impl Env {
     pub fn new() -> Env {
         Env::with(&[])

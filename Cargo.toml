@@ -35,6 +35,13 @@ signal-hook = "0.3"
 unicode-width = "0.2.3"
 ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
 
+# On Linux, input is read with poll() rather than crossterm's default
+# (edge-triggered epoll), which can leave text that arrives in one burst of
+# over 1 KB unread until the next key press. macOS's poll() can't wait on a
+# terminal, so it keeps the default.
+[target.'cfg(target_os = "linux")'.dependencies]
+crossterm = { version = "0.29.0", default-features = false, features = ["events", "bracketed-paste", "use-dev-tty"] }
+
 [profile.release]
 opt-level = "z"
 lto = true

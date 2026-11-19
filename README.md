@@ -46,7 +46,7 @@ model: `claudejr -m ollama/qwen3`. Also on
 - **It asks first.** Five permission modes, a sandbox, and `/rewind` to take back anything it did.
 - **Many at once.** Background tasks on their own git branches, and Claude Code, Cursor or Codex can hand it work over MCP. A thousand agents fit in 500 MB.
 - **The usual kit.** Subagents, skills, MCP servers, images, web search, sessions you can resume.
-- **Tested.** 404 tests, 97% line coverage, and random-input runs against the real app in a terminal.
+- **Tested.** 414 tests, 97% line coverage, and random-input runs against the real app in a terminal.
 
 ## Use
 
