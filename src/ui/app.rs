@@ -107,6 +107,8 @@ pub(super) struct App {
     pub(super) subagents: Vec<(usize, String, String)>,
     /// /clear asked for the terminal to be wiped before the next draw.
     pub(super) clear_screen: bool,
+    /// ctrl+z asked for the program to be put in the background (Unix).
+    pub(super) suspend: bool,
     pub(super) started: Instant,
     pub(super) quit_armed: Option<Instant>,
     pub(super) quit: bool,
@@ -142,6 +144,7 @@ impl App {
             effort: None,
             subagents: Vec::new(),
             clear_screen: false,
+            suspend: false,
             started: Instant::now(),
             quit_armed: None,
             quit: false,

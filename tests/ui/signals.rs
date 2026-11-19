@@ -51,3 +51,25 @@ fn sighup_and_sigint_exit_cleanly() {
     app.signal("INT");
     app.exited(128 + 2);
 }
+
+/// ctrl+z hands the terminal back to the shell as other terminal programs do,
+/// and `fg` brings the app back as it was, half-typed message included.
+#[test]
+fn ctrl_z_suspends_it_and_fg_brings_it_back() {
+    let world = World::new("suspend", &[]);
+    let mut app = world.launch_as_job();
+    app.expect("ask anything");
+    app.send("half typed");
+    app.expect("half typed");
+    app.send("\x1a");
+    // Stopped by SIGTSTP (128 + 20), with the terminal back in its usual mode.
+    app.expect("STOPPED-148");
+    app.expect(" icanon");
+    let mark = app.pos;
+    app.expect("half typed");
+    assert!(!app.all_from(mark).contains("-icanon"), "the shell got a raw terminal");
+    app.send(" and done");
+    app.expect("half typed and done");
+    app.send("\x15");
+    app.exit();
+}

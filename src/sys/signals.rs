@@ -28,6 +28,13 @@ pub fn watch(tools: Arc<OnceLock<Arc<Tools>>>, terminal: bool) {
     on_console_event(Box::new(move || leave(&tools, terminal, 130)));
 }
 
+/// Stops this process as ctrl+z does in a shell, until `fg` (or SIGCONT)
+/// starts it again; then returns.
+#[cfg(unix)]
+pub fn stop() {
+    let _ = signal_hook::low_level::raise(signal_hook::consts::SIGTSTP);
+}
+
 fn leave(tools: &OnceLock<Arc<Tools>>, terminal: bool, code: i32) -> ! {
     if let Some(t) = tools.get() {
         t.shutdown();

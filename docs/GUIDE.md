@@ -44,6 +44,7 @@ claudejr -p "fix the tests" -y --max-cost 2    # no questions; stop at $2
 | shift-tab | change mode |
 | esc | stop the current turn |
 | ctrl-c | clear input; twice to quit |
+| ctrl-z | put it in the background; `fg` brings it back (Linux, macOS) |
 | up / down | history |
 | ctrl-v | paste: an image if the clipboard has one, otherwise its text |
 

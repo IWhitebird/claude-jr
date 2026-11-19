@@ -124,6 +124,16 @@ pub fn run(cfg: agent::Config, bottom: bool) -> io::Result<()> {
         if app.quit {
             break;
         }
+        #[cfg(unix)]
+        if std::mem::take(&mut app.suspend) {
+            term.suspend();
+            crate::sys::signals::stop();
+            term.resume()?;
+            // The shell has written over the screen: everything again, as after a resize.
+            term.resize(Term::size().1);
+            resized_at = Some(Instant::now().checked_sub(RESIZE_SETTLE).unwrap_or_else(Instant::now));
+            key = true;
+        }
         // Nothing is drawn while the size is still changing: every frame
         // would be rewrapped by the terminal a moment later.
         if resized_at.is_some_and(|at| at.elapsed() < RESIZE_SETTLE) {

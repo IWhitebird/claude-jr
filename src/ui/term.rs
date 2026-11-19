@@ -213,9 +213,33 @@ impl Term {
     }
 }
 
-impl Drop for Term {
-    /// Clears the live area and gives the terminal back as it was.
-    fn drop(&mut self) {
+#[cfg(unix)]
+impl Term {
+    /// Gives the terminal back for a while (ctrl+z), as on quitting.
+    pub fn suspend(&mut self) {
+        self.give_back();
+        self.row = 0;
+        self.invalidate();
+    }
+
+    /// Takes the terminal again. What was printed meanwhile is unknown, so
+    /// the caller draws everything afresh, as after a resize.
+    pub fn resume(&mut self) -> io::Result<()> {
+        terminal::enable_raw_mode()?;
+        if self.enhanced_keys {
+            crossterm::execute!(
+                self.out,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )?;
+        }
+        self.out.write_all(b"\x1b[?2004h")?;
+        self.out.flush()
+    }
+}
+
+impl Term {
+    /// Clears the live area and puts the terminal back as it was.
+    fn give_back(&mut self) {
         let mut s = String::new();
         if self.row > 0 {
             let _ = write!(s, "\x1b[{}A", self.row);
@@ -227,6 +251,12 @@ impl Drop for Term {
         let _ = self.out.write_all(s.as_bytes());
         let _ = self.out.flush();
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        self.give_back();
     }
 }
 

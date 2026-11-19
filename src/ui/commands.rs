@@ -32,7 +32,8 @@ type / to list commands: up/down pick, tab completes, enter runs
 enter sends · ctrl-j, shift-enter or \\ then enter for a new line
 shift+tab: normal → accept edits → plan → auto → skip permissions
 esc stops · ctrl-c clears the input, twice quits · up/down for history
-ctrl-s stashes what you've typed; it comes back after your next message";
+ctrl-s stashes what you've typed; it comes back after your next message
+ctrl-z puts claudejr in the background; fg in the shell brings it back";
 
 /// The commands, shown in a list as soon as `/` is typed.
 pub(super) const COMMANDS: &[(&str, &str)] = &[

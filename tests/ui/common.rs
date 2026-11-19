@@ -222,8 +222,23 @@ impl World {
             env!("CARGO_BIN_EXE_claudejr"),
             quoted.join(" ")
         );
+        self.spawn(&line, key)
+    }
+
+    /// The app started by a shell with job control, as from a terminal: when
+    /// it stops (ctrl+z) the shell says so and how the terminal is set, then
+    /// brings it back with `fg`.
+    pub fn launch_as_job(&self) -> App {
+        let line = format!(
+            "stty rows 40 cols 100; echo PID:$$; set -m; '{}'; echo STOPPED-$?; stty -a | grep -o ' -*icanon'; fg",
+            env!("CARGO_BIN_EXE_claudejr")
+        );
+        self.spawn(&line, Some("mock"))
+    }
+
+    fn spawn(&self, line: &str, key: Option<&str>) -> App {
         let mut cmd = Command::new("script");
-        cmd.args(["-qfec", &line, "/dev/null"])
+        cmd.args(["-qfec", line, "/dev/null"])
             .env_clear()
             .env("PATH", format!("{}:{}", self.root.join("bin").display(), path_var()))
             .env("TERM", "xterm-256color")

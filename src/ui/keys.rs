@@ -127,6 +127,7 @@ impl App {
         match k.code {
             KeyCode::Char('c') if ctrl => self.ctrl_c(),
             KeyCode::Char('d') if ctrl && self.input.is_empty() => self.quit = true,
+            KeyCode::Char('z') if ctrl && cfg!(unix) => self.suspend = true,
             KeyCode::Char('j') if ctrl => self.input.insert("\n"),
             KeyCode::Char('a') if ctrl => self.input.home(),
             KeyCode::Char('e') if ctrl => self.input.end(),
