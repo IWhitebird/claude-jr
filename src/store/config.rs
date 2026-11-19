@@ -154,7 +154,13 @@ fn folder(name: &str) -> Option<PathBuf> {
 
 /// The user's home folder (HOME; on Windows USERPROFILE when that isn't set).
 pub fn home() -> PathBuf {
-    folder("HOME").or_else(|| folder("USERPROFILE").filter(|_| cfg!(windows))).unwrap_or_default()
+    folder("HOME")
+        .or_else(|| folder("USERPROFILE").filter(|_| cfg!(windows)))
+        // No HOME (cron, a service, some containers): the system's record of
+        // the user, else a folder of our own. Never "": that is the current
+        // folder, and the project would fill with our files.
+        .or_else(|| std::env::home_dir().filter(|h| h.is_absolute()))
+        .unwrap_or_else(|| std::env::temp_dir().join("claude-jr-home"))
 }
 
 /// Settings: $XDG_CONFIG_HOME, else ~/.config (on Windows %APPDATA%).
