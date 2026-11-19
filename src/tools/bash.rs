@@ -118,7 +118,7 @@ pub fn run(t: &Tools, input: &Value, cancel: &AtomicBool) -> Output {
     if !pipe_closed {
         let _ = done.recv_timeout(Duration::from_millis(300));
     }
-    let mut text = out.lock().unwrap().text();
+    let mut text = super::plain::plain(&out.lock().unwrap().text());
 
     if let Ok(dir) = std::fs::read_to_string(&cwd_file) {
         let dir = PathBuf::from(dir.trim_end());
@@ -392,8 +392,8 @@ impl Job {
         if skipped > 0 {
             let _ = writeln!(s, "... [{skipped} earlier bytes not kept] ...");
         }
-        let text = tail_str(&text, MAX_BYTES);
-        s.push_str(if text.is_empty() { "(no new output)" } else { text });
+        let text = super::plain::plain(tail_str(&text, MAX_BYTES));
+        s.push_str(if text.is_empty() { "(no new output)" } else { &text });
         s
     }
 }

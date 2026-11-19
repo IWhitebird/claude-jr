@@ -9,6 +9,7 @@ pub mod checkpoint;
 mod fs;
 pub mod mcp;
 pub mod memory;
+mod plain;
 pub mod skill;
 #[cfg(test)]
 mod stress;

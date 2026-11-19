@@ -49,6 +49,7 @@ src/
     mod.rs           definitions, dispatch, shared state behind locks
     fs.rs            read, write, edit
     bash.rs          bash, background jobs, the jobs tool
+    plain.rs         command output as a terminal shows it: no colour codes, no overwritten progress
     mcp.rs           MCP servers over stdio, and the API's connector for remote ones
     skill.rs  memory.rs  todo.rs  checkpoint.rs
   api/               talking to models

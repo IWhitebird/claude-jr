@@ -408,3 +408,21 @@ fn output_that_cannot_be_written_never_crashes_it() {
         }
     }
 }
+
+/// What a command prints reaches the model as a terminal would show it:
+/// no colour codes, a progress bar only as it ended.
+#[test]
+fn command_output_reaches_the_model_as_a_terminal_shows_it() {
+    let cmd = r"printf '\033[1;32mPASSED\033[0m 3 tests\n'; printf '10%%\r60%%\r100%%\n'; printf 'tail\n'";
+    let e = Env::with(&[("MOCK_CMD", cmd), ("MOCK_ROUNDS", "1")]);
+    ok(&e.run(&["-p", "run it", "-y"]));
+    let last = e.requests().pop().unwrap();
+    let result = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+        .find(|c| c["tool_use_id"] == "b0")
+        .unwrap_or_else(|| panic!("no result for the command: {last}"));
+    assert_eq!(result["content"], "PASSED 3 tests\n100%\ntail\n");
+}
