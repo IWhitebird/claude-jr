@@ -5,3 +5,6 @@ bench/results/
 .env
 *.profraw
 __pycache__/
+
+# Working notes and plans: kept on this machine, not in the repository.
+/plans/
