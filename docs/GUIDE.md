@@ -33,6 +33,7 @@ claudejr --sandbox               # only allow writes inside this directory
 claudejr -c                      # continue the last conversation here
 claudejr -r "auth refactor"      # continue a named conversation
 claudejr -p "explain main.rs"    # one prompt, print the answer, exit
+cat err.log | claudejr -p "why?"  # what is piped in goes with the prompt
 claudejr -m claude-sonnet-5-5    # another model (default: claude-opus-5-5)
 claudejr -p "fix the tests" -y --max-cost 2    # no questions; stop at $2
 ```

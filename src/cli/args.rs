@@ -5,7 +5,8 @@ use crate::store::session::Pick;
 
 pub const USAGE: &str = "usage: claudejr [options] [-p PROMPT]
 
-  -p, --print PROMPT   run one prompt, print the reply, exit (or pipe the prompt in: cmd | claudejr -p)
+  -p, --print PROMPT   run one prompt, print the reply, exit. Text piped in goes with it
+                       (cat err.log | claudejr -p \"why?\"), or is the prompt (cmd | claudejr -p)
       task ...         run tasks in the background: claudejr task --help
       fleet ...        run a list of tasks side by side: claudejr fleet --help
       mcp ...          serve tasks to another agent over MCP: claudejr mcp --help
@@ -87,8 +88,12 @@ pub fn parse_args() -> Result<Cli, String> {
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
         match a.as_str() {
-            // With nothing after it, the prompt is whatever is piped in.
-            "-p" | "--print" => args.prompt = Some(it.next().map_or_else(piped, Ok)?),
+            // With nothing after it (or an option), the prompt is whatever is
+            // piped in; otherwise what is piped in goes with the prompt.
+            "-p" | "--print" => match it.next_if(|next| !OPTIONS.contains(&next.as_str())) {
+                Some(prompt) => args.prompt = Some(with_piped(prompt)),
+                None => args.prompt = Some(piped()?),
+            },
             "-m" | "--model" => args.model = Some(value()?),
             "-e" | "--effort" => args.effort = Some(value()?),
             "-y" | "--yes" | "--dangerously-skip-permissions" => args.yes = true,
@@ -119,6 +124,69 @@ pub fn parse_args() -> Result<Cli, String> {
         return Err("-p needs a prompt; it was empty".into());
     }
     Ok(Cli::Run(args))
+}
+
+/// What can follow -p without being taken for its prompt.
+const OPTIONS: &[&str] = &[
+    "-m",
+    "--model",
+    "-e",
+    "--effort",
+    "-y",
+    "--yes",
+    "--dangerously-skip-permissions",
+    "-c",
+    "--continue",
+    "-r",
+    "--resume",
+    "--sandbox",
+    "--worktree",
+    "--output-format",
+    "--log",
+    "--max-cost",
+];
+
+/// The most taken from standard input; beyond it is left out and said so.
+const MAX_PIPED: usize = 4 * 1024 * 1024;
+
+/// `prompt`, after whatever is piped in (`cat error.log | claudejr -p "why"`).
+/// Something must start arriving within 2 seconds: a program that starts
+/// us with a pipe it never writes to or closes would otherwise keep us
+/// waiting for ever.
+fn with_piped(prompt: String) -> String {
+    use std::io::{IsTerminal, Read};
+    if std::io::stdin().is_terminal() {
+        return prompt;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut bytes = vec![0; 64 * 1024];
+        let n = stdin.read(&mut bytes).unwrap_or(0);
+        bytes.truncate(n);
+        // Something has come (or the end): say so, then take the rest.
+        let _ = tx.send(None);
+        if n > 0 {
+            let _ = (&mut stdin).take(MAX_PIPED as u64 + 1 - n as u64).read_to_end(&mut bytes);
+        }
+        let _ = tx.send(Some(bytes));
+    };
+    if std::thread::Builder::new().name("stdin".into()).spawn(reader).is_err()
+        || rx.recv_timeout(std::time::Duration::from_secs(2)).is_err()
+    {
+        return prompt;
+    }
+    let mut bytes = rx.recv().ok().flatten().unwrap_or_default();
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return prompt;
+    }
+    let cut = bytes.len() > MAX_PIPED;
+    bytes.truncate(MAX_PIPED);
+    let mut text = String::from_utf8_lossy(&bytes).trim_end().to_string();
+    if cut {
+        text.push_str("\n[... standard input went on; only its first 4 MB are here]");
+    }
+    format!("{text}\n\n{prompt}")
 }
 
 /// The prompt for a bare `-p`: standard input, when something is piped into it.

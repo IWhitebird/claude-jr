@@ -131,3 +131,21 @@ fn interactive_needs_a_terminal() {
     assert_eq!(o.code, 2);
     assert!(o.err.contains("not a terminal; use -p PROMPT"), "{}", o.err);
 }
+
+/// What is piped in goes with a prompt given to -p, before it; with nothing
+/// after -p but options, what is piped in is the prompt.
+#[test]
+fn piped_input_goes_with_the_prompt() {
+    let e = Env::with(&[("MOCK_ROUNDS", "0")]);
+    let first_text = |args: &[&str], input: &str| {
+        let mut child =
+            e.command(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        e.requests().last().unwrap()["messages"][0]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    assert_eq!(first_text(&["-p", "what is the word"], "the word is plum\n"), "the word is plum\n\nwhat is the word");
+    assert_eq!(first_text(&["-p", "only this"], ""), "only this");
+    assert_eq!(first_text(&["-p", "-y", "--output-format", "json"], "the pipe's prompt\n"), "the pipe's prompt\n");
+}
