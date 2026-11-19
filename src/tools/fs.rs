@@ -3,6 +3,7 @@
 use super::{Diff, MAX_BYTES, Output, Tools, def, shorten};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -140,12 +141,24 @@ pub fn preview(t: &Tools, name: &str, input: &Value) -> Option<Diff> {
         "edit" => {
             let old = input["old_string"].as_str()?;
             let text = fs::read_to_string(&path).ok()?;
-            let at = text.find(old)?;
+            let at = text.find(with_endings_of(&text, old, "").0.as_ref())?;
             let line = text[..at].bytes().filter(|&b| b == b'\n').count() + 1;
             Some(Diff { line, old: old.to_string(), new: input["new_string"].as_str()?.to_string() })
         }
         _ => None,
     }
+}
+
+/// An edit's old and new text as they are to be found in and written to
+/// `text`. Read shows lines without their \r, so across lines of a file with
+/// Windows line endings old_string comes with plain \n: it is matched with
+/// the file's own endings, and new_string written with them.
+fn with_endings_of<'a>(text: &str, old: &'a str, new: &'a str) -> (Cow<'a, str>, Cow<'a, str>) {
+    if text.contains(old) || !old.contains('\n') || !text.contains("\r\n") {
+        return (Cow::Borrowed(old), Cow::Borrowed(new));
+    }
+    let with_cr = |s: &str| Cow::Owned(s.replace("\r\n", "\n").replace('\n', "\r\n"));
+    (with_cr(old), with_cr(new))
 }
 
 pub fn read(t: &Tools, input: &Value) -> Output {
@@ -236,7 +249,14 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
     }
     // No read is asked for first: old_string matching exactly is the proof
     // that the model knows what is there now.
-    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = fs::read_to_string(&path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => {
+            format!("{} isn't UTF-8 text, so it can't be edited this way. Use bash, for example sed.", path.display())
+        }
+        _ => format!("{}: {e}", path.display()),
+    })?;
+    let (old, new) = with_endings_of(&text, old, new);
+    let (old, new) = (old.as_ref(), new.as_ref());
     let count = text.matches(old).count();
     if count == 0 {
         return Err("old_string not found in the file. Check whitespace and indentation.".into());
@@ -440,6 +460,31 @@ mod tests {
         let all = json!({"path": "rep.txt", "old_string": "a", "new_string": "b", "replace_all": true});
         assert!(run(&t, "edit", all).unwrap().ends_with("(3 replacements)"));
         assert_eq!(fs::read_to_string(dir.join("rep.txt")).unwrap(), "b b b");
+    }
+
+    /// Lines are shown without their \r, so an edit across lines of a file
+    /// with Windows line endings comes with plain \n; the file keeps its
+    /// own endings, new lines included.
+    #[test]
+    fn edits_keep_a_files_windows_line_endings() {
+        let (t, dir) = test_tools("fs-crlf");
+        fs::write(dir.join("w.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
+        let shown = run(&t, "read", json!({"path": "w.txt"})).unwrap();
+        assert!(!shown.contains('\r'));
+        let edit = json!({"path": "w.txt", "old_string": "one\ntwo", "new_string": "one\nand a half\ntwo"});
+        assert!(run(&t, "edit", edit).unwrap().ends_with("(1 replacement)"));
+        assert_eq!(fs::read_to_string(dir.join("w.txt")).unwrap(), "one\r\nand a half\r\ntwo\r\nthree\r\n");
+        // The preview finds it too.
+        let d = t.preview("edit", &json!({"path": "w.txt", "old_string": "a half\ntwo", "new_string": "x"})).unwrap();
+        assert_eq!(d.line, 2);
+        // Within one line nothing changes, and \r\n given as such still matches.
+        run(&t, "edit", json!({"path": "w.txt", "old_string": "three", "new_string": "3"})).unwrap();
+        run(&t, "edit", json!({"path": "w.txt", "old_string": "half\r\ntwo", "new_string": "half\r\n2"})).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("w.txt")).unwrap(), "one\r\nand a half\r\n2\r\n3\r\n");
+        // A file that isn't UTF-8 says what to do instead.
+        fs::write(dir.join("latin.txt"), b"caf\xe9\n").unwrap();
+        let err = run(&t, "edit", json!({"path": "latin.txt", "old_string": "caf", "new_string": "cafe"})).unwrap_err();
+        assert!(err.contains("isn't UTF-8 text") && err.contains("bash"), "{err}");
     }
 
     #[test]
