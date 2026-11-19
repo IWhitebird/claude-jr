@@ -74,8 +74,8 @@ pub fn run(cfg: agent::Config, prompt: String, options: Options) -> Result<bool,
     if let Some(tools) = agent.tools.get() {
         tools.shutdown();
     }
-    finish(&report, &options, &prompt, &mut log);
-    Ok(report.ok)
+    let written = finish(&report, &options, &prompt, &mut log);
+    Ok(report.ok && written)
 }
 
 /// Untrusted text with every control character removed except newline (and
@@ -110,8 +110,9 @@ struct Report {
 }
 
 /// Writes the run's outcome: the report file, the log's last line, the JSON
-/// object. A run in a worktree has its changes committed first.
-fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
+/// object. A run in a worktree has its changes committed first. False if the
+/// JSON couldn't be written.
+fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) -> bool {
     if let Ok(path) = std::env::var("CLAUDE_JR_REPORT")
         && let Ok(json) = serde_json::to_string_pretty(report)
     {
@@ -134,16 +135,20 @@ fn finish(report: &Report, options: &Options, prompt: &str, log: &mut Log) {
             }
         }
         let left = worktree.finish(Some(prompt));
-        eprintln!("{}", crate::work::worktree::summary(&left));
+        note!("{}", crate::work::worktree::summary(&left));
         fields["worktree"] = left;
     }
     log.finish(&fields);
     if let Some(dir) = std::env::var_os(crate::work::task::ENV) {
         let _ = crate::work::task::write_json(&std::path::Path::new(&dir).join("result.json"), &fields);
     }
-    if options.format == Format::Json {
-        println!("{fields}");
+    if options.format == Format::Json
+        && let Err(e) = crate::say(&fields)
+    {
+        note!("{e}");
+        return false;
     }
+    true
 }
 
 fn print_events(
@@ -164,20 +169,27 @@ fn print_events(
             // rest of the progress, and to stdout once at the end.
             Event::Text(t) if options.format != Format::Text => {
                 let t = safe(&t, true);
-                eprint!("{t}");
+                note_part!("{t}");
                 mid_err = !t.ends_with('\n');
                 report.result.push_str(&t);
             }
             Event::Text(t) => {
                 let t = safe(&t, true);
-                let _ = out.write_all(t.as_bytes());
-                let _ = out.flush();
+                // The reply is the output: losing it (a full disk) fails the run.
+                if let Err(e) = out.write_all(t.as_bytes()).and_then(|()| out.flush())
+                    && e.kind() != std::io::ErrorKind::BrokenPipe
+                    && report.error.is_none()
+                {
+                    let msg = format!("couldn't write the reply: {e}");
+                    note!("error: {msg}");
+                    report.error = Some(msg);
+                }
                 mid_out = !t.ends_with('\n');
                 report.result.push_str(&t);
             }
             Event::Thinking(t) => {
                 let t = safe(&t, true);
-                eprint!("{t}");
+                note_part!("{t}");
                 mid_err = !t.ends_with('\n');
             }
             Event::BlockEnd => {
@@ -185,23 +197,23 @@ fn print_events(
                     let _ = writeln!(out);
                 }
                 if std::mem::take(&mut mid_err) {
-                    eprintln!();
+                    note!("");
                 }
             }
             Event::Tool { label: label_text, .. } => {
                 // What was said before a tool call is not the final answer.
                 report.result.clear();
-                eprintln!("● {}", label(&label_text));
+                note!("● {}", label(&label_text));
             }
             Event::ToolResult { ok, summary } => {
                 let mark = if ok { "⎿" } else { "✗" };
                 for (i, line) in label(&summary).lines().enumerate() {
-                    eprintln!("  {} {line}", if i == 0 { mark } else { " " });
+                    note!("  {} {line}", if i == 0 { mark } else { " " });
                 }
             }
-            Event::Notice(msg) => eprintln!("{}", label(&msg)),
+            Event::Notice(msg) => note!("{}", label(&msg)),
             Event::RewindPoints(_) | Event::Rewound { .. } | Event::Resumed { .. } | Event::Replay(_) => {}
-            Event::SubStart { task, .. } => eprintln!("● agent: {}", label(&task)),
+            Event::SubStart { task, .. } => note!("● agent: {}", label(&task)),
             Event::SubStep { .. } | Event::SubEnd { .. } => {}
             // Nobody is there to answer; the agent was told so (interactive: false).
             Event::Ask { reply, .. } => {
@@ -210,7 +222,7 @@ fn print_events(
             Event::Question { reply, .. } => {
                 let _ = reply.send(String::new());
             }
-            Event::Done => return true,
+            Event::Done => return report.error.is_none(),
             // Only a cost limit cancels a -p run, or `task cancel`.
             Event::Cancelled => {
                 if options.stopped.load(Ordering::Relaxed) {
@@ -219,7 +231,7 @@ fn print_events(
                 return report.error.is_none();
             }
             Event::Error(e) => {
-                eprintln!("error: {}", label(&e));
+                note!("error: {}", label(&e));
                 report.error.get_or_insert(label(&e));
                 return false;
             }
@@ -236,14 +248,14 @@ fn print_events(
                     .filter(|(spent, budget)| spent >= budget && report.error.is_none());
                 if let Some((spent, budget)) = group {
                     let msg = format!("stopped: the group's budget of ${budget:.2} is used up (${spent:.2} spent)");
-                    eprintln!("{msg}");
+                    note!("{msg}");
                     report.error = Some(msg);
                     cancel.store(true, Ordering::Relaxed);
                 }
                 if let Some(max) = options.max_cost.filter(|max| report.cost_usd >= *max && report.error.is_none()) {
                     let msg =
                         format!("stopped: the cost limit of ${max:.2} was reached (${:.2} spent)", report.cost_usd);
-                    eprintln!("{msg}");
+                    note!("{msg}");
                     report.error = Some(msg);
                     cancel.store(true, Ordering::Relaxed);
                 }

@@ -118,7 +118,7 @@ pub fn run(args: &[String]) -> Result<(String, bool), String> {
                 budget: fleet.start.budget.take(),
             };
             let id = task::start(&start)?;
-            eprintln!("[{}/{total}] started {id}: {}", n + 1, first_line(&start.prompt, 60));
+            note!("[{}/{total}] started {id}: {}", n + 1, first_line(&start.prompt, 60));
             running.push((n, id));
         }
         if running.is_empty() {
@@ -132,7 +132,7 @@ pub fn run(args: &[String]) -> Result<(String, bool), String> {
                 still.push((n, id));
             } else {
                 let cost = state["result"]["cost_usd"].as_f64().map_or(String::new(), |c| format!(", ${c:.2}"));
-                eprintln!("[{}/{total}] {} {id}{cost}", done.len() + 1, state["status"].as_str().unwrap_or(""));
+                note!("[{}/{total}] {} {id}{cost}", done.len() + 1, state["status"].as_str().unwrap_or(""));
                 done.push((n, state));
             }
         }

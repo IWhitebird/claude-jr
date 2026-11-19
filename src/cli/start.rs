@@ -20,7 +20,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
     if !project.is_empty() && !config::is_trusted() {
         let files = project.join(" and ");
         if interactive && std::io::stdin().is_terminal() {
-            eprint!(
+            note_part!(
                 "This folder has {files}, which can change permissions and start commands.\nTrust this folder? [y/N] "
             );
             let mut answer = String::new();
@@ -29,7 +29,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
                 config::trust()?;
             }
         } else if !interactive {
-            eprintln!("ignoring {files}: this folder isn't trusted (run claudejr here once to trust it)");
+            note!("ignoring {files}: this folder isn't trusted (run claudejr here once to trust it)");
         }
     }
     let file = config::Config::load()?;
@@ -116,7 +116,7 @@ pub fn run(args: Args) -> Result<ExitCode, String> {
             let bottom = file.layout.as_deref() != Some("inline");
             ui::run(cfg, bottom).map_err(|e| format!("terminal error: {e}"))?;
             if let Some(worktree) = worktree {
-                println!("{}", worktree::summary(&worktree.finish(None)));
+                crate::say(worktree::summary(&worktree.finish(None)))?;
             }
             Ok(ExitCode::SUCCESS)
         }

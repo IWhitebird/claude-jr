@@ -66,7 +66,9 @@ impl Agent {
             Msg::new("assistant", json!([{ "type": "text", "text": "Got it. I'll continue from this summary." }])),
         ];
         self.session.truncate(&self.system, 0);
-        self.session.save(&self.system, &mut self.messages);
+        if let Some(problem) = self.session.save(&self.system, &mut self.messages) {
+            (self.core.emit)(Event::Notice(problem));
+        }
         self.tools.checkpoints.clear();
         self.told_plan = false;
         let words = summary.split_whitespace().count();

@@ -137,6 +137,8 @@ pub struct Session {
     /// How many messages are already in the file.
     saved: usize,
     pub name: Option<String>,
+    /// Saving failed last time (a full disk, say); it is tried again with each save.
+    failing: bool,
 }
 
 /// Lines starting with this hold session metadata, not messages.
@@ -172,24 +174,30 @@ impl Session {
             *last
         };
         let path = dir().join(format!("{ms}-{}.jsonl", std::process::id()));
-        Session { path, file: None, saved: 0, name: None }
+        Session { path, file: None, saved: 0, name: None, failing: false }
     }
 
     pub fn load(pick: &Pick) -> Option<Loaded> {
-        let mut files = files();
-        let path = match pick {
-            Pick::Latest => files.pop()?,
-            Pick::Named(want) => files
-                .into_iter()
-                .rev()
-                .find(|p| stem(p) == *want || read(p).is_some_and(|r| r.name.as_deref() == Some(want)))?,
+        let files = files().into_iter().rev();
+        let (path, Read { system, name, messages }) = match pick {
+            // The newest that holds a conversation: a file whose first save
+            // failed (a full disk) has nothing in it to continue.
+            Pick::Latest => {
+                files.filter_map(|p| Some((read(&p)?, p))).find(|(r, _)| !r.messages.is_empty()).map(|(r, p)| (p, r))?
+            }
+            Pick::Named(want) => {
+                let path = files
+                    .into_iter()
+                    .find(|p| stem(p) == *want || read(p).is_some_and(|r| r.name.as_deref() == Some(want)))?;
+                let read = read(&path)?;
+                (path, read)
+            }
         };
-        let Read { system, name, messages } = read(&path)?;
-        let mut session = Session { path, file: None, saved: messages.len(), name };
+        let mut session = Session { path, file: None, saved: messages.len(), name, failing: false };
         // Two windows writing one conversation would leave a file that is
         // neither's. Whoever has it open keeps it; a latecomer gets a new
         // file, which the first save fills with everything so far.
-        let opened = session.open(&system);
+        let opened = session.open(&system).ok();
         let copy = opened.as_ref().is_some_and(|(_, ours)| !ours);
         session.file = opened.map(|(file, _)| file);
         if copy {
@@ -204,6 +212,9 @@ impl Session {
             .iter()
             .filter_map(|p| {
                 let Read { name, messages, .. } = read(p)?;
+                if messages.is_empty() && name.is_none() {
+                    return None;
+                }
                 let first_prompt = messages.iter().find_map(Msg::prompt).unwrap_or_default();
                 let modified = fs::metadata(p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
                 Some(Summary { id: stem(p), name, messages: messages.len(), first_prompt, modified })
@@ -215,13 +226,16 @@ impl Session {
     /// file instead of being kept in memory. A trailing user prompt is held
     /// back because the next turn may still add to it. Tool results are
     /// written at once: they are what tells a resumed session the tools ran.
-    pub fn save(&mut self, system: &str, messages: &mut [Msg]) {
+    ///
+    /// Messages that can't be written stay in memory and are tried again with
+    /// the next save. The first failure in a row is returned, to be shown.
+    pub fn save(&mut self, system: &str, messages: &mut [Msg]) -> Option<String> {
         let end = match messages.last() {
             Some(m) if m.user && !m.has_results() => messages.len() - 1,
             _ => messages.len(),
         };
         if end <= self.saved {
-            return;
+            return None;
         }
         // Written one message at a time: a copy of everything unsaved would
         // double the memory a long turn needs.
@@ -229,7 +243,17 @@ impl Session {
             // (A message can already be in a file: another session's, which
             // this one is a copy of.)
             let json = m.json();
-            let Some(end) = self.line(system, json.as_bytes()) else { break };
+            let end = match self.line(system, json.as_bytes()) {
+                Ok(end) => end,
+                Err(e) if !std::mem::replace(&mut self.failing, true) => {
+                    return Some(format!(
+                        "Couldn't save the conversation to {} ({e}). It is kept in memory, and saved once that works again.",
+                        self.path.display()
+                    ));
+                }
+                Err(_) => return None,
+            };
+            self.failing = false;
             self.saved += 1;
             if let Some(file) = &self.file
                 && crate::store::images::pieces(&json).len() == 1
@@ -238,6 +262,7 @@ impl Session {
                 m.body = Body::Saved { file: file.clone(), at: end - 1 - len as u64, len };
             }
         }
+        None
     }
 
     /// Names the session; the newest name wins when it's loaded again.
@@ -274,55 +299,72 @@ impl Session {
     /// Appends one message as a line and returns where the line ends. It goes
     /// out in a single write, so another window writing to the same session
     /// can't land in the middle of it, and where this write ended is where
-    /// the line ends whoever else has been appending.
-    fn line(&mut self, system: &str, json: &[u8]) -> Option<u64> {
+    /// the line ends whoever else has been appending. A line that couldn't be
+    /// finished is taken back off, so the next one doesn't run into it.
+    fn line(&mut self, system: &str, json: &[u8]) -> std::io::Result<u64> {
         if self.file.is_none() {
-            self.file = self.open(system).map(|(file, _)| file);
+            self.file = Some(self.open(system)?.0);
         }
-        let mut file = &**self.file.as_ref()?;
-        if cfg!(windows) {
-            // Windows writes the pieces of a vectored write one at a time, so
-            // the line is put together first.
-            file.write_all(&[json, b"\n"].concat()).ok()?;
-            return file.stream_position().ok();
+        let file = self.file.as_deref().ok_or_else(|| std::io::Error::other("no file"))?;
+        let before = file.metadata()?.len();
+        let written = write_line(file, json);
+        if written.is_err() {
+            let _ = file.set_len(before);
         }
-        let wrote = file.write_vectored(&[std::io::IoSlice::new(json), std::io::IoSlice::new(b"\n")]).ok()?;
-        // Only a full disk or the like writes less; finish the line then.
-        if wrote < json.len() {
-            file.write_all(&json[wrote..]).ok()?;
-        }
-        if wrote <= json.len() {
-            file.write_all(b"\n").ok()?;
-        }
-        file.stream_position().ok()
+        written
     }
 
     fn append(&mut self, system: &str, bytes: &[u8]) -> bool {
         if self.file.is_none() {
-            self.file = self.open(system).map(|(file, _)| file);
+            self.file = self.open(system).ok().map(|(file, _)| file);
         }
         self.file.as_ref().is_some_and(|f| (&**f).write_all(bytes).is_ok())
     }
 
     /// The session's file, ready to be added to, and whether it is ours:
     /// false if another process has it open.
-    fn open(&self, system: &str) -> Option<(Arc<File>, bool)> {
-        let fresh = !self.path.exists();
-        fs::create_dir_all(self.path.parent()?).ok()?;
-        let mut f = OpenOptions::new().create(true).read(true).append(true).open(&self.path).ok()?;
-        if fresh {
-            let mut line = serde_json::to_vec(&Header { system: system.to_string() }).ok()?;
+    fn open(&self, system: &str) -> std::io::Result<(Arc<File>, bool)> {
+        if let Some(dir) = self.path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let mut f = OpenOptions::new().create(true).read(true).append(true).open(&self.path)?;
+        // Empty: new, or its header couldn't be written last time.
+        if f.metadata()?.len() == 0 {
+            let mut line = serde_json::to_vec(&Header { system: system.to_string() })?;
             line.push(b'\n');
-            f.write_all(&line).ok()?;
+            if let Err(e) = f.write_all(&line) {
+                // Half a header would make the whole file unreadable.
+                let _ = f.set_len(0);
+                return Err(e);
+            }
         } else if !ends_with_newline(&f) {
             // The last write was cut off (a crash, a full disk). What comes
             // next must start its own line, or it would be lost with it.
-            f.write_all(b"\n").ok()?;
+            f.write_all(b"\n")?;
         }
         // Held for as long as the session is open.
         let ours = crate::sys::os::claim(&f);
-        Some((Arc::new(f), ours))
+        Ok((Arc::new(f), ours))
     }
+}
+
+/// Appends `json` and a newline; returns where the line ends.
+fn write_line(mut file: &File, json: &[u8]) -> std::io::Result<u64> {
+    if cfg!(windows) {
+        // Windows writes the pieces of a vectored write one at a time, so
+        // the line is put together first.
+        file.write_all(&[json, b"\n"].concat())?;
+        return file.stream_position();
+    }
+    let wrote = file.write_vectored(&[std::io::IoSlice::new(json), std::io::IoSlice::new(b"\n")])?;
+    // Only a full disk or the like writes less; finish the line then.
+    if wrote < json.len() {
+        file.write_all(&json[wrote..])?;
+    }
+    if wrote <= json.len() {
+        file.write_all(b"\n")?;
+    }
+    file.stream_position()
 }
 
 fn ends_with_newline(f: &File) -> bool {
@@ -619,7 +661,7 @@ mod tests {
             .map(|w| {
                 let path = path.clone();
                 std::thread::spawn(move || {
-                    let mut session = Session { path, file: None, saved: 0, name: None };
+                    let mut session = Session { path, file: None, saved: 0, name: None, failing: false };
                     let mut messages = Vec::new();
                     for i in 0..150 {
                         let text = format!("writer {w} message {i} {}", "x".repeat(1 + (i * 37) % 9000));
@@ -643,6 +685,40 @@ mod tests {
         for m in &loaded.messages {
             assert!(serde_json::from_str::<Value>(&m.json()).is_ok());
         }
+    }
+
+    /// A disk that takes nothing (/dev/full): saving says so once, keeps the
+    /// messages in memory, and once writing works again saves them all.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_full_disk_is_reported_once_and_loses_nothing() {
+        let dir = crate::tools::test_dir("session-full");
+        let path = dir.join("full.jsonl");
+        std::os::unix::fs::symlink("/dev/full", &path).unwrap();
+        let mut s = Session { path: path.clone(), file: None, saved: 0, name: None, failing: false };
+        let mut messages = vec![
+            Msg::new("user", json!([{ "type": "text", "text": "hello" }])),
+            Msg::new("assistant", json!([{ "type": "text", "text": "hi" }])),
+        ];
+        let said = s.save("SYSTEM", &mut messages).expect("the first failure is reported");
+        assert!(said.contains("Couldn't save the conversation") && said.contains("No space left"), "{said}");
+        assert_eq!(s.save("SYSTEM", &mut messages), None, "and not again while it keeps failing");
+        assert!(messages.iter().all(|m| matches!(m.body, Body::Memory(_))), "nothing was given up");
+        assert_eq!(messages[1].prompt(), None);
+        assert!(messages[0].json().contains("hello"));
+
+        // Room again: everything not yet saved goes in, and the session loads.
+        fs::remove_file(&path).unwrap();
+        s.file = None;
+        assert_eq!(s.save("SYSTEM", &mut messages), None);
+        let back = read(&path).unwrap();
+        assert_eq!(back.messages.len(), 2);
+        assert_eq!(back.messages[0].prompt().as_deref(), Some("hello"));
+        // Failing again after working is reported again.
+        s.file = Some(Arc::new(OpenOptions::new().append(true).open("/dev/full").unwrap()));
+        messages.push(Msg::new("user", json!([{ "type": "tool_result", "tool_use_id": "t", "content": "x" }])));
+        assert!(s.save("SYSTEM", &mut messages).is_some());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

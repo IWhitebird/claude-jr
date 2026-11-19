@@ -84,9 +84,7 @@ pub fn run(options: Options) -> Result<(), String> {
     {
         // Said on stderr, which MCP clients show in their logs; the server
         // still starts, and a call says the same.
-        eprintln!(
-            "claudejr mcp: no Anthropic API key is set; tasks will fail until one is (ANTHROPIC_API_KEY or /login)"
-        );
+        note!("claudejr mcp: no Anthropic API key is set; tasks will fail until one is (ANTHROPIC_API_KEY or /login)");
     }
     let out = Arc::new(Mutex::new(std::io::stdout()));
     let server = Arc::new(Server { start: Mutex::new(options.start) });

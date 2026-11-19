@@ -5,7 +5,7 @@ use super::common::*;
 /// `claudejr mcp` running, spoken to the way an MCP client does.
 struct McpClient {
     child: std::process::Child,
-    stdin: std::process::ChildStdin,
+    stdin: Option<std::process::ChildStdin>,
     replies: std::io::BufReader<std::process::ChildStdout>,
     next: u64,
 }
@@ -18,7 +18,7 @@ impl McpClient {
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let replies = std::io::BufReader::new(child.stdout.take().unwrap());
-        let mut client = McpClient { child, stdin, replies, next: 0 };
+        let mut client = McpClient { child, stdin: Some(stdin), replies, next: 0 };
         let init = client.request("initialize", serde_json::json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } }));
         assert_eq!(init["result"]["serverInfo"]["name"], "claude-jr", "{init}");
         client.send(&serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
@@ -26,8 +26,9 @@ impl McpClient {
     }
 
     fn send(&mut self, msg: &serde_json::Value) {
-        writeln!(self.stdin, "{msg}").unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().unwrap();
+        writeln!(stdin, "{msg}").unwrap();
+        stdin.flush().unwrap();
     }
 
     /// Sends a request and returns its reply (replies to other requests are not expected meanwhile).
@@ -60,11 +61,39 @@ impl McpClient {
     }
 }
 
+impl McpClient {
+    /// Closes the connection, as a client does when it is done, and gives the
+    /// server time to leave; whether it did.
+    fn close(&mut self) -> bool {
+        self.stdin = None;
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            if self.child.try_wait().unwrap().is_some() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+}
+
 impl Drop for McpClient {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if !self.close() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
     }
+}
+
+#[test]
+fn the_server_leaves_when_its_client_closes_the_connection() {
+    let e = Env::new();
+    let mut mcp = McpClient::start(&e, &[]);
+    let tools = mcp.request("tools/list", serde_json::json!({}));
+    assert!(tools["result"]["tools"].as_array().is_some_and(|t| !t.is_empty()), "{tools}");
+    assert!(mcp.close(), "still running 5 s after its input closed");
+    assert!(mcp.child.try_wait().unwrap().unwrap().success());
 }
 
 #[test]

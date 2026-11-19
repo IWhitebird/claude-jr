@@ -371,3 +371,40 @@ fn web_tools_setting() {
     ok(&e.run(&["-p", "q", "-y"]));
     assert!(!has_web(&e.requests()[0]));
 }
+
+/// Output nobody can read is no reason to crash (this build aborts on a
+/// panic, and Rust's print macros panic on a failed write): a reader that has
+/// gone, as in `claudejr -p ... 2>&1 | head -1`, is fine; a full disk fails
+/// the run and says so.
+#[test]
+fn output_that_cannot_be_written_never_crashes_it() {
+    let e = Env::new();
+    for format in ["text", "json", "stream-json"] {
+        // Both streams into a pipe that is already closed.
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let mut cmd = e.command(&["-p", "do the demo", "-y", "--output-format", format]);
+        cmd.stdout(writer.try_clone().unwrap()).stderr(writer).stdin(Stdio::null());
+        let status = cmd.status().unwrap();
+        assert!(status.success(), "{format}, read by no one: {status:?}");
+    }
+    #[cfg(target_os = "linux")]
+    for (format, stdout) in [("text", true), ("json", true), ("text", false)] {
+        let full = std::fs::OpenOptions::new().write(true).open("/dev/full").unwrap();
+        let mut cmd = e.command(&["-p", "do the demo", "-y", "--output-format", format]);
+        if stdout {
+            cmd.stdout(full).stderr(Stdio::piped());
+        } else {
+            cmd.stderr(full).stdout(Stdio::piped());
+        }
+        let o = cmd.stdin(Stdio::null()).output().unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        if stdout {
+            assert_eq!(o.status.code(), Some(1), "{format}: the reply was lost, so the run failed: {err}");
+            assert!(err.contains("No space left on device"), "{format}: {err}");
+        } else {
+            assert!(o.status.success(), "progress lost to a full disk is no failure: {:?}", o.status);
+            assert!(String::from_utf8_lossy(&o.stdout).contains("Done."));
+        }
+    }
+}

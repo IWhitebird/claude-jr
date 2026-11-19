@@ -45,6 +45,25 @@ fn continue_sends_the_earlier_messages_again() {
     assert!(!reqs[0]["messages"].to_string().contains("second thing"));
 }
 
+/// A session file with nothing in it, as a full disk can leave (empty, or a
+/// header and no messages), is newer than the real conversation but isn't
+/// what -c continues, and --sessions doesn't list it.
+#[test]
+fn continue_skips_sessions_with_nothing_in_them() {
+    let e = Env::with(&[("MOCK_ROUNDS", "0")]);
+    ok(&e.run(&["-p", "remember-the-walrus", "-y"]));
+    // One folder per project, holding its sessions.
+    let dir = std::fs::read_dir(e.data.join("claude-jr/sessions")).unwrap().next().unwrap().unwrap().path();
+    std::fs::write(dir.join("9999999999999-1.jsonl"), "").unwrap();
+    std::fs::write(dir.join("9999999999999-2.jsonl"), "{\"system\":\"x\"}\n").unwrap();
+    let listed = e.run(&["--sessions"]);
+    ok(&listed);
+    assert!(listed.out.contains("remember-the-walrus") && !listed.out.contains("9999999999999"), "{}", listed.out);
+    ok(&e.run(&["-c", "-p", "and now the second thing", "-y"]));
+    let text = e.requests().last().unwrap()["messages"].to_string();
+    assert!(text.contains("remember-the-walrus"), "-c continued an empty session: {text}");
+}
+
 #[test]
 fn resume_by_id_and_unknown_name() {
     let e = Env::with(&[("MOCK_ROUNDS", "0")]);

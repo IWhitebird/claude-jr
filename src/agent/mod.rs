@@ -397,8 +397,9 @@ impl Agent {
         // Saved after every round of tool calls, not only at the end: a long
         // turn that is killed can then be continued with -c.
         let (session, system) = (&mut self.session, &self.system);
-        let end = self.core.turn(&ctx, &mut self.messages, &mut |so_far| session.save(system, so_far));
-        self.session.save(&self.system, &mut self.messages);
+        let warn = |problem: Option<String>| problem.into_iter().for_each(|p| emit(Event::Notice(p)));
+        let end = self.core.turn(&ctx, &mut self.messages, &mut |so_far| warn(session.save(system, so_far)));
+        warn(self.session.save(&self.system, &mut self.messages));
         emit(end);
     }
 
