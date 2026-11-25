@@ -62,7 +62,8 @@ impl Core {
             return Err("a subagent this deep can't start subagents; do the work yourself".into());
         }
         let task = input["description"].as_str().unwrap_or("subagent");
-        let prompt = input["prompt"].as_str().ok_or("missing prompt")?;
+        // (A blank one would be a message the API refuses.)
+        let prompt = input["prompt"].as_str().filter(|p| !p.trim().is_empty()).ok_or("missing prompt")?;
         let _running = Running::start()?;
 
         // In a worktree of its own if asked: made before anything runs, so a

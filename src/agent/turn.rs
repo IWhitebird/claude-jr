@@ -665,6 +665,23 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_call_with_a_blank_prompt_is_refused_before_anything_is_sent() {
+        let calls = [
+            tool_use("t1", "agent", json!({"description": "look", "prompt": " \r\n"})),
+            tool_use("t2", "agent", json!({"description": "look"})),
+        ];
+        // Two replies only: a subagent's request would find none waiting.
+        let replies = vec![ok(blocks_reply(&calls, "tool_use")), ok(text_reply("done"))];
+        let mut rig = Rig::new("turn-blank-agent", Mode::Bypass, replies);
+        assert!(errors_of(&send(&mut rig, "hi")).is_empty());
+        let r = results_of(&rig, 2);
+        assert_eq!(
+            r.iter().map(|x| (x.0.as_str(), x.1, x.2.as_str())).collect::<Vec<_>>(),
+            [("t1", true, "missing prompt"), ("t2", true, "missing prompt")]
+        );
+    }
+
+    #[test]
     fn a_paused_turn_is_continued() {
         let mut rig = Rig::new(
             "turn-pause",

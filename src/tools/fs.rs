@@ -266,6 +266,15 @@ pub fn edit(t: &Tools, input: &Value) -> Output {
             "old_string matches {count} places. Add surrounding lines to make it unique, or set replace_all."
         ));
     }
+    // Worked out before it is built: replacing every newline of a file with a
+    // page of text would otherwise take the memory, and then the disk.
+    let added = (new.len().saturating_sub(old.len()) as u64).saturating_mul(if all { count as u64 } else { 1 });
+    if (text.len() as u64).saturating_add(added) > MAX_EDIT {
+        return Err(format!(
+            "this edit would make {} bigger than 64 MB ({count} replacements). Make a smaller change, or use bash.",
+            path.display()
+        ));
+    }
     let text = if all { text.replace(old, new) } else { text.replacen(old, new, 1) };
     t.checkpoints.before_change(&path);
     fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -485,6 +494,21 @@ mod tests {
         fs::write(dir.join("latin.txt"), b"caf\xe9\n").unwrap();
         let err = run(&t, "edit", json!({"path": "latin.txt", "old_string": "caf", "new_string": "cafe"})).unwrap_err();
         assert!(err.contains("isn't UTF-8 text") && err.contains("bash"), "{err}");
+    }
+
+    #[test]
+    fn an_edit_that_would_blow_the_file_up_is_refused() {
+        let (t, dir) = test_tools("fs-edit-huge");
+        let before = "line\n".repeat(60_000);
+        fs::write(dir.join("big.txt"), &before).unwrap();
+        let page = "x".repeat(2000);
+        let all = json!({"path": "big.txt", "old_string": "\n", "new_string": page, "replace_all": true});
+        let err = run(&t, "edit", all).unwrap_err();
+        assert!(err.contains("bigger than 64 MB (60000 replacements)"), "{err}");
+        assert_eq!(fs::read_to_string(dir.join("big.txt")).unwrap(), before, "and nothing was changed");
+        // One replacement of the same kind is fine.
+        fs::write(dir.join("one.txt"), "a\nb").unwrap();
+        run(&t, "edit", json!({"path": "one.txt", "old_string": "\n", "new_string": page})).unwrap();
     }
 
     #[test]

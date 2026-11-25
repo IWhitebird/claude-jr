@@ -18,7 +18,7 @@ ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
 OUTPUT_KB = int(os.environ.get("MOCK_OUTPUT_KB", "1"))
 LOG = os.environ.get("MOCK_LOG")
 CMD = os.environ.get("MOCK_CMD")  # replaces the bash command of every round
-SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents", "team", "nested"
+SCENARIO = os.environ.get("MOCK_SCENARIO", "default")  # or "features", "bench", "web", "memory", "agents", "team", "nested", "script"
 TEXT_CHARS = int(os.environ.get("MOCK_TEXT_CHARS", "2000"))  # "bench": streamed text per reply
 DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, like a real stream
 # Requests that go wrong, by position (1 = the first request): "2:500,3:cut".
@@ -478,6 +478,13 @@ class Handler(BaseHTTPRequestHandler):
         usage = {"input_tokens": 50, "cache_read_input_tokens": len(raw) // 4}
         if SCENARIO == "features":
             events = features(body, done, usage)
+        elif SCENARIO == "script":  # MOCK_SCRIPT: a JSON file, a list of rounds, each a list of {name, input}
+            rounds = json.load(open(os.environ["MOCK_SCRIPT"]))
+            if "You are a subagent" in body.get("system", ""):  # a subagent only reports
+                rounds = []
+            events = (reply([tool(f"s{done}_{i}", c["name"], c.get("input", {})) for i, c in enumerate(rounds[done])],
+                            "tool_use", usage)
+                      if done < len(rounds) else text_reply("Script done.\n", usage))
         elif SCENARIO == "memory":  # saves a note, then answers
             events = (reply([tool("m1", "memory", {"action": "add", "note": "uses pnpm, not npm"})], "tool_use", usage)
                       if done == 0 else text_reply("Noted.\n", usage))

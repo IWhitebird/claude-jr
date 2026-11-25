@@ -14,6 +14,7 @@ against the fake API in `mock.py`.
 | `box.sh` | A session in a small container | `CPUS=0.05 MEMORY=16m bench/box.sh` |
 | `resize.py` | After any resize the screen matches a fresh run, in 13 situations (needs tmux) | `python3 bench/resize.py target/release/claudejr` |
 | `chaos.py` | Random keys, pastes, resizes and API failures never crash it or send a bad request (needs tmux) | `python3 bench/chaos.py target/release/claudejr` |
+| `toolfuzz.py` | Hostile tool calls (missing and mistyped arguments, huge strings, devices, pipes, tools that don't exist) never crash it, go unanswered or produce a bad request (needs bwrap) | `python3 bench/toolfuzz.py target/release/claudejr` |
 | `sandbox.sh` | What the sandbox blocks | `bench/sandbox.sh` |
 | `docker.sh` | The Docker image: its size, a run with tools as an ordinary user, commands in busybox's `sh`, a session kept in a mounted home | `bench/docker.sh` |
 | `coverage.sh` | Line coverage of the tests | `bench/coverage.sh` |
