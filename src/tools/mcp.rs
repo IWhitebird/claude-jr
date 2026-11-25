@@ -32,6 +32,8 @@ use std::time::{Duration, Instant};
 const PROTOCOL: &str = "2025-06-18";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const CALL_TIMEOUT: Duration = Duration::from_secs(600);
+/// The longest line taken from a server; one that goes on past this is no message.
+const MAX_LINE: u64 = 64 * 1024 * 1024;
 const MAX_DESCRIPTION: usize = 1024;
 const MAX_OUTPUT: usize = 50 * 1024;
 
@@ -318,6 +320,8 @@ struct Conn {
     /// Shared with the reader thread, which answers the server's own requests.
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>>,
+    /// Set once the server has stopped talking: nothing is asked of it after that.
+    gone: Arc<AtomicBool>,
     next: AtomicU64,
     child: Mutex<Child>,
     pid: u32,
@@ -332,38 +336,61 @@ impl Conn {
         let pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>> = Arc::default();
         let routes = pending.clone();
         let answers = stdin.clone();
+        let gone = Arc::new(AtomicBool::new(false));
+        let ended = gone.clone();
         let _ = thread::Builder::new().name("mcp-read".into()).spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-                // A request from the server: answer ping, decline anything else.
-                if let (Some(method), Some(id)) = (msg["method"].as_str(), msg.get("id")) {
-                    let reply = if method == "ping" {
-                        json!({ "jsonrpc": "2.0", "id": id, "result": {} })
-                    } else {
-                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } })
-                    };
-                    let mut line = reply.to_string();
-                    line.push('\n');
-                    let _ = answers.lock().unwrap().write_all(line.as_bytes());
-                    continue;
+            // Lines are read as bytes: one that isn't UTF-8 (a stray log
+            // line) is skipped like any other that is no message, where
+            // reading text would have ended here with the server still up.
+            let mut reader = BufReader::new(stdout);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let read = std::io::Read::take(&mut reader, MAX_LINE).read_until(b'\n', &mut line);
+                // The end, an error, or a line that is not going to end.
+                if !read.is_ok_and(|n| n > 0) || (line.len() as u64 == MAX_LINE && !line.ends_with(b"\n")) {
+                    break;
                 }
-                // Notifications are ignored; replies go to whoever is waiting.
-                let Some(id) = msg["id"].as_u64() else { continue };
-                let reply = match msg.get("error") {
-                    Some(e) => Err(e["message"].as_str().unwrap_or("error").to_string()),
-                    None => Ok(msg["result"].clone()),
+                // One message a line; some servers still send several as a
+                // list, as older versions of the protocol allowed.
+                let messages = match serde_json::from_slice::<Value>(&line) {
+                    Ok(Value::Array(several)) => several,
+                    Ok(one) => vec![one],
+                    Err(_) => continue,
                 };
-                if let Some(tx) = routes.lock().unwrap().remove(&id) {
-                    let _ = tx.send(reply);
+                for msg in messages {
+                    // A request from the server: answer ping, decline anything else.
+                    if let (Some(method), Some(id)) = (msg["method"].as_str(), msg.get("id")) {
+                        let reply = if method == "ping" {
+                            json!({ "jsonrpc": "2.0", "id": id, "result": {} })
+                        } else {
+                            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } })
+                        };
+                        let mut line = reply.to_string();
+                        line.push('\n');
+                        let _ = answers.lock().unwrap().write_all(line.as_bytes());
+                        continue;
+                    }
+                    // Notifications are ignored; replies go to whoever is waiting.
+                    let Some(id) = msg["id"].as_u64() else { continue };
+                    let reply = match msg.get("error") {
+                        Some(e) => Err(e["message"].as_str().unwrap_or("error").to_string()),
+                        None => Ok(msg["result"].clone()),
+                    };
+                    if let Some(tx) = routes.lock().unwrap().remove(&id) {
+                        let _ = tx.send(reply);
+                    }
                 }
             }
-            // The server exited: fail everything still waiting.
+            // The server exited: fail everything still waiting, and
+            // whatever is asked from now on.
+            ended.store(true, Ordering::Relaxed);
             for (_, tx) in routes.lock().unwrap().drain() {
                 let _ = tx.send(Err("the server exited".into()));
             }
         });
         let pid = child.id();
-        Ok(Conn { stdin, pending, next: AtomicU64::new(1), child: Mutex::new(child), pid })
+        Ok(Conn { stdin, pending, gone, next: AtomicU64::new(1), child: Mutex::new(child), pid })
     }
 
     fn send(&self, msg: &Value) -> Result<(), String> {
@@ -381,7 +408,16 @@ impl Conn {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        // (Looked at after the route is in place: a server that goes just
+        // now has either been seen here or will answer the route.)
+        let asked = match self.gone.load(Ordering::Relaxed) {
+            true => Err("the server exited".to_string()),
+            false => self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })),
+        };
+        if let Err(e) = asked {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(e);
+        }
 
         let start = Instant::now();
         loop {
@@ -470,7 +506,7 @@ while IFS= read -r line; do
     *'"tools/list"'*)
       case "$line" in
         *'"cursor":"c2"'*)
-          printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"two","inputSchema":{"type":"object","properties":{"a":{}}}},{"name":"big"},{"name":"boom"},{"name":"rpcerr"},{"name":"rpcbare"},{"name":"sampling"}]}}\n' "$id" ;;
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"two","inputSchema":{"type":"object","properties":{"a":{}}}},{"name":"big"},{"name":"boom"},{"name":"rpcerr"},{"name":"rpcbare"},{"name":"listed"},{"name":"latin"},{"name":"sampling"}]}}\n' "$id" ;;
         *)
           printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"one","description":"%s"},{"description":"has no name"}],"nextCursor":"c2"}}\n' "$id" "$long" ;;
       esac ;;
@@ -480,6 +516,8 @@ while IFS= read -r line; do
         boom) printf '{"jsonrpc":"2.0","id":%s,"result":{"isError":true,"content":[{"type":"text","text":"bad"}]}}\n' "$id" ;;
         rpcerr) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":1,"message":"nope"}}\n' "$id" ;;
         rpcbare) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":1}}\n' "$id" ;;
+        latin) printf 'caf\351 is not UTF-8\n'; printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"still here"}]}}\n' "$id" ;;
+        listed) printf '[{"jsonrpc":"2.0","method":"notifications/message"},{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"in a list"}]}}]\n' "$id" ;;
         sampling)
           printf '{"jsonrpc":"2.0","id":"s1","method":"sampling/createMessage"}\n'
           IFS= read -r answer
@@ -516,7 +554,7 @@ done"#;
     fn tools_are_listed_across_pages_and_cleaned_up() {
         let (servers, errors) = start_one("s2", local(&bash(), &["-c", SERVER2]));
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(servers.describe(), ["s2 (local, 7 tools)"], "the nameless tool is skipped");
+        assert_eq!(servers.describe(), ["s2 (local, 9 tools)"], "the nameless tool is skipped");
         let defs: Vec<Value> = servers.definitions().iter().map(|d| serde_json::from_str(d.get()).unwrap()).collect();
         assert_eq!(defs[0]["name"], "mcp__s2__one");
         assert_eq!(defs[0]["description"].as_str().unwrap().len(), MAX_DESCRIPTION, "long descriptions are cut");
@@ -540,6 +578,11 @@ done"#;
         assert_eq!(call(&servers, "boom"), Err("bad".to_string()));
         assert_eq!(call(&servers, "rpcerr"), Err("nope".to_string()));
         assert_eq!(call(&servers, "rpcbare"), Err("error".to_string()));
+        // A reply inside a list, as older versions of the protocol allowed.
+        assert_eq!(call(&servers, "listed"), Ok("in a list".to_string()));
+        // A line that isn't UTF-8 is skipped; the server is still listened to after it.
+        assert_eq!(call(&servers, "latin"), Ok("still here".to_string()));
+        assert_eq!(call(&servers, "listed"), Ok("in a list".to_string()));
         assert_eq!(call(&servers, "sampling"), Ok("declined".to_string()), "requests we don't support are declined");
         assert_eq!(
             servers.call("mcp__s2__nothing", &json!({}), &AtomicBool::new(false)),
@@ -572,6 +615,11 @@ done"#;
         // The server dies while a call is waiting for it.
         let err = conn.request("tools/call", json!({"name": "die"}), Duration::from_secs(30), None).unwrap_err();
         assert_eq!(err, "the server exited");
+        // And from then on nothing is asked of it: the answer is at once, not after the time limit.
+        let asked = Instant::now();
+        let err = conn.request("tools/call", json!({"name": "two"}), Duration::from_secs(30), None).unwrap_err();
+        assert!(err == "the server exited" || err.starts_with("server stopped reading"), "{err}");
+        assert!(asked.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
