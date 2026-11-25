@@ -127,7 +127,7 @@ where one agent's context would keep growing, has not been measured yet.
 
 ## Windows
 
-New in 0.3.0. The Windows build is 2.03 MB (`claudejr-windows-x86_64.exe`). Every change is built and
+New in 0.3.0. The Windows build is 2.05 MB (`claudejr-windows-x86_64.exe`). Every change is built and
 tested on a Windows machine ([`bench/windows.sh`](../bench/windows.sh)): a run with tools in Git Bash and
 in PowerShell, a session that continues, background tasks started, merged and cancelled, the installer
 (which must refuse a download that fails its checksum) and `--update` replacing the program while it runs.
