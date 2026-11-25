@@ -81,6 +81,17 @@ impl Usage {
     }
 }
 
+/// A tool call's input from the JSON text a model wrote. It has to be an
+/// object: the API takes nothing else back. Text that isn't one becomes an
+/// input that says so, which the tool then reports to the model.
+pub(crate) fn tool_input(json_text: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(json_text) {
+        Ok(input) if input.is_object() => input,
+        Ok(_) => serde_json::json!({ "_invalid_json": "the input must be a JSON object" }),
+        Err(e) => serde_json::json!({ "_invalid_json": e.to_string() }),
+    }
+}
+
 pub struct Reply {
     pub content: Vec<Value>,
     pub stop_reason: String,

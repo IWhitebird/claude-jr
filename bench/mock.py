@@ -11,7 +11,7 @@
 #
 #   python3 bench/mock.py PORT      (0: any free port; the port is printed)
 
-import calendar, hashlib, hmac, json, os, re, sys, time
+import calendar, hashlib, hmac, json, os, random, re, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROUNDS = int(os.environ.get("MOCK_ROUNDS", "2"))
@@ -26,6 +26,7 @@ DELAY_MS = float(os.environ.get("MOCK_DELAY_MS", "0"))  # pause between events, 
 # half-way), early (it stops before any content), garbage (200 with a body
 # that isn't a stream), overloaded (an error event in the stream), half-tool
 # (the stream stops inside a tool call's input).
+MANGLE = os.environ.get("MOCK_MANGLE")  # a seed: reply streams come out damaged at random (see send_mangled)
 FAIL = dict((int(n), kind) for n, kind in
             (f.split(":") for f in os.environ.get("MOCK_FAIL", "").split(",") if f))
 SEEN = [0]
@@ -185,6 +186,11 @@ def invalid(body):
                 return f"messages.{i}.content.{j}: not a content block"
             if b["type"] == "text" and not str(b.get("text", "")).strip():
                 return f"messages.{i}.content.{j}: text content blocks must contain non-whitespace text"
+            if b["type"] == "tool_use" and not (isinstance(b.get("id"), str) and b["id"] and isinstance(b.get("name"), str)
+                                                and b["name"] and isinstance(b.get("input"), dict)):
+                return f"messages.{i}.content.{j}: a tool_use needs an id, a name and an object as input"
+            if b["type"] == "tool_result" and not isinstance(b.get("tool_use_id"), str):
+                return f"messages.{i}.content.{j}: a tool_result needs a tool_use_id"
             if b["type"] == "tool_use" and m["role"] != "assistant":
                 return f"messages.{i}.content.{j}: tool_use is only allowed in assistant messages"
             if b["type"] == "tool_result" and m["role"] != "user":
@@ -590,6 +596,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         parts = [sse([e]) for e in events]
+        if MANGLE:
+            return self.send_mangled(parts)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("content-length", str(sum(len(p) for p in parts)))
@@ -600,6 +608,69 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(part)
             self.wfile.flush()
             time.sleep(DELAY_MS / 1000)
+
+    def send_mangled(self, parts, chat=False):
+        """The reply as a broken server or network might deliver it: events
+        dropped, doubled, swapped or made up, bytes changed, the stream cut,
+        all of it in pieces of a few bytes. Which, depends on MOCK_MANGLE (a
+        seed) and on which request this is."""
+        rng = random.Random(f"{MANGLE}-{SEEN[0]}")
+        junk = [b"data: {not json\n\n", b": a comment\n\n", b"event: ping\ndata: {\"type\": \"ping\"}\n\n", b"data: \n\n",
+                b"\xff\xfe\x00\n\n", b"data: [1, 2]\n\n", b"data: null\n\n", b"\n\n\n", b"data: " + b"x" * 70000 + b"\n\n",
+                sse([{"type": "content_block_delta", "index": 99, "delta": {"type": "text_delta", "text": "stray"}}]),
+                sse([{"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "}{"}}]),
+                sse([{"type": "content_block_delta", "index": 0, "delta": "not an object"}]),
+                sse([{"type": "content_block_start", "index": 7, "content_block": "text"}]),
+                sse([{"type": "content_block_start", "index": 7, "content_block": {"type": "tool_use", "id": 5, "name": None}}]),
+                sse([{"type": "content_block_start", "index": 7, "content_block": {"type": "text", "text": ""}}]),
+                sse([{"type": "content_block_stop", "index": 42}]), sse([{"type": "message_stop"}]),
+                sse([{"type": "message_delta", "delta": {"stop_reason": "something_new"}, "usage": {"output_tokens": "many"}}]),
+                sse([{"type": "message_start", "message": {"usage": None}}]), sse([{"type": "brand_new_event", "x": 1}]),
+                sse([{"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}]), sse([{"type": 5}])]
+        if chat:
+            one = lambda chunk: chat_sse([chunk], False)
+            call = lambda c: one({"choices": [{"index": 0, "delta": {"tool_calls": c}, "finish_reason": None}]})
+            junk = junk[:9] + [b"data: [DONE]\n\n", one({}), one({"choices": []}), one({"choices": "x"}), one({"choices": [5]}),
+                               one({"choices": [{"delta": None}]}), one({"choices": [{"delta": {"content": 5}}]}),
+                               one({"choices": [{"delta": {"content": None, "tool_calls": None}}]}), call("x"), call([5]),
+                               call([{"index": 5}]), call([{"index": "0", "function": None}]),
+                               call([{"index": 0, "id": None, "function": {"name": None, "arguments": None}}]),
+                               call([{"index": 0, "id": "dup", "function": {"name": "bash", "arguments": "{"}}]),
+                               call([{"index": -1, "function": {"arguments": 7}}]), call([{"index": 99999999, "id": "far"}]),
+                               one({"choices": [{"delta": {}, "finish_reason": 7}]}), one({"error": {"message": "boom"}}),
+                               one({"error": "plain"}), one({"usage": "lots"}), one({"usage": {"prompt_tokens": "x"}}),
+                               one({"choices": [{"delta": {"reasoning_content": 5, "reasoning": []}}]})]
+        for _ in range(rng.choice([0, 0, 1, 1, 2, 4])):
+            at = rng.randrange(len(parts) + 1)
+            what = rng.choice(["junk", "junk", "drop", "double", "swap", "flip", "crlf"])
+            if what == "junk":
+                parts.insert(at, rng.choice(junk))
+            elif what == "drop" and parts:
+                parts.pop(min(at, len(parts) - 1))
+            elif what == "double" and parts:
+                parts.insert(at, parts[min(at, len(parts) - 1)])
+            elif what == "swap" and len(parts) > 1:
+                i = min(at, len(parts) - 2)
+                parts[i], parts[i + 1] = parts[i + 1], parts[i]
+            elif what == "flip" and parts:
+                i = min(at, len(parts) - 1)
+                b = bytearray(parts[i])
+                b[rng.randrange(len(b))] = rng.randrange(256)
+                parts[i] = bytes(b)
+            elif what == "crlf":
+                parts = [p.replace(b"\n", b"\r\n") for p in parts]
+        data = b"".join(parts)
+        if rng.random() < 0.25:
+            data = data[:rng.randrange(len(data) + 1)]
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        step = rng.choice([1, 3, 7, 64, 100000])
+        for i in range(0, len(data), step):
+            self.wfile.write(data[i:i + step])
+            self.wfile.flush()
 
     def send_chat(self, events, kind):
         """The reply in the Chat Completions format, whole or cut as `kind` says."""
@@ -620,6 +691,8 @@ class Handler(BaseHTTPRequestHandler):
             chunks = [c for c in chunks if c.get("choices") and c["choices"][0]["finish_reason"] is None
                       or "error" in c]
         parts = [chat_sse([c], False) for c in chunks] + ([b"data: [DONE]\n\n"] if done else [])
+        if MANGLE:
+            return self.send_mangled(parts, chat=True)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         if not done:

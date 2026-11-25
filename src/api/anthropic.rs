@@ -90,6 +90,17 @@ pub(super) fn read_sse(
             }
             "content_block_start" => {
                 let block = ev["content_block"].take();
+                // A block is an object with a type, and a tool call has an
+                // id and a name. One that isn't can be neither run nor
+                // passed back: the API would refuse the conversation.
+                let named = |key: &str| block[key].as_str().is_some_and(|v| !v.is_empty());
+                if !block.is_object()
+                    || !named("type")
+                    || (block["type"] == "tool_use" && !(named("id") && named("name")))
+                {
+                    let msg = "the reply was malformed (a content block the API itself would not accept)";
+                    return Err(if content.is_empty() { Retryable(msg.into()).into() } else { anyhow!(msg) });
+                }
                 if matches!(block["type"].as_str(), Some("tool_use" | "mcp_tool_use" | "server_tool_use")) {
                     on(Chunk::ToolStart(block["name"].as_str().unwrap_or("")));
                 }
@@ -99,15 +110,17 @@ pub(super) fn read_sse(
             "content_block_delta" => {
                 let Some(block) = content.last_mut() else { continue };
                 let Value::Object(delta) = ev["delta"].take() else { continue };
-                match delta.get("type").and_then(Value::as_str).unwrap_or("") {
+                // (A delta without the field its type promises is an empty one.)
+                let text = |key: &str| delta.get(key).and_then(Value::as_str).unwrap_or("");
+                match text("type") {
                     "input_json_delta" => {
-                        let part = delta["partial_json"].as_str().unwrap_or("");
+                        let part = text("partial_json");
                         json_buf.push_str(part);
                         on(Chunk::ToolInput(part.len()));
                         continue;
                     }
-                    "text_delta" => on(Chunk::Text(delta["text"].as_str().unwrap_or(""))),
-                    "thinking_delta" => on(Chunk::Thinking(delta["thinking"].as_str().unwrap_or(""))),
+                    "text_delta" => on(Chunk::Text(text("text"))),
+                    "thinking_delta" => on(Chunk::Thinking(text("thinking"))),
                     _ => {}
                 }
                 merge(block, delta);
@@ -115,8 +128,7 @@ pub(super) fn read_sse(
             "content_block_stop" => {
                 if let Some(block) = content.last_mut() {
                     if !json_buf.is_empty() {
-                        block["input"] = serde_json::from_str(&json_buf)
-                            .unwrap_or_else(|e| json!({ "_invalid_json": e.to_string() }));
+                        block["input"] = super::tool_input(&json_buf);
                         json_buf.clear();
                     }
                     let kind = block["type"].as_str().unwrap_or("");

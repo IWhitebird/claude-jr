@@ -98,8 +98,14 @@ impl Core {
                 Err(e) if too_long(&format!("{e}")) => return Event::Error(TOO_LONG.into()),
                 Err(e) => return Event::Error(format!("{e:#}")),
             };
+            let mut reply = reply;
             let cost = api::cost(&model, &reply.usage);
             (ctx.emit)(Event::Usage { usage: reply.usage, cost, main: ctx.main });
+            // A call that comes twice (a stream that repeats itself, a local
+            // server that gives every call one id) is run once: two with the
+            // same id would have the API refuse the conversation from here on.
+            let mut ids = std::collections::HashSet::new();
+            reply.content.retain(|b| b["type"] != "tool_use" || ids.insert(b["id"].to_string()));
             if reply.content.is_empty() {
                 return Event::Error(format!("empty reply (stop reason: {})", reply.stop_reason));
             }
@@ -679,6 +685,22 @@ mod tests {
             r.iter().map(|x| (x.0.as_str(), x.1, x.2.as_str())).collect::<Vec<_>>(),
             [("t1", true, "missing prompt"), ("t2", true, "missing prompt")]
         );
+    }
+
+    #[test]
+    fn a_call_that_comes_twice_is_run_once() {
+        let twice = [
+            tool_use("t1", "bash", json!({"command": "echo once"})),
+            tool_use("t1", "bash", json!({"command": "echo once"})),
+            tool_use("t2", "bash", json!({"command": "echo other"})),
+        ];
+        let replies = vec![ok(blocks_reply(&twice, "tool_use")), ok(text_reply("done"))];
+        let mut rig = Rig::new("turn-twice", Mode::Bypass, replies);
+        assert!(errors_of(&send(&mut rig, "hi")).is_empty());
+        let made: Vec<Value> = rig.agent.messages[1].content();
+        assert_eq!(made.iter().map(|b| b["id"].as_str().unwrap()).collect::<Vec<_>>(), ["t1", "t2"]);
+        let r = results_of(&rig, 2);
+        assert_eq!(r.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["t1", "t2"]);
     }
 
     /// A text block with nothing in it (models send one now and then, before

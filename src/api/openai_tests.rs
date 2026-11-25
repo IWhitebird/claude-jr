@@ -486,3 +486,18 @@ fn broken_streams_are_errors_and_retried_only_before_anything_was_shown() {
     assert_eq!(reply.err().unwrap().to_string(), "API error: boom");
     assert!(parse("data: not json\n\n").0.is_err());
 }
+
+/// A server that numbers a tool call in the millions (seen from a fuzzer, not
+/// yet from a server) asked for 4.8 GB of room for the calls before it.
+#[test]
+fn a_tool_call_numbered_absurdly_is_an_error_not_gigabytes() {
+    for index in ["256", "99999999", "18446744073709551615"] {
+        let stream = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{index},\"id\":\"far\"}}]}}}}]}}\n\ndata: [DONE]\n\n"
+        );
+        let err = read(stream.as_bytes(), &AtomicBool::new(false), Duration::from_secs(5), &mut |_| {})
+            .err()
+            .expect("an error");
+        assert!(format!("{err:#}").contains("the reply was malformed"), "{index}: {err:#}");
+    }
+}

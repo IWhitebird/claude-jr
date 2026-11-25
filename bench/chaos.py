@@ -20,8 +20,13 @@ KEYS = ["Enter", "Escape", "Tab", "BTab", "Up", "Down", "Left", "Right", "Home",
 WORDS = ["hello", "go", "fix the bug", "/", "/help", "/model", "/settings", "/rewind", "/cost", "/stats",
          "/clear", "/compact", "/mcp", "/jobs", "/skills", "/sessions", "/rename chaos", "/mode", "/update x",
          "/nonsense", "!echo hi", "!", "@", "src/main.rs", "/tmp/x.png", "日本語", "👍🏽", "é", "\\", "`", "~",
-         "a" * 300, "#note", "?"]
-PASTES = ["one line", "line\n" * 9, "x" * 900, "tab\there", "\x1b[31mred\x1b[0m", "/clear"]
+         "a" * 300, "#note", "?",
+         # Characters that are wider, narrower or stranger than they look.
+         "👩‍👩‍👧‍👦", "e\u0301" * 30, "\u202eright to left", "漢" * 130, "🇮🇳🇯🇵", "a\u200bb\u200d", "한국어 테스트", "ﷺ" * 40,
+         "\u0e01\u0e33\u0e49" * 20, "/rename 名前 👍", "!echo 日本", "#メモ"]
+PASTES = ["one line", "line\n" * 9, "x" * 900, "tab\there", "\x1b[31mred\x1b[0m", "/clear",
+          "crlf\r\nlines\r\n", "old mac\rlines\r", "ends the paste early\x1b[201~ or does it", "漢字" * 400,
+          "👩‍👩‍👧‍👦" * 60, "bell\x07 and backspace\x08 and escape\x1b]0;title\x07", "y\n" * 40, "\u202e" + "z" * 50, "é" * 20000]
 
 
 def tmux(sock, *args):

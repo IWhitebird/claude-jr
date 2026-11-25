@@ -270,6 +270,9 @@ struct Call {
     input: String,
 }
 
+/// More tool calls than any reply has.
+const MAX_CALLS: usize = 256;
+
 /// Reads a streamed reply.
 pub fn read(r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut impl FnMut(Chunk)) -> Result<Reply> {
     let mut emitted = false;
@@ -321,6 +324,11 @@ pub fn read(r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut im
             }
             // Which call this piece belongs to; servers that send whole calls may leave it out.
             let at = call["index"].as_u64().map_or(calls.len().saturating_sub(1).max(i), |n| n as usize);
+            // Room is made for every call up to this one: a server that
+            // numbers a call in the millions would have us set aside gigabytes.
+            if at >= MAX_CALLS {
+                bail!("the reply was malformed (it numbers a tool call {at})");
+            }
             while calls.len() <= at {
                 calls.push(Call::default());
             }
@@ -363,7 +371,7 @@ pub fn read(r: impl BufRead, cancel: &AtomicBool, silence: Duration, on: &mut im
             // Some local servers give calls no id; the result must still name one.
             "id": if call.id.is_empty() { format!("call_{n}") } else { call.id.clone() },
             "name": call.name,
-            "input": serde_json::from_str::<Value>(input).unwrap_or_else(|e| json!({ "_invalid_json": e.to_string() })),
+            "input": super::tool_input(input),
         }));
     }
     let stop_reason = match finish.as_deref() {

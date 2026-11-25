@@ -369,7 +369,7 @@ fn a_broken_stream_is_retryable_only_before_output() {
             .expect("an error")
     };
     assert!(run(b"data: {\"type\":\"ping\"}\n").is::<Retryable>());
-    let text = b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"x\"}}\n";
+    let text = b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"x\"}}\n";
     assert!(!run(text).is::<Retryable>());
 }
 
@@ -644,4 +644,60 @@ fn models_are_described_with_price_and_window() {
     assert_eq!(family("claude-unknown-9"), None);
     assert_eq!(price("claude-unknown-9"), None);
     assert_eq!(price("claude-opus-9-1"), price("claude-opus-5-5"));
+}
+
+/// A stream no real server should send must still not bring the program down
+/// (a panic aborts it), nor leave behind a reply the API would refuse to take
+/// back. Each of these crashed it or got through before 0.3.1.
+#[test]
+fn a_malformed_stream_is_an_error_or_harmless_never_a_crash() {
+    let read = |events: &str| {
+        let data: String = events.lines().map(|l| format!("data: {}\n", l.trim())).collect();
+        read_sse(data.as_bytes(), &AtomicBool::new(false), SILENCE_LIMIT, &mut |_| {})
+    };
+    let malformed = |events: &str| format!("{:#}", read(events).err().expect("an error"));
+    // A block that is no object, has no type, or is a tool call without an id or a name.
+    for block in [
+        r#""text""#,
+        "null",
+        "5",
+        "[]",
+        "{}",
+        r#"{"type":5}"#,
+        r#"{"type":"tool_use","name":"bash"}"#,
+        r#"{"type":"tool_use","id":"t1","name":""}"#,
+        r#"{"type":"tool_use","id":7,"name":"bash"}"#,
+    ] {
+        let err = malformed(&format!(r#"{{"type":"content_block_start","index":0,"content_block":{block}}}"#));
+        assert!(err.contains("the reply was malformed"), "{block}: {err}");
+    }
+    assert!(malformed(r#"{"type":"content_block_start","index":0}"#).contains("malformed"));
+
+    // Deltas without the field their type promises, or for no block at all, are skipped.
+    let reply = read(
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"stray"}}
+        {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        {"type":"content_block_delta","index":0,"delta":{"type":"text_delta"}}
+        {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta"}}
+        {"type":"content_block_delta","index":0,"delta":"not an object"}
+        {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+        {"type":"content_block_stop","index":0}
+        {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"bash","input":{}}}
+        {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta"}}
+        {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"[1,2]"}}
+        {"type":"content_block_stop","index":1}
+        {"type":"content_block_stop","index":42}
+        [1,2]
+        null
+        {"type":5}
+        {"type":"message_start","message":{"usage":null}}
+        {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":"many"}}
+        {"type":"message_stop"}"#,
+    )
+    .unwrap();
+    assert_eq!(reply.content[0]["text"], "hi");
+    // An input that is JSON but no object can't be passed back as it is.
+    assert_eq!(reply.content[1]["input"]["_invalid_json"], "the input must be a JSON object");
+    assert_eq!(tool_input(r#"{"a":1}"#), json!({"a": 1}));
+    assert!(tool_input("{").get("_invalid_json").is_some() && tool_input("null").get("_invalid_json").is_some());
 }

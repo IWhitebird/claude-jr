@@ -10,6 +10,8 @@
 #   python3 bench/toolfuzz.py target/release/claudejr 20 40    # 20 seeds, 40 rounds each
 #   SEED=7 python3 bench/toolfuzz.py target/release/claudejr   # one seed
 #   SHOW=1 SEED=7 python3 bench/toolfuzz.py ...                # and print each call with its answer
+#   MANGLE=1 python3 bench/toolfuzz.py ...                     # the replies themselves arrive damaged too:
+#                                                              # events lost, doubled, made up, cut, a byte at a time
 #
 # It runs with every permission, so it runs inside bubblewrap (bwrap): the
 # system read-only, a home of its own, and the project on a 256 MB disk of its
@@ -18,6 +20,7 @@
 import json, os, random, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MANGLE = os.environ.get("MANGLE")  # the model's replies arrive damaged as well
 ODD = ["", " ", "\n", "\t", "é", "日本語", "👩‍👩‍👧‍👦", "é" * 40, "‮evil", "\x00", "a\x00b", "\x1b[2J", "\r\n",
        "%s%n", "$(id)", "`id`", "; rm -rf .", "' OR 1=1", "x" * 5000, "ü" * 20000, "﻿bom", "\\", "\"", "{}"]
 PATHS = ["a.txt", "crlf.txt", "empty.txt", "blob.bin", "big.txt", "dir", "dir/", "dir/deep/new.txt", "loop", "pipe",
@@ -43,7 +46,7 @@ def value(rng, kind):
 
 def call(rng):
     tool = rng.choice(["read", "read", "write", "edit", "edit", "bash", "bash", "bash", "jobs", "todo", "memory", "skill",
-                       "agent", "ask_user", "nope", "", "mcp__none__tool", "web_search", "Read"])
+                       "agent", "ask_user", "nope", "n" * 80, "mcp__none__tool", "web_search", "Read"])
     fields = {
         "read": {"path": "path", "offset": None, "limit": None},
         "write": {"path": "path", "content": "text"},
@@ -105,7 +108,7 @@ def attempt(seed, rounds, binary):
     open(f"{work}/setup.py", "w").write(SETUP)
     mock = subprocess.Popen([sys.executable, "-I", f"{ROOT}/bench/mock.py", "0"], stdout=subprocess.PIPE, text=True,
                             env={**os.environ, "MOCK_SCENARIO": "script", "MOCK_SCRIPT": f"{work}/script.json",
-                                 "MOCK_LOG": f"{work}/requests"})
+                                 "MOCK_LOG": f"{work}/requests", **({"MOCK_MANGLE": str(seed)} if MANGLE else {})})
     port = mock.stdout.readline().strip()
     box = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/home",
            "--size", str(256 * 1024 * 1024), "--tmpfs", "/mnt", "--ro-bind", work, "/tmp/seed", "--ro-bind", binary,
@@ -115,32 +118,42 @@ def attempt(seed, rounds, binary):
     open(f"{work}/claudejr", "w").close()  # where the binary is mounted
     start, problem = time.time(), None
     try:
-        run = subprocess.run(box + ["sh", "-c", START], stdin=subprocess.DEVNULL, capture_output=True, timeout=600)
+        # Half the seeds talk Chat Completions, the format of the other providers.
+        command = START + (" -m ollama/some-model" if seed % 2 == 0 else "")
+        run = subprocess.run(box + ["--setenv", "OLLAMA_HOST", f"127.0.0.1:{port}", "sh", "-c", command],
+                             stdin=subprocess.DEVNULL, capture_output=True, timeout=600)
         requests = [json.loads(line) for line in open(f"{work}/requests")] if os.path.exists(f"{work}/requests") else []
-        # The main agent's requests; subagents make their own.
-        requests = [r for r in requests if "You are a subagent" not in json.dumps(r.get("system", ""))]
+        # The main agent's requests; subagents make their own. (In Chat
+        # Completions the instructions are the first message.)
+        instructions = lambda r: json.dumps(r.get("system") or (r.get("messages") or [{}])[0].get("content"))
+        requests = [r for r in requests if "You are a subagent" not in instructions(r)]
         refused = open(f"{work}/requests.invalid").read() if os.path.exists(f"{work}/requests.invalid") else ""
         if run.returncode not in (0, 1):
-            problem = f"it died with status {run.returncode}: {run.stderr.decode(errors='replace')[-600:]}"
+            said = run.stderr.decode(errors="replace")
+            at = max(said.rfind("panicked"), said.rfind("memory allocation"), 0)
+            problem = f"it died with status {run.returncode}: {said[at:at + 600] if at else said[-600:]}"
         elif refused.strip():
             problem = f"it sent what the API would refuse: {refused[:600]}"
-        elif len(requests) != rounds + 1 and run.returncode == 0:
+        elif len(requests) != rounds + 1 and run.returncode == 0 and not MANGLE:
             problem = f"{len(requests)} requests for {rounds} rounds, yet it reported success"
         elif run.returncode == 1 and b'"error"' not in run.stdout:
             problem = f"it failed without saying why: {run.stdout[-300:]!r} {run.stderr[-300:]!r}"
         else:
             # Whatever was asked, each call got an answer.
             last = requests[-1]["messages"] if requests else []
-            asked = {c["id"] for m in last if m["role"] == "assistant" for c in m["content"] if c.get("type") == "tool_use"}
-            told = {c["tool_use_id"] for m in last if m["role"] == "user" and isinstance(m["content"], list)
-                    for c in m["content"] if c.get("type") == "tool_result"}
+            blocks = lambda m: [c for c in m["content"] if isinstance(c, dict)] if isinstance(m.get("content"), list) else []
+            asked = {c["id"] for m in last if m["role"] == "assistant" for c in blocks(m) if c.get("type") == "tool_use"}
+            told = {c["tool_use_id"] for m in last if m["role"] == "user" for c in blocks(m) if c.get("type") == "tool_result"}
+            # The same in Chat Completions.
+            asked |= {c["id"] for m in last if m["role"] == "assistant" for c in m.get("tool_calls") or []}
+            told |= {m.get("tool_call_id") for m in last if m["role"] == "tool"}
             if asked - told:
                 problem = f"calls left unanswered: {sorted(asked - told)[:5]}"
             if os.environ.get("SHOW"):  # each call and the start of its answer
-                answers = {c["tool_use_id"]: c for m in last if m["role"] == "user" and isinstance(m["content"], list)
-                           for c in m["content"] if c.get("type") == "tool_result"}
+                answers = {c["tool_use_id"]: c for m in last if m["role"] == "user" for c in blocks(m)
+                           if c.get("type") == "tool_result"}
                 for m in last:
-                    for c in (m["content"] if m["role"] == "assistant" else []):
+                    for c in (blocks(m) if m["role"] == "assistant" else []):
                         if c.get("type") == "tool_use":
                             a = answers[c["id"]]
                             print(f"  {c['name'] or '(no name)':8} {json.dumps(c['input'], ensure_ascii=False)[:70]:70} -> "
