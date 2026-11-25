@@ -6,6 +6,7 @@ Everything the command does, in one place.
 
 ```sh
 curl -fsSL https://claudejr.iwhitebird.com/install | sh    # Linux, macOS
+irm https://claudejr.iwhitebird.com/install.ps1 | iex      # Windows, in PowerShell
 cd your-project
 claudejr
 ```

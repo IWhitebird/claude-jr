@@ -35,10 +35,11 @@
 curl -fsSL https://claudejr.iwhitebird.com/install | sh
 ```
 
-Linux and macOS, x86-64 and ARM; on Windows, inside WSL. Then run `claudejr`.
+Linux and macOS, x86-64 and ARM. On Windows, in PowerShell:
+`irm https://claudejr.iwhitebird.com/install.ps1 | iex`. Then run `claudejr`.
 It asks for an Anthropic API key the first time, or start it on another
 model: `claudejr -m ollama/qwen3`. Also on
-[Homebrew and Cargo](docs/GUIDE.md#other-ways-to-install).
+[Homebrew, Cargo and Docker](docs/GUIDE.md#other-ways-to-install) (the image is 3.5 MB).
 
 ## What you get
 

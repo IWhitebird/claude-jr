@@ -32,7 +32,7 @@
   "alternateName": "Claude Junior",
   "description": "A small, fast coding agent for the terminal, written in Rust. A lightweight Claude Code alternative.",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, macOS",
+  "operatingSystem": "Linux, macOS, Windows",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://claudejr.iwhitebird.com/",
   "downloadUrl": "https://github.com/IWhitebird/claude-jr/releases/latest",
@@ -352,7 +352,6 @@
           <code>curl -fsSL https://claudejr.iwhitebird.com/install | sh</code>
           <button class="copy" type="button">Copy</button>
         </div>
-        <!-- RELEASE 0.3.0: uncomment once a release carries the Windows binary and the Docker image.
         <div class="row">
           <span class="os">Windows</span>
           <code class="ps">irm https://claudejr.iwhitebird.com/install.ps1 | iex</code>
@@ -363,9 +362,8 @@
           <code>docker run --rm -it -e ANTHROPIC_API_KEY -v "$PWD:/work" ghcr.io/iwhitebird/claude-jr</code>
           <button class="copy" type="button">Copy</button>
         </div>
-        -->
       </div>
-      <p class="fine">x86 and ARM; on Windows, inside WSL. Also through <a href="/guide#other-ways-to-install">Homebrew and Cargo</a>. Then run <code>claudejr</code> and paste an Anthropic API key, or start it with a local model: <code>claudejr -m ollama/qwen3</code>.</p>
+      <p class="fine">x86 and ARM; Windows in PowerShell, 64-bit Intel or AMD. Also through <a href="/guide#other-ways-to-install">Homebrew and Cargo</a>. Then run <code>claudejr</code> and paste an Anthropic API key, or start it with a local model: <code>claudejr -m ollama/qwen3</code>.</p>
   </div>
 
   <figure class="shot col wide">
