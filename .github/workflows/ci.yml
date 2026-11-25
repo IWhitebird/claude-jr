@@ -6,6 +6,8 @@ on:
     branches: [main]
 jobs:
   check:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +26,8 @@ jobs:
       - run: python3 bench/chaos.py target/release/claudejr 4 250
   # The release build (build.sh) on each kind of machine releases are made on.
   release-build:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +59,8 @@ jobs:
   # The other ways in, each used the way a user would: Homebrew (this checkout
   # is the tap) and cargo binstall. Both download a released binary.
   packages:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

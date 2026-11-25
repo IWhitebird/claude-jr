@@ -13,6 +13,8 @@ permissions:
   contents: write
 jobs:
   build:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +45,8 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
   publish:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -74,6 +78,8 @@ jobs:
   # The Docker image: the Linux binaries just built, on busybox (see Dockerfile).
   # Checked against the fake API on every run; pushed only for a tag.
   image:
+    # A test that hangs fails here, not six hours later.
+    timeout-minutes: 30
     needs: build
     runs-on: ubuntu-latest
     permissions:
