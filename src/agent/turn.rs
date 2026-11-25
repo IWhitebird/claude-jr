@@ -681,6 +681,22 @@ mod tests {
         );
     }
 
+    /// A text block with nothing in it (models send one now and then, before
+    /// a tool call) is not kept: sent back, it would have the API refuse
+    /// every later request of the conversation.
+    #[test]
+    fn blank_text_blocks_in_a_reply_are_not_kept() {
+        let blank = |text: &str| json!({"type": "text", "text": text});
+        let first = [blank(""), tool_use("t1", "bash", json!({"command": "true"})), blank(" \n")];
+        let replies = vec![ok(blocks_reply(&first, "tool_use")), ok(text_reply("done"))];
+        let mut rig = Rig::new("turn-blank-text", Mode::Bypass, replies);
+        assert!(errors_of(&send(&mut rig, "hi")).is_empty());
+        let kept = rig.agent.messages[1].content();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0]["id"], "t1");
+        assert_eq!(results_of(&rig, 2).len(), 1);
+    }
+
     #[test]
     fn a_paused_turn_is_continued() {
         let mut rig = Rig::new(

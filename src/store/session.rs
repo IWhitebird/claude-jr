@@ -6,6 +6,7 @@
 // is saved, memory keeps only where its line is, and requests read it from
 // there. A long session then takes no more memory than a short one.
 
+use super::order::{Order, Shape};
 use crate::sys::os::read_exact_at;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -44,21 +45,19 @@ impl Msg {
     }
 
     /// A message line of a session file, which starts at byte `at` of `file`.
-    fn parse(line: &str, file: &Arc<File>, at: u64) -> Option<Msg> {
-        #[derive(Deserialize)]
-        struct Role<'a> {
-            role: &'a str,
-        }
-        let user = serde_json::from_str::<Role>(line).ok()?.role == "user";
-        let mut msg = Msg { user, body: Body::Memory(String::new()) };
+    fn parse(line: &str, file: &Arc<File>, at: u64) -> Option<(Msg, Shape)> {
+        let shape = super::order::shape(line)?;
+        let mut msg = Msg { user: shape.user, body: Body::Memory(String::new()) };
         // A message with stored images is spliced together when it's sent,
         // which needs its text at hand.
-        if crate::store::images::pieces(line).len() > 1 {
+        if shape.blank {
+            msg.body = Body::Memory(super::order::without_blank_text(line)?);
+        } else if crate::store::images::pieces(line).len() > 1 {
             msg.body = Body::Memory(line.to_string());
         } else {
             msg.body = Body::Saved { file: file.clone(), at, len: line.len() };
         }
-        Some(msg)
+        Some((msg, shape))
     }
 
     /// The message's JSON, read back from the session file if that's where it is.
@@ -129,6 +128,8 @@ pub struct Loaded {
     pub copy: bool,
     pub system: String,
     pub messages: Vec<Msg>,
+    /// Messages left out because the file was damaged (see order.rs).
+    pub dropped: usize,
 }
 
 /// One line of `--sessions`.
@@ -188,7 +189,7 @@ impl Session {
 
     pub fn load(pick: &Pick) -> Option<Loaded> {
         let files = files().into_iter().rev();
-        let (path, Read { system, name, messages }) = match pick {
+        let (path, Read { system, name, messages, dropped }) = match pick {
             // The newest that holds a conversation: a file whose first save
             // failed (a full disk) has nothing in it to continue.
             Pick::Latest => {
@@ -212,7 +213,7 @@ impl Session {
         if copy {
             session = Session { name: session.name, ..Session::new() };
         }
-        Some(Loaded { session, copy, system, messages })
+        Some(Loaded { session, copy, system, messages, dropped })
     }
 
     /// Saved sessions for this directory, oldest first.
@@ -397,6 +398,7 @@ struct Read {
     system: String,
     name: Option<String>,
     messages: Vec<Msg>,
+    dropped: usize,
 }
 
 /// Replays a session file: header, then messages and metadata in order. The
@@ -407,7 +409,7 @@ fn read(path: &Path) -> Option<Read> {
     let mut line = String::new();
     let mut at = lines.read_line(&mut line).ok()? as u64;
     let header: Header = serde_json::from_str(&line).ok()?;
-    let (mut name, mut messages) = (None, Vec::new());
+    let (mut name, mut messages, mut order) = (None, Vec::new(), Order::default());
     loop {
         line.clear();
         let start = at;
@@ -417,16 +419,23 @@ fn read(path: &Path) -> Option<Read> {
         }
         let line = line.trim_end_matches('\n');
         if !line.starts_with(META) {
-            messages.extend(Msg::parse(line, &file, start));
+            // Whatever the file has been through, what is replayed is a
+            // conversation the API takes.
+            match Msg::parse(line, &file, start) {
+                Some((msg, shape)) => order.take(&mut messages, msg, shape),
+                None if line.trim().is_empty() => {}
+                None => order.dropped += 1,
+            }
             continue;
         }
         let Ok(Meta { meta }) = serde_json::from_str::<Meta>(line) else { continue };
         if let Some(n) = meta.truncate {
             messages.truncate(n);
+            order.cut(&messages);
         }
         name = meta.name.or(name);
     }
-    Some(Read { system: header.system, name, messages })
+    Some(Read { system: header.system, name, messages, dropped: order.dropped })
 }
 
 fn stem(p: &Path) -> String {
@@ -623,7 +632,7 @@ mod tests {
             "quotes \" and \\ backslashes \\n and {\"meta\": 1}".to_string(),
             "{\"meta\":{\"truncate\":0}}".to_string(),
             "emoji 👨‍👩‍👧‍👦 漢字 \u{202e} \u{feff}".to_string(),
-            String::new(),
+            "0".to_string(),
         ];
         let mut messages: Vec<Msg> = odd
             .iter()

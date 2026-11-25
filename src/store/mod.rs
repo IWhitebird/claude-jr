@@ -3,4 +3,5 @@
 
 pub mod config;
 pub mod images;
+mod order;
 pub mod session;

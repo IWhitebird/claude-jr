@@ -70,6 +70,7 @@ src/
     log.rs           the run log: every step as a JSON line
   store/             what is kept on disk
     session.rs       conversations as JSONL, read back in place
+    order.rs         keeps a conversation read back from a damaged file one the API accepts
     images.rs        pasted and attached images
     config.rs        config files, the saved API key, trusted folders
   sys/               what depends on the operating system

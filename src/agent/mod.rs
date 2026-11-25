@@ -17,7 +17,7 @@ use crate::permission::Rules;
 use crate::store::session::{Loaded, Msg, Pick, Session};
 use crate::tools::mcp::{self, ServerConfig};
 use crate::tools::{self, Diff, Tools, skill};
-use history::OPEN_ELSEWHERE;
+use history::{OPEN_ELSEWHERE, damaged};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -243,11 +243,15 @@ impl Agent {
         if loaded.as_ref().is_some_and(|l| l.copy) {
             emit(Event::Notice(OPEN_ELSEWHERE.into()));
         }
+        if let Some(notice) = loaded.as_ref().and_then(|l| damaged(l.dropped)) {
+            emit(Event::Notice(notice));
+        }
         let Loaded { session, system, messages, .. } = loaded.unwrap_or_else(|| Loaded {
             session: Session::new(),
             copy: false,
             system: crate::prompt::system(),
             messages: Vec::new(),
+            dropped: 0,
         });
 
         let (servers, errors) = mcp::Servers::start(mcp::configured(&cfg.mcp));

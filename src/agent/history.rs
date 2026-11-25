@@ -11,6 +11,14 @@ use serde_json::Value;
 pub(super) const OPEN_ELSEWHERE: &str =
     "This conversation is open in another claude-jr, so this is a copy of it: what you do here is saved separately.";
 
+/// What to say when a saved conversation's file had lost some of its lines.
+pub(super) fn damaged(dropped: usize) -> Option<String> {
+    let s = if dropped == 1 { "" } else { "s" };
+    let said =
+        format!("The saved conversation's file was damaged: {dropped} message{s} that no longer fit were left out.");
+    (dropped > 0).then_some(said)
+}
+
 impl Agent {
     /// Back to before `turn`: files the agent changed since then are restored
     /// and the conversation is cut there (cutting from the end keeps it valid).
@@ -28,7 +36,7 @@ impl Agent {
     }
 
     pub(super) fn resume(&mut self, pick: &Pick) {
-        let Some(Loaded { session, system, messages, copy }) = Session::load(pick) else {
+        let Some(Loaded { session, system, messages, copy, dropped }) = Session::load(pick) else {
             return (self.core.emit)(Event::Error("couldn't load that conversation".into()));
         };
         self.tools.checkpoints.open(session.checkpoint_dir());
@@ -37,6 +45,9 @@ impl Agent {
 
         (self.core.emit)(Event::Resumed { name: self.session.name.clone(), messages: self.messages.len() });
         (self.core.emit)(Event::Replay(self.transcript()));
+        if let Some(notice) = damaged(dropped) {
+            (self.core.emit)(Event::Notice(notice));
+        }
         if copy {
             (self.core.emit)(Event::Notice(OPEN_ELSEWHERE.into()));
         }

@@ -134,7 +134,13 @@ pub(super) fn read_sse(
                     usage.output_tokens = n;
                 }
             }
-            "message_stop" => return Ok(Reply { content, stop_reason, usage }),
+            "message_stop" => {
+                // A model now and then sends a text block with nothing in
+                // it (before a tool call, say). Sent back, the API refuses
+                // the whole conversation, from then on.
+                content.retain(|b| b["type"] != "text" || b["text"].as_str().is_some_and(|t| !t.trim().is_empty()));
+                return Ok(Reply { content, stop_reason, usage });
+            }
             "error" => {
                 let msg = format!("API error: {}", ev["error"]["message"].as_str().unwrap_or("stream error"));
                 return Err(if content.is_empty() { Retryable(msg).into() } else { anyhow!(msg) });
