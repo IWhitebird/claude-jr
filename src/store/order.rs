@@ -117,6 +117,10 @@ pub struct Order {
     /// where in the conversation that message is.
     open: Vec<String>,
     open_from: usize,
+    /// The calls each kept message makes, so that a rewind needs nothing
+    /// read back from the file: on Windows a read elsewhere in a file moves
+    /// the place the replay is reading from.
+    made: Vec<Vec<String>>,
     /// How many messages were left out.
     pub dropped: usize,
 }
@@ -146,6 +150,7 @@ impl Order {
         } else {
             self.unanswered(messages);
         }
+        self.made.push(if msg.user { Vec::new() } else { self.open.clone() });
         messages.push(msg);
     }
 
@@ -155,19 +160,17 @@ impl Order {
         if !self.open.is_empty() {
             self.dropped += messages.len() - self.open_from;
             messages.truncate(self.open_from);
+            self.made.truncate(self.open_from);
             self.open.clear();
         }
     }
 
-    /// The conversation was cut back (/rewind): what is open is whatever its
-    /// last message left open.
-    pub fn cut(&mut self, messages: &[Msg]) {
-        self.open.clear();
-        if let Some(last) = messages.last().filter(|m| !m.user) {
-            self.open_from = messages.len() - 1;
-            let calls = last.content().into_iter().filter(|b| b["type"] == "tool_use");
-            self.open = calls.filter_map(|b| b["id"].as_str().map(String::from)).collect();
-        }
+    /// The conversation was cut back to its first `len` messages (/rewind):
+    /// what is open is whatever the last of them left open.
+    pub fn cut(&mut self, len: usize) {
+        self.made.truncate(len);
+        self.open = self.made.last().cloned().unwrap_or_default();
+        self.open_from = len.saturating_sub(1);
     }
 }
 
@@ -296,13 +299,13 @@ mod tests {
         }
         // Back to before the second call's message: nothing is open, so a prompt just follows.
         kept.truncate(3);
-        order.cut(&kept);
+        order.cut(kept.len());
         let next = user("again");
         order.take(&mut kept, Msg::new("user", next["content"].clone()), shape(&next.to_string()).unwrap());
         assert_eq!((kept.len(), order.dropped), (4, 0));
         // Back to right after a call: it is open again, and its results fit.
         kept.truncate(2);
-        order.cut(&kept);
+        order.cut(kept.len());
         let answer = results(&["c1"]);
         order.take(&mut kept, Msg::new("user", answer["content"].clone()), shape(&answer.to_string()).unwrap());
         assert_eq!((kept.len(), order.dropped), (3, 0));

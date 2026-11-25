@@ -431,7 +431,7 @@ fn read(path: &Path) -> Option<Read> {
         let Ok(Meta { meta }) = serde_json::from_str::<Meta>(line) else { continue };
         if let Some(n) = meta.truncate {
             messages.truncate(n);
-            order.cut(&messages);
+            order.cut(messages.len());
         }
         name = meta.name.or(name);
     }
