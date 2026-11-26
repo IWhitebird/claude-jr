@@ -104,7 +104,7 @@ claude-jr does the same kind of work, and resolves 93.4% of SWE-bench
 Verified, as one 2 MB file that waits in 0.7 MB. Nothing in it is clever.
 This is where the bytes go, and the few decisions that keep them there.</p>
 <h2 id="what-the-2-mb-is">What the 2 MB is</h2>
-<p>The release binary is 2,034,464 bytes. Adding up everything in it that
+<p>The release binary is 2,071,328 bytes. Adding up everything in it that
 carries a name:</p>
 <div class="scroll"><table>
 <thead>
@@ -118,27 +118,27 @@ carries a name:</p>
 <tr>
 <td>TLS and cryptography (rustls, ring)</td>
 <td style="text-align:right">616</td>
-<td style="text-align:right">36%</td>
+<td style="text-align:right">35%</td>
 </tr>
 <tr>
 <td>claude-jr itself</td>
-<td style="text-align:right">400</td>
-<td style="text-align:right">23%</td>
+<td style="text-align:right">412</td>
+<td style="text-align:right">24%</td>
 </tr>
 <tr>
 <td>Rust's standard library</td>
-<td style="text-align:right">333</td>
-<td style="text-align:right">19%</td>
+<td style="text-align:right">344</td>
+<td style="text-align:right">20%</td>
 </tr>
 <tr>
 <td>HTTP (ureq)</td>
 <td style="text-align:right">130</td>
-<td style="text-align:right">8%</td>
+<td style="text-align:right">7%</td>
 </tr>
 <tr>
 <td>C library (musl)</td>
-<td style="text-align:right">92</td>
-<td style="text-align:right">5%</td>
+<td style="text-align:right">98</td>
+<td style="text-align:right">6%</td>
 </tr>
 <tr>
 <td>stack unwinder</td>
@@ -147,25 +147,25 @@ carries a name:</p>
 </tr>
 <tr>
 <td>JSON (serde_json)</td>
-<td style="text-align:right">32</td>
+<td style="text-align:right">38</td>
 <td style="text-align:right">2%</td>
 </tr>
 <tr>
 <td>terminal and signals</td>
-<td style="text-align:right">28</td>
+<td style="text-align:right">29</td>
 <td style="text-align:right">2%</td>
 </tr>
 <tr>
 <td>the rest</td>
-<td style="text-align:right">28</td>
+<td style="text-align:right">27</td>
 <td style="text-align:right">2%</td>
 </tr>
 </tbody>
 </table></div>
-<p>That is 1,710 KB; the other 280 KB is text, tables and the file's own
+<p>That is 1,744 KB; the other 280 KB is text, tables and the file's own
 bookkeeping. More than a third of the file is the code that speaks HTTPS.
 The agent (the terminal UI, ten tools, an MCP client and server, two wire
-formats, sessions, background workers) is 400 KB.</p>
+formats, sessions, background workers) is about 410 KB.</p>
 <h2 id="nothing-to-load">Nothing to load</h2>
 <p>It is a static binary: no JavaScript engine to start, no modules to read, no
 garbage collector holding a heap in reserve. That is most of the difference
@@ -175,9 +175,9 @@ keys, one draws, one runs the turn, one watches for signals. They pass
 messages over channels.</p>
 <h2 id="nine-dependencies">Nine dependencies</h2>
 <p><code>anyhow</code>, <code>base64</code>, <code>crossterm</code>, <code>ring</code>, <code>serde</code>, <code>serde_json</code>, <code>signal-hook</code>,
-<code>unicode-width</code>, <code>ureq</code>: 72 packages once theirs are counted, with the
+<code>unicode-width</code>, <code>ureq</code>: 76 packages once theirs are counted, with the
 optional parts of the big ones switched off. What is usually a library is
-written by hand, to the size this program needs: arguments in about 130
+written by hand, to the size this program needs: arguments in 200
 lines, Markdown in under 300, the reader for the model's event stream in 71.</p>
 <h2 id="the-build">The build</h2>
 <p>The same source, built four ways (static, x86-64):</p>
@@ -191,19 +191,19 @@ lines, Markdown in under 300, the reader for the model's event stream in 71.</p>
 <tbody>
 <tr>
 <td>Rust's default release build</td>
-<td style="text-align:right">12.2 MB</td>
+<td style="text-align:right">12.28 MB</td>
 </tr>
 <tr>
 <td>the same, stripped of symbols</td>
-<td style="text-align:right">4.7 MB</td>
+<td style="text-align:right">4.82 MB</td>
 </tr>
 <tr>
 <td>optimised for size as one unit, aborting on panic</td>
-<td style="text-align:right">2.7 MB</td>
+<td style="text-align:right">2.77 MB</td>
 </tr>
 <tr>
 <td>with the standard library rebuilt for size as well</td>
-<td style="text-align:right">2.0 MB</td>
+<td style="text-align:right">2.07 MB</td>
 </tr>
 </tbody>
 </table></div>
@@ -252,7 +252,7 @@ when it ends.</li>
 </ul>
 <h2 id="what-it-costs">What it costs</h2>
 <ul>
-<li><strong>A nightly compiler</strong> for the smallest build. Stable Rust builds it too, at 2.7 MB.</li>
+<li><strong>A nightly compiler</strong> for the smallest build. Stable Rust builds it too, at 2.8 MB.</li>
 <li><strong>A panic ends the program</strong> where it stands. The session is on disk already, so <code>claudejr -c</code> carries on from it.</li>
 <li><strong>Threads, not thousands of connections.</strong> Many agents means many processes, at about half a megabyte each.</li>
 <li><strong>Less in the box.</strong> No plugins, hooks or IDE integration.</li>
@@ -264,8 +264,8 @@ claudejr        # then type /stats
 </code></pre>
 <p><code>/stats</code> prints what the process holds right now. The
 <a href="/benchmarks">benchmarks page</a> has every number and the script that
-measured it. The figures here are for the Linux x86-64 build of 19 November
-2026; the breakdown was made with <code>nm</code> on a build that keeps its symbol
+measured it. The figures here are for claude-jr 0.3.1 on Linux x86-64 (26 November
+2026); the breakdown was made with <code>nm</code> on a build that keeps its symbol
 names.</p>
 
   </article>

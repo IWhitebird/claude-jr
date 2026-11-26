@@ -7,25 +7,25 @@ This is where the bytes go, and the few decisions that keep them there.
 
 ## What the 2 MB is
 
-The release binary is 2,034,464 bytes. Adding up everything in it that
+The release binary is 2,071,328 bytes. Adding up everything in it that
 carries a name:
 
 | | KB | share |
 |---|---:|---:|
-| TLS and cryptography (rustls, ring) | 616 | 36% |
-| claude-jr itself | 400 | 23% |
-| Rust's standard library | 333 | 19% |
-| HTTP (ureq) | 130 | 8% |
-| C library (musl) | 92 | 5% |
+| TLS and cryptography (rustls, ring) | 616 | 35% |
+| claude-jr itself | 412 | 24% |
+| Rust's standard library | 344 | 20% |
+| HTTP (ureq) | 130 | 7% |
+| C library (musl) | 98 | 6% |
 | stack unwinder | 51 | 3% |
-| JSON (serde_json) | 32 | 2% |
-| terminal and signals | 28 | 2% |
-| the rest | 28 | 2% |
+| JSON (serde_json) | 38 | 2% |
+| terminal and signals | 29 | 2% |
+| the rest | 27 | 2% |
 
-That is 1,710 KB; the other 280 KB is text, tables and the file's own
+That is 1,744 KB; the other 280 KB is text, tables and the file's own
 bookkeeping. More than a third of the file is the code that speaks HTTPS.
 The agent (the terminal UI, ten tools, an MCP client and server, two wire
-formats, sessions, background workers) is 400 KB.
+formats, sessions, background workers) is about 410 KB.
 
 ## Nothing to load
 
@@ -40,9 +40,9 @@ messages over channels.
 ## Nine dependencies
 
 `anyhow`, `base64`, `crossterm`, `ring`, `serde`, `serde_json`, `signal-hook`,
-`unicode-width`, `ureq`: 72 packages once theirs are counted, with the
+`unicode-width`, `ureq`: 76 packages once theirs are counted, with the
 optional parts of the big ones switched off. What is usually a library is
-written by hand, to the size this program needs: arguments in about 130
+written by hand, to the size this program needs: arguments in 200
 lines, Markdown in under 300, the reader for the model's event stream in 71.
 
 ## The build
@@ -51,10 +51,10 @@ The same source, built four ways (static, x86-64):
 
 | | size |
 |---|---:|
-| Rust's default release build | 12.2&nbsp;MB |
-| the same, stripped of symbols | 4.7&nbsp;MB |
-| optimised for size as one unit, aborting on panic | 2.7&nbsp;MB |
-| with the standard library rebuilt for size as well | 2.0&nbsp;MB |
+| Rust's default release build | 12.28&nbsp;MB |
+| the same, stripped of symbols | 4.82&nbsp;MB |
+| optimised for size as one unit, aborting on panic | 2.77&nbsp;MB |
+| with the standard library rebuilt for size as well | 2.07&nbsp;MB |
 
 The third row is five lines in `Cargo.toml` (`opt-level = "z"`, `lto`,
 `codegen-units = 1`, `panic = "abort"`, `strip`). The fourth needs a nightly
@@ -113,7 +113,7 @@ Polling crept in twice, and both times it cost time rather than CPU:
 
 ## What it costs
 
-- **A nightly compiler** for the smallest build. Stable Rust builds it too, at 2.7 MB.
+- **A nightly compiler** for the smallest build. Stable Rust builds it too, at 2.8 MB.
 - **A panic ends the program** where it stands. The session is on disk already, so `claudejr -c` carries on from it.
 - **Threads, not thousands of connections.** Many agents means many processes, at about half a megabyte each.
 - **Less in the box.** No plugins, hooks or IDE integration.
@@ -128,6 +128,6 @@ claudejr        # then type /stats
 
 `/stats` prints what the process holds right now. The
 [benchmarks page](BENCHMARKS.md) has every number and the script that
-measured it. The figures here are for the Linux x86-64 build of 19 November
-2026; the breakdown was made with `nm` on a build that keeps its symbol
+measured it. The figures here are for claude-jr 0.3.1 on Linux x86-64 (26 November
+2026); the breakdown was made with `nm` on a build that keeps its symbol
 names.
